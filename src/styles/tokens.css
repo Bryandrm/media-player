@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+/*
+ * Brutalist Player — design tokens
+ * Referencia: docs/PLAN-reproductor-brutalist.md §4
+ */
+
+@theme {
+  /* Colors — paleta cerrada, cero semitonos */
+  --color-bg: #000000;
+  --color-fg: #ffffff;
+  --color-accent: #ff3b00;
+  --color-muted: #888888;
+  --color-border: #ffffff;
+
+  /* Fonts */
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+
+  /* Radii — TODAS a 0 por principio brutalist.
+     Si alguna utility `rounded-*` aparece en el código, es un no-op. */
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+  --radius-full: 0;
+
+  /* Sombras — sólo hard, nunca blur */
+  --shadow-hard: 4px 4px 0 var(--color-fg);
+  --shadow-hard-lg: 8px 8px 0 var(--color-fg);
+
+  /* Transiciones — muy cortas o ninguna */
+  --default-transition-duration: 60ms;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-mono);
+    -webkit-font-smoothing: antialiased;
+  }
+}

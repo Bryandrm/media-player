@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import "./App.css";
 
 const AUDIO_EXTENSIONS = ["mp3", "flac", "wav", "m4a", "opus", "ogg", "aac"];
 
@@ -109,29 +108,48 @@ function App() {
     };
   }, []);
 
+  const btnBase =
+    "bg-bg text-fg border-2 border-fg px-6 py-3 font-mono font-bold text-sm tracking-wider uppercase cursor-pointer transition-none";
+  const btnHover = "hover:bg-accent hover:text-bg hover:border-accent";
+  const btnDisabled = "disabled:text-muted disabled:border-muted disabled:cursor-not-allowed disabled:bg-bg";
+
   return (
-    <main className="smoke">
-      <header className="smoke__header">
-        <h1>AUDIO PIPELINE // SMOKE TEST</h1>
-        <p className="smoke__sub">
+    <main className="max-w-[900px] mx-auto p-8 flex flex-col gap-6">
+      <header>
+        <h1 className="m-0 text-2xl tracking-wide font-bold pb-2 border-b-2 border-fg">
+          AUDIO PIPELINE // SMOKE TEST
+        </h1>
+        <p className="mt-2 text-xs text-muted">
           convertFileSrc &rarr; &lt;audio&gt; &rarr; MediaElementAudioSourceNode &rarr; AnalyserNode &rarr; destination
         </p>
       </header>
 
-      <div className="smoke__controls">
-        <button onClick={pickFile} className="btn">LOAD AUDIO</button>
-        <button onClick={togglePlay} className="btn" disabled={!src}>
+      <div className="flex gap-4">
+        <button onClick={pickFile} className={`${btnBase} ${btnHover}`}>
+          LOAD AUDIO
+        </button>
+        <button onClick={togglePlay} disabled={!src} className={`${btnBase} ${btnHover} ${btnDisabled}`}>
           {isPlaying ? "PAUSE" : "PLAY"}
         </button>
       </div>
 
-      <div className="smoke__status">
-        <span className="label">FILE:</span> {fileName ?? "—"}
+      <div className="border border-fg px-3 py-2 text-sm">
+        <span className="text-muted mr-2">FILE:</span>
+        {fileName ?? "—"}
       </div>
 
-      {error && <div className="smoke__error">ERROR: {error}</div>}
+      {error && (
+        <div className="border-2 border-accent text-accent p-3 text-sm">
+          ERROR: {error}
+        </div>
+      )}
 
-      <canvas ref={canvasRef} width={800} height={200} className="smoke__canvas" />
+      <canvas
+        ref={canvasRef}
+        width={800}
+        height={200}
+        className="w-full h-[200px] border-2 border-fg bg-bg block"
+      />
 
       <audio ref={audioRef} src={src ?? undefined} preload="auto" crossOrigin="anonymous" />
     </main>
