@@ -66,6 +66,24 @@ Archivo en disco  ──►  Tauri expone vía asset protocol
 
 > Si esto falla, fallback documentado: leer el archivo desde Rust, exponerlo como `Blob` vía `invoke`, crear `URL.createObjectURL`. Más costoso en memoria pero funciona garantizado.
 
+### 2.1 Validación (2026-04-21) — riesgo Alto neutralizado
+
+El pipeline completo fue probado con un smoke test (ver `src/App.tsx` y `src/App.css` del commit correspondiente). Tres hallazgos concretos que quedan como requisito permanente:
+
+1. **`protocol-asset` es requisito doble.** Habilitar el asset protocol requiere tanto el flag en config:
+   ```json
+   "security": { "assetProtocol": { "enable": true, "scope": ["**"] } }
+   ```
+   como la feature en el crate `tauri`:
+   ```toml
+   tauri = { version = "2", features = ["protocol-asset"] }
+   ```
+   Uno sin el otro falla silenciosamente (el `<audio>` no carga).
+
+2. **Scope durante desarrollo: `["**"]`.** Para Fase 1 hay que ajustarlo a `$HOME/Music/BrutalistPlayer/**` o al directorio configurado. No dejar `**` en producción — permite leer cualquier archivo al que el proceso tenga acceso.
+
+3. **`<audio crossOrigin="anonymous">` es obligatorio.** Sin ese atributo, `createMediaElementSource()` marca el elemento como tainted y el `AnalyserNode` devuelve ceros (audio suena pero visualizer queda muerto). Síntoma típico: canvas plano mientras la música suena.
+
 ---
 
 ## 3. Contratos Tauri (invoke + events)

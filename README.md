@@ -51,7 +51,7 @@ Documentos fuente de verdad:
 
 - [x] Scaffold Tauri 2 + React + TS + Vite
 - [x] Estructura de docs (PLAN, ARCHITECTURE, DECISIONS, CLAUDE)
-- [ ] Smoke test del pipeline de audio (`convertFileSrc` + Web Audio)
+- [x] Smoke test del pipeline de audio (`convertFileSrc` + Web Audio)
 - [ ] Tailwind v4 + design tokens brutalist
 - [ ] SQLite + primera migración
 - [ ] Estructura de módulos Rust (`db`, `audio`, `downloader`, `metadata`)
