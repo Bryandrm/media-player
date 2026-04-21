@@ -52,9 +52,9 @@ Documentos fuente de verdad:
 - [x] Scaffold Tauri 2 + React + TS + Vite
 - [x] Estructura de docs (PLAN, ARCHITECTURE, DECISIONS, CLAUDE)
 - [x] Smoke test del pipeline de audio (`convertFileSrc` + Web Audio)
-- [ ] Tailwind v4 + design tokens brutalist
-- [ ] SQLite + primera migración
-- [ ] Estructura de módulos Rust (`db`, `audio`, `downloader`, `metadata`)
+- [x] Tailwind v4 + design tokens brutalist
+- [x] SQLite + primera migración (schema de [PLAN §3.1](docs/PLAN-reproductor-brutalist.md#31-esquema-sqlite-propuesta-inicial))
+- [x] Estructura de módulos Rust (`db`, `audio`, `downloader`, `lyrics`, `commands`, `errors`)
 
 Ver [PLAN §6 — Roadmap por fases](docs/PLAN-reproductor-brutalist.md#6-roadmap-por-fases) para el plan completo.
 
