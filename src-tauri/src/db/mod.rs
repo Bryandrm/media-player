@@ -1,3 +1,5 @@
+pub mod tracks;
+
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use std::path::Path;
@@ -23,7 +25,10 @@ pub async fn init(data_dir: &Path) -> Result<SqlitePool, DbError> {
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     let user_tables: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE '_sqlx_%'",
+        "SELECT COUNT(*) FROM sqlite_master \
+         WHERE type='table' \
+         AND name NOT LIKE 'sqlite_%' \
+         AND name NOT LIKE '_sqlx_%'",
     )
     .fetch_one(&pool)
     .await?;

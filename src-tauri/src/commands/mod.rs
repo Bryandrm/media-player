@@ -5,3 +5,5 @@
 //! mapean errores a `AppError`. La lógica vive en los módulos, no acá.
 //!
 //! Ver docs/ARCHITECTURE.md §3 para los contratos y §5 para la estructura.
+
+pub mod library;

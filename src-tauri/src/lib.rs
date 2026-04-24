@@ -1,17 +1,12 @@
 mod audio;
 mod commands;
+mod contracts;
 mod db;
 mod downloader;
 mod errors;
 mod lyrics;
 
 use tauri::Manager;
-
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -29,7 +24,10 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![
+            commands::library::library_scan_directory,
+            commands::library::library_list_tracks,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

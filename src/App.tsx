@@ -1,93 +1,91 @@
-import { useEffect, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
-const AUDIO_EXTENSIONS = ["mp3", "flac", "wav", "m4a", "opus", "ogg", "aac"];
+type Track = {
+  id: number;
+  filePath: string;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  durationMs: number;
+  trackNumber: number | null;
+  year: number | null;
+  genre: string | null;
+  format: string | null;
+};
+
+type ScanReport = {
+  scanned: number;
+  inserted: number;
+  skipped: number;
+  errors: number;
+};
+
+function formatDuration(ms: number): string {
+  const total = Math.round(ms / 1000);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
-  const rafRef = useRef<number | null>(null);
-
-  const [src, setSrc] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [tracks, setTracks] = useState<Track[]>([]);
+  const [current, setCurrent] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [lastReport, setLastReport] = useState<ScanReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  async function pickFile() {
+  const reloadLibrary = useCallback(async () => {
+    try {
+      const list = await invoke<Track[]>("library_list_tracks");
+      setTracks(list);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    reloadLibrary();
+  }, [reloadLibrary]);
+
+  async function scanDirectory() {
     setError(null);
     try {
-      const selected = await open({
-        multiple: false,
-        filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }],
-      });
-      if (typeof selected === "string") {
-        setSrc(convertFileSrc(selected));
-        setFileName(selected.split("/").pop() ?? selected);
-      }
+      const picked = await open({ directory: true, multiple: false });
+      if (typeof picked !== "string") return;
+      setScanning(true);
+      const report = await invoke<ScanReport>("library_scan_directory", { path: picked });
+      setLastReport(report);
+      await reloadLibrary();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function playTrack(track: Track) {
+    const audio = audioRef.current;
+    if (!audio) return;
+    audio.src = convertFileSrc(track.filePath);
+    setCurrent(track);
+    try {
+      await audio.play();
+      setIsPlaying(true);
     } catch (e) {
       setError(String(e));
     }
   }
 
-  function ensureAudioGraph() {
-    const audio = audioRef.current;
-    if (!audio) return null;
-    if (!audioCtxRef.current) {
-      const ctx = new AudioContext();
-      const source = ctx.createMediaElementSource(audio);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      analyser.connect(ctx.destination);
-      audioCtxRef.current = ctx;
-      sourceRef.current = source;
-      analyserRef.current = analyser;
-    }
-    return analyserRef.current;
-  }
-
-  function draw() {
-    const canvas = canvasRef.current;
-    const analyser = analyserRef.current;
-    if (!canvas || !analyser) return;
-    const ctx2d = canvas.getContext("2d");
-    if (!ctx2d) return;
-
-    const bufferLength = analyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    analyser.getByteFrequencyData(dataArray);
-
-    const { width, height } = canvas;
-    ctx2d.fillStyle = "#000000";
-    ctx2d.fillRect(0, 0, width, height);
-
-    const barWidth = width / bufferLength;
-    for (let i = 0; i < bufferLength; i++) {
-      const barHeight = (dataArray[i] / 255) * height;
-      ctx2d.fillStyle = "#FF3B00";
-      ctx2d.fillRect(i * barWidth, height - barHeight, barWidth - 1, barHeight);
-    }
-
-    rafRef.current = requestAnimationFrame(draw);
-  }
-
   async function togglePlay() {
     const audio = audioRef.current;
-    if (!audio || !src) return;
-    const analyser = ensureAudioGraph();
-    if (!analyser) return;
-
-    const ctx = audioCtxRef.current;
-    if (ctx && ctx.state === "suspended") await ctx.resume();
-
+    if (!audio || !current) return;
     if (audio.paused) {
       await audio.play();
       setIsPlaying(true);
-      if (rafRef.current == null) draw();
     } else {
       audio.pause();
       setIsPlaying(false);
@@ -98,60 +96,124 @@ function App() {
     const audio = audioRef.current;
     if (!audio) return;
     const onEnded = () => setIsPlaying(false);
+    const onPause = () => setIsPlaying(false);
+    const onPlay = () => setIsPlaying(true);
     audio.addEventListener("ended", onEnded);
-    return () => audio.removeEventListener("ended", onEnded);
-  }, []);
-
-  useEffect(() => {
+    audio.addEventListener("pause", onPause);
+    audio.addEventListener("play", onPlay);
     return () => {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      audio.removeEventListener("ended", onEnded);
+      audio.removeEventListener("pause", onPause);
+      audio.removeEventListener("play", onPlay);
     };
   }, []);
 
-  const btnBase =
-    "bg-bg text-fg border-2 border-fg px-6 py-3 font-mono font-bold text-sm tracking-wider uppercase cursor-pointer transition-none";
-  const btnHover = "hover:bg-accent hover:text-bg hover:border-accent";
-  const btnDisabled = "disabled:text-muted disabled:border-muted disabled:cursor-not-allowed disabled:bg-bg";
-
   return (
-    <main className="max-w-[900px] mx-auto p-8 flex flex-col gap-6">
-      <header>
-        <h1 className="m-0 text-2xl tracking-wide font-bold pb-2 border-b-2 border-fg">
-          AUDIO PIPELINE // SMOKE TEST
-        </h1>
-        <p className="mt-2 text-xs text-muted">
-          convertFileSrc &rarr; &lt;audio&gt; &rarr; MediaElementAudioSourceNode &rarr; AnalyserNode &rarr; destination
-        </p>
+    <main className="flex flex-col h-screen">
+      {/* Header */}
+      <header className="px-6 py-4 border-b-2 border-fg flex items-baseline gap-4">
+        <h1 className="text-lg font-bold tracking-wider">BRUTALIST // PLAYER</h1>
+        <span className="text-muted text-xs">LIBRARY</span>
       </header>
 
-      <div className="flex gap-4">
-        <button onClick={pickFile} className={`${btnBase} ${btnHover}`}>
-          LOAD AUDIO
+      {/* Toolbar */}
+      <div className="px-6 py-3 border-b border-fg flex items-center gap-4 text-sm">
+        <button
+          onClick={scanDirectory}
+          disabled={scanning}
+          className="bg-bg text-fg border-2 border-fg px-4 py-2 font-bold tracking-wider uppercase hover:bg-accent hover:text-bg hover:border-accent disabled:text-muted disabled:border-muted disabled:cursor-not-allowed"
+        >
+          {scanning ? "SCANNING..." : "SCAN DIRECTORY"}
         </button>
-        <button onClick={togglePlay} disabled={!src} className={`${btnBase} ${btnHover} ${btnDisabled}`}>
-          {isPlaying ? "PAUSE" : "PLAY"}
-        </button>
-      </div>
-
-      <div className="border border-fg px-3 py-2 text-sm">
-        <span className="text-muted mr-2">FILE:</span>
-        {fileName ?? "—"}
+        <span className="text-muted">
+          {tracks.length} {tracks.length === 1 ? "TRACK" : "TRACKS"}
+        </span>
+        {lastReport && (
+          <span className="text-muted ml-auto">
+            LAST SCAN: {lastReport.scanned} FOUND · {lastReport.inserted} NEW ·{" "}
+            {lastReport.skipped} DUP · {lastReport.errors} ERR
+          </span>
+        )}
       </div>
 
       {error && (
-        <div className="border-2 border-accent text-accent p-3 text-sm">
+        <div className="px-6 py-2 border-b-2 border-accent text-accent text-sm">
           ERROR: {error}
         </div>
       )}
 
-      <canvas
-        ref={canvasRef}
-        width={800}
-        height={200}
-        className="w-full h-[200px] border-2 border-fg bg-bg block"
-      />
+      {/* Table */}
+      <div className="flex-1 overflow-auto">
+        {tracks.length === 0 ? (
+          <div className="p-12 text-center text-muted">
+            NO TRACKS. SCAN A DIRECTORY TO POPULATE THE LIBRARY.
+          </div>
+        ) : (
+          <table className="w-full border-collapse text-sm">
+            <thead className="sticky top-0 bg-bg">
+              <tr className="border-b-2 border-fg text-muted">
+                <th className="text-left px-3 py-2 w-12">#</th>
+                <th className="text-left px-3 py-2">TITLE</th>
+                <th className="text-left px-3 py-2">ARTIST</th>
+                <th className="text-left px-3 py-2">ALBUM</th>
+                <th className="text-right px-3 py-2 w-24">DURATION</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tracks.map((t, i) => {
+                const isCurrent = current?.id === t.id;
+                return (
+                  <tr
+                    key={t.id}
+                    onClick={() => playTrack(t)}
+                    className={`cursor-pointer border-b border-muted/40 ${
+                      isCurrent ? "bg-accent text-bg" : "hover:bg-fg hover:text-bg"
+                    }`}
+                  >
+                    <td className="px-3 py-2 tabular-nums">
+                      {String(i + 1).padStart(2, "0")}
+                    </td>
+                    <td className="px-3 py-2">{t.title}</td>
+                    <td className="px-3 py-2">{t.artist ?? "—"}</td>
+                    <td className="px-3 py-2">{t.album ?? "—"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {formatDuration(t.durationMs)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
 
-      <audio ref={audioRef} src={src ?? undefined} preload="auto" crossOrigin="anonymous" />
+      {/* Player bar */}
+      <footer className="border-t-2 border-fg px-6 py-3 flex items-center gap-4">
+        <button
+          onClick={togglePlay}
+          disabled={!current}
+          className="bg-bg text-fg border-2 border-fg px-4 py-2 font-bold tracking-wider uppercase hover:bg-accent hover:text-bg hover:border-accent disabled:text-muted disabled:border-muted disabled:cursor-not-allowed min-w-[90px]"
+        >
+          {isPlaying ? "PAUSE" : "PLAY"}
+        </button>
+        <div className="flex-1 text-sm truncate">
+          {current ? (
+            <>
+              <span className="font-bold">{current.title}</span>
+              <span className="text-muted"> — {current.artist ?? "—"}</span>
+            </>
+          ) : (
+            <span className="text-muted">NOTHING PLAYING</span>
+          )}
+        </div>
+        {current && (
+          <span className="text-muted text-sm tabular-nums">
+            {formatDuration(current.durationMs)}
+          </span>
+        )}
+      </footer>
+
+      <audio ref={audioRef} preload="auto" crossOrigin="anonymous" />
     </main>
   );
 }
