@@ -52,3 +52,51 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+/*
+ * Brutalist range slider — la `<input type="range">` por default trae
+ * estilos redondeados que contradicen la identidad. Aquí la repintamos:
+ * track de 2px en --color-fg, thumb cuadrado de 4×16 en --color-accent.
+ */
+.range-brutal {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  height: 16px;
+  padding: 0;
+}
+
+.range-brutal::-webkit-slider-runnable-track {
+  background: var(--color-fg);
+  height: 2px;
+  border: 0;
+}
+.range-brutal::-moz-range-track {
+  background: var(--color-fg);
+  height: 2px;
+  border: 0;
+}
+
+.range-brutal::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--color-accent);
+  border: 0;
+  border-radius: 0;
+  width: 4px;
+  height: 16px;
+  margin-top: -7px;
+}
+.range-brutal::-moz-range-thumb {
+  background: var(--color-accent);
+  border: 0;
+  border-radius: 0;
+  width: 4px;
+  height: 16px;
+}
+
+.range-brutal:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
