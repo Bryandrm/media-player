@@ -119,3 +119,29 @@
   0% { left: -33%; }
   100% { left: 100%; }
 }
+
+/*
+ * Marquesina hover: el texto que no entra se trunca con ellipsis por default
+ * y al hacer hover se desplaza para revelarlo entero, espera, vuelve, repite.
+ * `--marquee-distance` y `--marquee-duration` los inyecta MarqueeText desde JS.
+ */
+.marquee-inner {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.marquee-host:hover .marquee-inner {
+  text-overflow: clip;
+  overflow: visible;
+  width: max-content;
+  animation: marquee-scroll var(--marquee-duration, 5s) linear infinite;
+}
+
+@keyframes marquee-scroll {
+  0%, 10% { transform: translateX(0); }
+  45%, 55% { transform: translateX(calc(-1 * var(--marquee-distance))); }
+  90%, 100% { transform: translateX(0); }
+}

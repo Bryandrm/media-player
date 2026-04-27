@@ -31,13 +31,26 @@ export function VisualizerCanvas() {
     }
 
     const dpr = window.devicePixelRatio || 1;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+
     const visualizer = butterchurn.createVisualizer(audioCtx, canvas, {
-      width: container.clientWidth,
-      height: container.clientHeight,
+      width: w,
+      height: h,
       pixelRatio: dpr,
       textureRatio: 1,
     });
+    // Crítico: `createVisualizer` recibe width/height en las opts pero NO
+    // las aplica al canvas (al menos en v2.6.7). Sin este call, el canvas
+    // se queda en 300×150 (default HTML) y todos los framebuffers internos
+    // nacen incompletos → zoom-in / esquina recortada / WebGL errors.
+    visualizer.setRendererSize(w, h);
     visualizer.connectAudio(getAudioSource());
+
+    // Defensivo: aseguramos que el canvas en CSS llene el contenedor
+    // (no que adopte el tamaño del buffer en pixels físicos).
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
 
     const startKey = PRESET_KEYS[presetIndex] ?? PRESET_KEYS[0];
     visualizer.loadPreset(PRESETS[startKey], 0);
@@ -55,6 +68,9 @@ export function VisualizerCanvas() {
     // tiene tamaño dictado por el grid → fuente de verdad estable.
     const obs = new ResizeObserver(() => {
       visualizer.setRendererSize(container.clientWidth, container.clientHeight);
+      // Re-forzar el display, por si setRendererSize tocó canvas.style.
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
     });
     obs.observe(container);
 

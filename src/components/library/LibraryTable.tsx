@@ -1,6 +1,7 @@
 import { useLibraryStore } from "../../stores/libraryStore";
 import { usePlayerStore } from "../../stores/playerStore";
 import { formatDuration } from "../../lib/format";
+import { MarqueeText } from "../ui/MarqueeText";
 
 export function LibraryTable() {
   const tracks = useLibraryStore((s) => s.tracks);
@@ -16,14 +17,27 @@ export function LibraryTable() {
   }
 
   return (
-    <table className="w-full border-collapse text-sm">
+    // `table-fixed` fija anchos de columna por la primera fila — sin esto, las
+    // columnas se expanden con el contenido y los títulos largos rompen el
+    // layout en filas multilinea.
+    //
+    // Sacamos ALBUM: en archivos descargados de YouTube casi nunca queda
+    // poblado de forma útil (suele ser el título del video o vacío). Si en
+    // el futuro entra música con tags ID3 ricos y vale la pena, la metemos
+    // de vuelta como columna opcional.
+    <table className="w-full border-collapse text-xs table-fixed">
+      <colgroup>
+        <col className="w-12" />
+        <col className="w-3/5" />
+        <col className="w-2/5" />
+        <col className="w-24" />
+      </colgroup>
       <thead className="sticky top-0 bg-bg">
         <tr className="border-b-2 border-fg text-muted">
-          <th className="text-left px-3 py-2 w-12">#</th>
+          <th className="text-left px-3 py-2">#</th>
           <th className="text-left px-3 py-2">TITLE</th>
           <th className="text-left px-3 py-2">ARTIST</th>
-          <th className="text-left px-3 py-2">ALBUM</th>
-          <th className="text-right px-3 py-2 w-24">DURATION</th>
+          <th className="text-right px-3 py-2">DURATION</th>
         </tr>
       </thead>
       <tbody>
@@ -40,9 +54,12 @@ export function LibraryTable() {
               <td className="px-3 py-2 tabular-nums font-bold">
                 {isCurrent ? "►" : String(i + 1).padStart(2, "0")}
               </td>
-              <td className="px-3 py-2">{t.title}</td>
-              <td className="px-3 py-2">{t.artist ?? "—"}</td>
-              <td className="px-3 py-2">{t.album ?? "—"}</td>
+              <td className="px-3 py-2">
+                <MarqueeText text={t.title} />
+              </td>
+              <td className="px-3 py-2">
+                <MarqueeText text={t.artist ?? "—"} />
+              </td>
               <td className="px-3 py-2 text-right tabular-nums">
                 {formatDuration(t.durationMs)}
               </td>
