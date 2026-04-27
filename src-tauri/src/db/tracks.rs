@@ -14,6 +14,7 @@ pub async fn insert_from_metadata(
     file_path: &Path,
     meta: TrackMetadata,
     source_type: &str,
+    source_url: Option<&str>,
 ) -> AppResult<bool> {
     let file_path_str = file_path.to_string_lossy().into_owned();
 
@@ -21,8 +22,8 @@ pub async fn insert_from_metadata(
         "INSERT INTO tracks (
             file_path, title, artist, album, duration_ms,
             track_number, year, genre,
-            source_type, bitrate, sample_rate, format
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            source_type, source_url, bitrate, sample_rate, format
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO NOTHING",
     )
     .bind(&file_path_str)
@@ -34,6 +35,7 @@ pub async fn insert_from_metadata(
     .bind(meta.year)
     .bind(&meta.genre)
     .bind(source_type)
+    .bind(source_url)
     .bind(meta.bitrate)
     .bind(meta.sample_rate)
     .bind(&meta.format)
@@ -41,6 +43,16 @@ pub async fn insert_from_metadata(
     .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+/// Devuelve el id de un track por file_path, si existe.
+pub async fn find_id_by_path(pool: &SqlitePool, file_path: &Path) -> AppResult<Option<i64>> {
+    let file_path_str = file_path.to_string_lossy().into_owned();
+    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM tracks WHERE file_path = ?")
+        .bind(&file_path_str)
+        .fetch_optional(pool)
+        .await?;
+    Ok(id)
 }
 
 /// Lista todos los tracks ordenados por artista + álbum + número de pista.

@@ -9,7 +9,7 @@ export function VolumeSlider() {
 
   return (
     <div className="flex items-center gap-2 ml-2">
-      <Button onClick={toggleMute} size="sm">
+      <Button onClick={toggleMute} size="sm" className="min-w-[78px]">
         {muted ? "UNMUTE" : "MUTE"}
       </Button>
       <input

@@ -1,8 +1,18 @@
 import { useEffect } from "react";
 import { usePlayerStore } from "../stores/playerStore";
+import { useUiStore } from "../stores/uiStore";
 
 const VOLUME_STEP = 0.05;
 const SEEK_STEP_S = 5;
+
+function toggleCanvasFullscreen() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+    return;
+  }
+  const canvas = document.querySelector("canvas");
+  if (canvas) canvas.requestFullscreen().catch(() => {});
+}
 
 export function useKeyboardShortcuts() {
   useEffect(() => {
@@ -48,6 +58,19 @@ export function useKeyboardShortcuts() {
         case "m":
         case "M":
           s.toggleMute();
+          break;
+        case "v":
+        case "V": {
+          const ui = useUiStore.getState();
+          ui.setView(ui.view === "visualizer" ? "library" : "visualizer");
+          break;
+        }
+        case "f":
+        case "F":
+          if (useUiStore.getState().view === "visualizer") {
+            e.preventDefault();
+            toggleCanvasFullscreen();
+          }
           break;
       }
     };

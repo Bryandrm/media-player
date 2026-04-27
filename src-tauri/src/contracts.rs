@@ -31,3 +31,39 @@ pub struct ScanReport {
     pub skipped: usize,
     pub errors: usize,
 }
+
+/// Estado de las dependencias externas (yt-dlp, ffmpeg). Detectadas al boot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyStatus {
+    pub yt_dlp: bool,
+    pub ffmpeg: bool,
+}
+
+/// Estados terminales o transitorios de una descarga, espejado en la columna
+/// `downloads.status` de la DB.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadStatus {
+    Queued,
+    Downloading,
+    Postprocessing,
+    Completed,
+    Failed,
+    Skipped, // archivo ya existía en disco — no se re-bajó
+}
+
+/// Snapshot de una descarga. Lo que el frontend recibe en la lista del store
+/// y en los eventos `download-*`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Download {
+    pub id: i64,
+    pub url: String,
+    pub status: DownloadStatus,
+    /// 0.0 a 1.0; -1 si yt-dlp aún no reporta total bytes (live streams, etc.).
+    pub progress: f32,
+    pub title: Option<String>,
+    pub error: Option<String>,
+    pub track_id: Option<i64>,
+}

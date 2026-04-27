@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getAudioElement } from "../audio/element";
+import { getAudioContext, getMasterGain } from "../audio/context";
 import { useLibraryStore } from "./libraryStore";
 import type { Track } from "../types";
 
@@ -50,6 +51,15 @@ export const usePlayerStore = create<PlayerState>()(
         audio.src = convertFileSrc(track.filePath);
         set({ currentTrackId: track.id, currentTime: 0, duration: 0 });
         audio.play().catch(ignoreAbort);
+        // Bootstrap el grafo Web Audio desde el primer play() — en este punto
+        // tenemos un user gesture activo, así el AudioContext nace en 'running'.
+        // Si el visualizer se abre después, ya hay source conectado a destination.
+        const ctx = getAudioContext();
+        if (ctx.state === "suspended") ctx.resume().catch(() => {});
+        // El gain nace en 1.0 por default. Si el store tiene un volumen
+        // persistido distinto, hay que aplicarlo ahora.
+        const { volume, muted } = get();
+        getMasterGain().gain.value = muted ? 0 : volume;
       },
 
       togglePlay: async () => {
@@ -73,13 +83,13 @@ export const usePlayerStore = create<PlayerState>()(
 
       setVolume: (v) => {
         const clamped = Math.max(0, Math.min(1, v));
-        getAudioElement().volume = clamped;
+        if (!get().muted) getMasterGain().gain.value = clamped;
         set({ volume: clamped });
       },
 
       toggleMute: () => {
         const next = !get().muted;
-        getAudioElement().muted = next;
+        getMasterGain().gain.value = next ? 0 : get().volume;
         set({ muted: next });
       },
 

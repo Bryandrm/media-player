@@ -17,3 +17,27 @@ export type ScanReport = {
   skipped: number;
   errors: number;
 };
+
+export type DependencyStatus = {
+  ytDlp: boolean;
+  ffmpeg: boolean;
+};
+
+export type DownloadStatus =
+  | "queued"
+  | "downloading"
+  | "postprocessing"
+  | "completed"
+  | "failed"
+  | "skipped";
+
+export type Download = {
+  id: number;
+  url: string;
+  status: DownloadStatus;
+  /** 0..1; -1 = indeterminado (yt-dlp aún no reporta total). */
+  progress: number;
+  title: string | null;
+  error: string | null;
+  trackId: number | null;
+};

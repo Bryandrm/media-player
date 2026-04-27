@@ -63,7 +63,7 @@ pub async fn library_scan_directory(
             // Ejecutar el insert async desde un contexto blocking: usamos
             // tauri::async_runtime::block_on. Cada insert es <1ms normalmente.
             let insert_result = tauri::async_runtime::block_on(
-                db::tracks::insert_from_metadata(&pool_for_blocking, file_path, meta, "local"),
+                db::tracks::insert_from_metadata(&pool_for_blocking, file_path, meta, "local", None),
             );
 
             match insert_result {

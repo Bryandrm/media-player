@@ -1,30 +1,40 @@
 import { useEffect } from "react";
 import { useLibraryStore } from "./stores/libraryStore";
+import { useDownloadStore } from "./stores/downloadStore";
+import { useUiStore } from "./stores/uiStore";
 import { useAudioPlayer } from "./hooks/useAudioPlayer";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { useDownloadEvents } from "./hooks/useDownloadEvents";
+import { Tabs } from "./components/ui/Tabs";
 import { LibraryToolbar } from "./components/library/LibraryToolbar";
 import { LibraryTable } from "./components/library/LibraryTable";
 import { PlayerBar } from "./components/player/PlayerBar";
+import { VisualizerView } from "./components/visualizer/VisualizerView";
+import { DownloadsView } from "./components/downloads/DownloadsView";
 
 function App() {
   const loadTracks = useLibraryStore((s) => s.loadTracks);
   const error = useLibraryStore((s) => s.error);
+  const checkDependencies = useDownloadStore((s) => s.checkDependencies);
+  const view = useUiStore((s) => s.view);
 
   useAudioPlayer();
   useKeyboardShortcuts();
+  useDownloadEvents();
 
   useEffect(() => {
     loadTracks();
-  }, [loadTracks]);
+    checkDependencies();
+  }, [loadTracks, checkDependencies]);
 
   return (
     <main className="flex flex-col h-screen">
-      <header className="px-6 py-4 border-b-2 border-fg flex items-baseline gap-4">
+      <header className="px-6 py-4 border-b-2 border-fg flex items-center gap-6">
         <h1 className="text-lg font-bold tracking-wider">BRUTALIST // PLAYER</h1>
-        <span className="text-muted text-xs">LIBRARY</span>
+        <Tabs />
       </header>
 
-      <LibraryToolbar />
+      {view === "library" && <LibraryToolbar />}
 
       {error && (
         <div className="px-6 py-2 border-b-2 border-accent text-accent text-sm">
@@ -32,8 +42,14 @@ function App() {
         </div>
       )}
 
-      <div className="flex-1 overflow-auto">
-        <LibraryTable />
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {view === "library" && (
+          <div className="h-full overflow-auto">
+            <LibraryTable />
+          </div>
+        )}
+        {view === "downloads" && <DownloadsView />}
+        {view === "visualizer" && <VisualizerView />}
       </div>
 
       <PlayerBar />

@@ -27,6 +27,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::library::library_scan_directory,
             commands::library::library_list_tracks,
+            commands::system::check_dependencies,
+            commands::downloader::download_track,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
