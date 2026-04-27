@@ -63,7 +63,14 @@ export const usePlayerStore = create<PlayerState>()(
       },
 
       togglePlay: async () => {
-        if (get().currentTrackId === null) return;
+        // Si no hay nada cargado pero la library tiene tracks, arrancamos
+        // con el primero — atajo cómodo: PLAY desde cero sin tener que
+        // clickear una fila.
+        if (get().currentTrackId === null) {
+          const first = useLibraryStore.getState().tracks[0];
+          if (first) get().playTrack(first);
+          return;
+        }
         const audio = getAudioElement();
         if (audio.paused) {
           try {

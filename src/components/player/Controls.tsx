@@ -15,6 +15,9 @@ export function Controls() {
       ? -1
       : tracks.findIndex((t) => t.id === currentTrackId);
   const hasTrack = currentTrackId !== null;
+  // PLAY se habilita si hay un track cargado O si hay tracks en la library
+  // (en ese caso togglePlay arranca con el primero).
+  const canPlay = hasTrack || tracks.length > 0;
   const hasPrev = idx > 0;
   const hasNext = idx >= 0 && idx < tracks.length - 1;
 
@@ -25,7 +28,7 @@ export function Controls() {
       </Button>
       <Button
         onClick={togglePlay}
-        disabled={!hasTrack}
+        disabled={!canPlay}
         className="min-w-[90px]"
       >
         {isPlaying ? "PAUSE" : "PLAY"}

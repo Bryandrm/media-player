@@ -100,3 +100,22 @@
   cursor: not-allowed;
   opacity: 0.4;
 }
+
+/*
+ * Progress bar indeterminado: bloque accent de 1/3 que se barre de izquierda
+ * a derecha en loop. Linear motion (no easing) para conservar el aesthetic
+ * brutalist — la animación es la única "soft" cosa permitida.
+ */
+.progress-indeterminate {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 33%;
+  background: var(--color-accent);
+  animation: progress-indeterminate-slide 1100ms linear infinite;
+}
+
+@keyframes progress-indeterminate-slide {
+  0% { left: -33%; }
+  100% { left: 100%; }
+}

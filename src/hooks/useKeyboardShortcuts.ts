@@ -25,7 +25,8 @@ export function useKeyboardShortcuts() {
 
       switch (e.key) {
         case " ":
-          if (!hasTrack) return;
+          // Space dispara togglePlay siempre — si no hay track cargado, la
+          // store action arranca con el primero de la library.
           e.preventDefault();
           s.togglePlay();
           break;
