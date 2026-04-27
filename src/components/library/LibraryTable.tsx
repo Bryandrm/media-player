@@ -1,0 +1,55 @@
+import { useLibraryStore } from "../../stores/libraryStore";
+import { usePlayerStore } from "../../stores/playerStore";
+import { formatDuration } from "../../lib/format";
+
+export function LibraryTable() {
+  const tracks = useLibraryStore((s) => s.tracks);
+  const currentTrackId = usePlayerStore((s) => s.currentTrackId);
+  const playTrack = usePlayerStore((s) => s.playTrack);
+
+  if (tracks.length === 0) {
+    return (
+      <div className="p-12 text-center text-muted">
+        NO TRACKS. SCAN A DIRECTORY TO POPULATE THE LIBRARY.
+      </div>
+    );
+  }
+
+  return (
+    <table className="w-full border-collapse text-sm">
+      <thead className="sticky top-0 bg-bg">
+        <tr className="border-b-2 border-fg text-muted">
+          <th className="text-left px-3 py-2 w-12">#</th>
+          <th className="text-left px-3 py-2">TITLE</th>
+          <th className="text-left px-3 py-2">ARTIST</th>
+          <th className="text-left px-3 py-2">ALBUM</th>
+          <th className="text-right px-3 py-2 w-24">DURATION</th>
+        </tr>
+      </thead>
+      <tbody>
+        {tracks.map((t, i) => {
+          const isCurrent = t.id === currentTrackId;
+          return (
+            <tr
+              key={t.id}
+              onClick={() => playTrack(t)}
+              className={`cursor-pointer border-b border-muted/40 ${
+                isCurrent ? "bg-accent text-bg" : "hover:bg-fg hover:text-bg"
+              }`}
+            >
+              <td className="px-3 py-2 tabular-nums font-bold">
+                {isCurrent ? "►" : String(i + 1).padStart(2, "0")}
+              </td>
+              <td className="px-3 py-2">{t.title}</td>
+              <td className="px-3 py-2">{t.artist ?? "—"}</td>
+              <td className="px-3 py-2">{t.album ?? "—"}</td>
+              <td className="px-3 py-2 text-right tabular-nums">
+                {formatDuration(t.durationMs)}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}

@@ -1,0 +1,57 @@
+import { useEffect } from "react";
+import { usePlayerStore } from "../stores/playerStore";
+
+const VOLUME_STEP = 0.05;
+const SEEK_STEP_S = 5;
+
+export function useKeyboardShortcuts() {
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+      const s = usePlayerStore.getState();
+      const hasTrack = s.currentTrackId !== null;
+
+      switch (e.key) {
+        case " ":
+          if (!hasTrack) return;
+          e.preventDefault();
+          s.togglePlay();
+          break;
+        case "ArrowLeft":
+          if (!hasTrack) return;
+          e.preventDefault();
+          s.seek(Math.max(0, s.currentTime - SEEK_STEP_S));
+          break;
+        case "ArrowRight":
+          if (!hasTrack) return;
+          e.preventDefault();
+          s.seek(Math.min(s.duration, s.currentTime + SEEK_STEP_S));
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          s.setVolume(s.volume + VOLUME_STEP);
+          break;
+        case "ArrowDown":
+          e.preventDefault();
+          s.setVolume(s.volume - VOLUME_STEP);
+          break;
+        case "n":
+        case "N":
+          s.next();
+          break;
+        case "p":
+        case "P":
+          s.prev();
+          break;
+        case "m":
+        case "M":
+          s.toggleMute();
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+}
