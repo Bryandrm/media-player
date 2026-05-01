@@ -13,12 +13,18 @@ type PlayerState = {
   duration: number;
   volume: number;
   muted: boolean;
+  shuffle: boolean;
+  /** Stack de trackIds reproducidos, más recientes al final. Se usa para que
+   *  `prev` en modo shuffle te lleve al track previo real, no a otro random.
+   *  No se persiste — un reload reinicia el stack. */
+  playHistory: number[];
 
   playTrack: (track: Track) => void;
   togglePlay: () => Promise<void>;
   seek: (time: number) => void;
   setVolume: (v: number) => void;
   toggleMute: () => void;
+  toggleShuffle: () => void;
   next: () => void;
   prev: () => void;
 
@@ -36,100 +42,159 @@ const ignoreAbort = (e: unknown) => {
   console.error("audio play failed:", e);
 };
 
+const HISTORY_CAP = 64;
+
 export const usePlayerStore = create<PlayerState>()(
   persist(
-    (set, get) => ({
-      currentTrackId: null,
-      isPlaying: false,
-      currentTime: 0,
-      duration: 0,
-      volume: 1,
-      muted: false,
-
-      playTrack: (track) => {
+    (set, get) => {
+      // Carga + reproduce un track sin tocar el playHistory. La usan tanto
+      // playTrack (que primero pushea al historial) como prev (que pop-ea).
+      const loadAndPlay = (track: Track) => {
         const audio = getAudioElement();
         audio.src = convertFileSrc(track.filePath);
         set({ currentTrackId: track.id, currentTime: 0, duration: 0 });
         audio.play().catch(ignoreAbort);
-        // Bootstrap el grafo Web Audio desde el primer play() — en este punto
-        // tenemos un user gesture activo, así el AudioContext nace en 'running'.
-        // Si el visualizer se abre después, ya hay source conectado a destination.
+        // Bootstrap del grafo Web Audio desde el primer play() — en este
+        // punto tenemos user gesture activo, AudioContext nace en 'running'.
         const ctx = getAudioContext();
         if (ctx.state === "suspended") ctx.resume().catch(() => {});
-        // El gain nace en 1.0 por default. Si el store tiene un volumen
-        // persistido distinto, hay que aplicarlo ahora.
         const { volume, muted } = get();
         getMasterGain().gain.value = muted ? 0 : volume;
-      },
+      };
 
-      togglePlay: async () => {
-        // Si no hay nada cargado pero la library tiene tracks, arrancamos
-        // con el primero — atajo cómodo: PLAY desde cero sin tener que
-        // clickear una fila.
-        if (get().currentTrackId === null) {
-          const first = useLibraryStore.getState().tracks[0];
-          if (first) get().playTrack(first);
-          return;
-        }
-        const audio = getAudioElement();
-        if (audio.paused) {
-          try {
-            await audio.play();
-          } catch (e) {
-            ignoreAbort(e);
+      // Devuelve un track random distinto al actual. Usado por next() en
+      // modo shuffle.
+      const pickRandomTrack = (currentId: number | null): Track | undefined => {
+        const tracks = useLibraryStore.getState().tracks;
+        if (tracks.length === 0) return undefined;
+        if (tracks.length === 1) return tracks[0];
+        let candidate: Track;
+        do {
+          candidate = tracks[Math.floor(Math.random() * tracks.length)];
+        } while (candidate.id === currentId);
+        return candidate;
+      };
+
+      return {
+        currentTrackId: null,
+        isPlaying: false,
+        currentTime: 0,
+        duration: 0,
+        volume: 1,
+        muted: false,
+        shuffle: false,
+        playHistory: [],
+
+        playTrack: (track) => {
+          // Antes de cambiar, archivamos el track actual al historial. Si
+          // estás clickeando el mismo track de nuevo, no duplicamos.
+          const currentId = get().currentTrackId;
+          if (currentId !== null && currentId !== track.id) {
+            const next = [...get().playHistory, currentId];
+            set({
+              playHistory:
+                next.length > HISTORY_CAP ? next.slice(-HISTORY_CAP) : next,
+            });
           }
-        } else {
-          audio.pause();
-        }
-      },
+          loadAndPlay(track);
+        },
 
-      seek: (time) => {
-        if (!isFinite(time)) return;
-        getAudioElement().currentTime = time;
-      },
+        togglePlay: async () => {
+          if (get().currentTrackId === null) {
+            const first = useLibraryStore.getState().tracks[0];
+            if (first) get().playTrack(first);
+            return;
+          }
+          const audio = getAudioElement();
+          if (audio.paused) {
+            try {
+              await audio.play();
+            } catch (e) {
+              ignoreAbort(e);
+            }
+          } else {
+            audio.pause();
+          }
+        },
 
-      setVolume: (v) => {
-        const clamped = Math.max(0, Math.min(1, v));
-        if (!get().muted) getMasterGain().gain.value = clamped;
-        set({ volume: clamped });
-      },
+        seek: (time) => {
+          if (!isFinite(time)) return;
+          getAudioElement().currentTime = time;
+        },
 
-      toggleMute: () => {
-        const next = !get().muted;
-        getMasterGain().gain.value = next ? 0 : get().volume;
-        set({ muted: next });
-      },
+        setVolume: (v) => {
+          const clamped = Math.max(0, Math.min(1, v));
+          if (!get().muted) getMasterGain().gain.value = clamped;
+          set({ volume: clamped });
+        },
 
-      next: () => {
-        const tracks = useLibraryStore.getState().tracks;
-        const id = get().currentTrackId;
-        if (id === null) return;
-        const idx = tracks.findIndex((t) => t.id === id);
-        const target = idx >= 0 ? tracks[idx + 1] : undefined;
-        if (target) get().playTrack(target);
-      },
+        toggleMute: () => {
+          const next = !get().muted;
+          getMasterGain().gain.value = next ? 0 : get().volume;
+          set({ muted: next });
+        },
 
-      prev: () => {
-        const tracks = useLibraryStore.getState().tracks;
-        const id = get().currentTrackId;
-        if (id === null) return;
-        const idx = tracks.findIndex((t) => t.id === id);
-        const target = idx > 0 ? tracks[idx - 1] : undefined;
-        if (target) get().playTrack(target);
-      },
+        toggleShuffle: () => set({ shuffle: !get().shuffle }),
 
-      _onTimeUpdate: (t) => set({ currentTime: t }),
-      _onDuration: (d) => set({ duration: d }),
-      _onPlay: () => set({ isPlaying: true }),
-      _onPause: () => set({ isPlaying: false }),
-      _onEnded: () => {
-        set({ isPlaying: false });
-        get().next();
-      },
-    }),
+        next: () => {
+          const id = get().currentTrackId;
+          if (id === null) return;
+
+          if (get().shuffle) {
+            const target = pickRandomTrack(id);
+            if (target) get().playTrack(target);
+            return;
+          }
+
+          const tracks = useLibraryStore.getState().tracks;
+          const idx = tracks.findIndex((t) => t.id === id);
+          const target = idx >= 0 ? tracks[idx + 1] : undefined;
+          if (target) get().playTrack(target);
+        },
+
+        prev: () => {
+          const id = get().currentTrackId;
+          if (id === null) return;
+
+          // En shuffle, prev despega del historial (el último track previo
+          // realmente reproducido). Sin historial, fallback a sequential.
+          if (get().shuffle) {
+            const history = get().playHistory;
+            const lastId = history[history.length - 1];
+            if (lastId !== undefined) {
+              const tracks = useLibraryStore.getState().tracks;
+              const target = tracks.find((t) => t.id === lastId);
+              if (target) {
+                set({ playHistory: history.slice(0, -1) });
+                loadAndPlay(target);
+                return;
+              }
+            }
+          }
+
+          const tracks = useLibraryStore.getState().tracks;
+          const idx = tracks.findIndex((t) => t.id === id);
+          const target = idx > 0 ? tracks[idx - 1] : undefined;
+          if (target) get().playTrack(target);
+        },
+
+        _onTimeUpdate: (t) => set({ currentTime: t }),
+        _onDuration: (d) => set({ duration: d }),
+        _onPlay: () => set({ isPlaying: true }),
+        _onPause: () => set({ isPlaying: false }),
+        _onEnded: () => {
+          set({ isPlaying: false });
+          get().next();
+        },
+      };
+    },
     {
       name: "brutalist-player:player",
-      partialize: (state) => ({ volume: state.volume, muted: state.muted }),
+      partialize: (state) => ({
+        volume: state.volume,
+        muted: state.muted,
+        shuffle: state.shuffle,
+      }),
     },
   ),
 );

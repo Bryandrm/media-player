@@ -60,6 +60,10 @@ export function useKeyboardShortcuts() {
         case "M":
           s.toggleMute();
           break;
+        case "s":
+        case "S":
+          s.toggleShuffle();
+          break;
         case "v":
         case "V": {
           const ui = useUiStore.getState();

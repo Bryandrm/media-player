@@ -45,12 +45,7 @@ export function PresetSelector() {
         <Button
           onClick={toggleRandom}
           size="sm"
-          // Active = naranja accent. Cuando está activo, el hover no cambia
-          // nada (porque ya es accent). En off, el hover sigue siendo accent
-          // — así el usuario ve un "preview" del color al pasar por encima.
-          className={
-            autoCycle ? "bg-accent text-bg border-accent hover:bg-accent" : ""
-          }
+          variant={autoCycle ? "active" : "default"}
           aria-pressed={autoCycle}
         >
           RANDOM
