@@ -100,17 +100,11 @@ pub async fn download_track(
         Ok(file_path) => {
             let pool_ref = pool.inner();
 
-            // Skipped vs Completed: si el archivo final ya estaba mapeado en
-            // tracks, era una re-descarga del mismo track. Esto pasa con
-            // --no-overwrites cuando el archivo ya existía en disco.
-            let pre_existed = db::tracks::find_id_by_path(pool_ref, &file_path)
-                .await?
-                .is_some();
-
             let meta = audio::extract_metadata(&file_path)
                 .map_err(|e| AppError::Other(format!("metadata read failed: {}", e)))?;
             let title = meta.title.clone();
-            db::tracks::insert_from_metadata(
+
+            let inserted_id = db::tracks::insert_from_metadata(
                 pool_ref,
                 &file_path,
                 meta,
@@ -119,11 +113,27 @@ pub async fn download_track(
             )
             .await?;
 
-            let track_id = db::tracks::find_id_by_path(pool_ref, &file_path).await?;
-            let status = if pre_existed {
-                DownloadStatus::Skipped
-            } else {
-                DownloadStatus::Completed
+            // Si insertó nuevo, extraemos el cover art (yt-dlp ya embebió el
+            // thumbnail con `--embed-thumbnail`, así que casi siempre va a
+            // haber). Si era re-download (skipped), no tocamos el cover
+            // existente.
+            let (status, track_id) = match inserted_id {
+                Some(id) => {
+                    let cache_dir = app
+                        .path()
+                        .app_cache_dir()
+                        .map_err(|e| AppError::Other(format!("cache dir unavailable: {}", e)))?;
+                    if let Ok(Some(cover_path)) =
+                        audio::extract_cover_art(&file_path, id, &cache_dir)
+                    {
+                        let _ = db::tracks::set_cover_art(pool_ref, id, Some(&cover_path)).await;
+                    }
+                    (DownloadStatus::Completed, Some(id))
+                }
+                None => {
+                    let id = db::tracks::find_id_by_path(pool_ref, &file_path).await?;
+                    (DownloadStatus::Skipped, id)
+                }
             };
 
             let download = Download {

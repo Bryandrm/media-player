@@ -20,6 +20,10 @@ pub struct Track {
     pub year: Option<i64>,
     pub genre: Option<String>,
     pub format: Option<String>,
+    /// Ruta absoluta a la imagen de cover. Puede apuntar al cache
+    /// (`<app_cache>/thumbnails/<id>.jpg`) o a un sibling como `cover.jpg`
+    /// dentro de la carpeta del track. NULL si no encontramos nada.
+    pub cover_art_path: Option<String>,
 }
 
 /// Reporte de un scan de directorio.

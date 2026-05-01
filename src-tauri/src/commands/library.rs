@@ -2,7 +2,7 @@
 
 use sqlx::SqlitePool;
 use std::path::PathBuf;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 use walkdir::WalkDir;
 
 use crate::audio;
@@ -15,9 +15,12 @@ use crate::errors::{AppError, AppResult};
 ///
 /// Tracks ya existentes (por `file_path`) se saltean silenciosamente — esto
 /// hace el scan idempotente: re-escanear el mismo directorio no duplica.
+/// Para tracks recién insertados, también extrae el cover art (embebido o
+/// sibling cover.jpg) y lo guarda en `<app_cache>/thumbnails/<id>.<ext>`.
 #[tauri::command]
 pub async fn library_scan_directory(
     path: String,
+    app: AppHandle,
     pool: State<'_, SqlitePool>,
 ) -> AppResult<ScanReport> {
     let root = PathBuf::from(&path);
@@ -27,6 +30,11 @@ pub async fn library_scan_directory(
             root.display()
         )));
     }
+
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| AppError::Other(format!("cache dir unavailable: {}", e)))?;
 
     // Recorrido + lectura de metadata en un pool de blocking threads —
     // lofty es sync y no queremos bloquear el runtime async principal.
@@ -67,8 +75,21 @@ pub async fn library_scan_directory(
             );
 
             match insert_result {
-                Ok(true) => report.inserted += 1,
-                Ok(false) => report.skipped += 1,
+                Ok(Some(track_id)) => {
+                    report.inserted += 1;
+                    // Cover art: best-effort, no marcamos error si falla — el
+                    // track sigue siendo válido sin imagen.
+                    if let Ok(Some(cover_path)) =
+                        audio::extract_cover_art(file_path, track_id, &cache_dir)
+                    {
+                        let _ = tauri::async_runtime::block_on(db::tracks::set_cover_art(
+                            &pool_for_blocking,
+                            track_id,
+                            Some(&cover_path),
+                        ));
+                    }
+                }
+                Ok(None) => report.skipped += 1,
                 Err(e) => {
                     eprintln!("[scan] insert failed {}: {}", file_path.display(), e);
                     report.errors += 1;
@@ -97,4 +118,65 @@ pub async fn library_scan_directory(
 #[tauri::command]
 pub async fn library_list_tracks(pool: State<'_, SqlitePool>) -> AppResult<Vec<Track>> {
     db::tracks::list_all(&pool).await
+}
+
+/// Para tracks ya en DB que no tienen `cover_art_path` (típicamente tracks
+/// agregados antes de que existiera el feature de cover art), intenta extraer
+/// cover ahora. Devuelve la cantidad de tracks que se actualizaron.
+///
+/// Se llama una vez al boot desde el frontend. Idempotente: re-llamarlo
+/// es seguro pero hace cero trabajo si todos los tracks ya tienen cover.
+#[tauri::command]
+pub async fn library_backfill_covers(
+    app: AppHandle,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<usize> {
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| AppError::Other(format!("cache dir unavailable: {}", e)))?;
+    let pool_for_blocking = pool.inner().clone();
+
+    let count = tauri::async_runtime::spawn_blocking(move || -> usize {
+        let pending: Vec<(i64, String)> = match tauri::async_runtime::block_on(
+            sqlx::query_as::<_, (i64, String)>(
+                "SELECT id, file_path FROM tracks WHERE cover_art_path IS NULL",
+            )
+            .fetch_all(&pool_for_blocking),
+        ) {
+            Ok(rows) => rows,
+            Err(e) => {
+                eprintln!("[backfill] query failed: {}", e);
+                return 0;
+            }
+        };
+
+        let mut updated = 0;
+        for (id, path_str) in pending {
+            let path = PathBuf::from(&path_str);
+            if !path.is_file() {
+                continue;
+            }
+            if let Ok(Some(cover_path)) = audio::extract_cover_art(&path, id, &cache_dir) {
+                if tauri::async_runtime::block_on(db::tracks::set_cover_art(
+                    &pool_for_blocking,
+                    id,
+                    Some(&cover_path),
+                ))
+                .is_ok()
+                {
+                    updated += 1;
+                }
+            }
+        }
+        updated
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("backfill task joined with error: {}", e)))?;
+
+    if count > 0 {
+        eprintln!("[backfill] cover_art populated for {} tracks", count);
+    }
+
+    Ok(count)
 }

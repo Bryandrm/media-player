@@ -8,14 +8,15 @@ use crate::contracts::Track;
 use crate::errors::AppResult;
 
 /// Inserta un track. Si el `file_path` ya existe, no hace nada (UNIQUE constraint
-/// + ON CONFLICT DO NOTHING → idempotente). Devuelve `true` si se insertó.
+/// + ON CONFLICT DO NOTHING → idempotente). Devuelve `Some(id)` si se insertó
+/// una fila nueva, `None` si era duplicado y se saltó.
 pub async fn insert_from_metadata(
     pool: &SqlitePool,
     file_path: &Path,
     meta: TrackMetadata,
     source_type: &str,
     source_url: Option<&str>,
-) -> AppResult<bool> {
+) -> AppResult<Option<i64>> {
     let file_path_str = file_path.to_string_lossy().into_owned();
 
     let result = sqlx::query(
@@ -42,7 +43,11 @@ pub async fn insert_from_metadata(
     .execute(pool)
     .await?;
 
-    Ok(result.rows_affected() > 0)
+    if result.rows_affected() > 0 {
+        Ok(Some(result.last_insert_rowid()))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Devuelve el id de un track por file_path, si existe.
@@ -55,11 +60,26 @@ pub async fn find_id_by_path(pool: &SqlitePool, file_path: &Path) -> AppResult<O
     Ok(id)
 }
 
+/// Setea (o limpia) la ruta de cover art para un track existente.
+pub async fn set_cover_art(
+    pool: &SqlitePool,
+    track_id: i64,
+    cover_path: Option<&Path>,
+) -> AppResult<()> {
+    let cover_str = cover_path.map(|p| p.to_string_lossy().into_owned());
+    sqlx::query("UPDATE tracks SET cover_art_path = ? WHERE id = ?")
+        .bind(cover_str)
+        .bind(track_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Lista todos los tracks ordenados por artista + álbum + número de pista.
 pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Track>> {
     let rows = sqlx::query_as::<_, Track>(
         "SELECT id, file_path, title, artist, album, duration_ms,
-                track_number, year, genre, format
+                track_number, year, genre, format, cover_art_path
          FROM tracks
          ORDER BY
            COALESCE(artist, 'ZZZ'),

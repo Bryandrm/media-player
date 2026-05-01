@@ -14,6 +14,7 @@ import { DownloadsView } from "./components/downloads/DownloadsView";
 
 function App() {
   const loadTracks = useLibraryStore((s) => s.loadTracks);
+  const backfillCovers = useLibraryStore((s) => s.backfillCovers);
   const error = useLibraryStore((s) => s.error);
   const checkDependencies = useDownloadStore((s) => s.checkDependencies);
   const view = useUiStore((s) => s.view);
@@ -23,9 +24,9 @@ function App() {
   useDownloadEvents();
 
   useEffect(() => {
-    loadTracks();
+    loadTracks().then(() => backfillCovers());
     checkDependencies();
-  }, [loadTracks, checkDependencies]);
+  }, [loadTracks, backfillCovers, checkDependencies]);
 
   return (
     <main className="flex flex-col h-screen">

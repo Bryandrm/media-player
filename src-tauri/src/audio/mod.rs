@@ -5,7 +5,7 @@
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::prelude::*;
 use lofty::probe::Probe;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::errors::{AppError, AppResult};
 
@@ -86,4 +86,65 @@ pub fn extract_metadata(path: &Path) -> AppResult<TrackMetadata> {
         sample_rate,
         format,
     })
+}
+
+/// Nombres de archivos comunes para cover art al lado del audio (ripeos
+/// tradicionales con foobar/EAC/etc).
+const SIBLING_COVER_NAMES: &[&str] = &[
+    "cover.jpg",
+    "cover.png",
+    "Cover.jpg",
+    "Cover.png",
+    "folder.jpg",
+    "folder.png",
+    "Folder.jpg",
+    "Folder.png",
+    "front.jpg",
+    "front.png",
+    "AlbumArt.jpg",
+];
+
+/// Extrae cover art de un archivo de audio. Estrategia:
+/// 1. Si el archivo tiene picture embebido (mp3 con APIC, FLAC METADATA_BLOCK_PICTURE,
+///    m4a covr atom), lo escribe a `<cache_dir>/thumbnails/<track_id>.<ext>`.
+/// 2. Si no, busca un cover.jpg / folder.jpg / etc al lado del archivo y
+///    devuelve esa ruta directamente (sin copiar — `convertFileSrc` puede
+///    leer cualquier path).
+/// 3. Si no hay nada, devuelve `Ok(None)`.
+pub fn extract_cover_art(
+    file_path: &Path,
+    track_id: i64,
+    cache_dir: &Path,
+) -> AppResult<Option<PathBuf>> {
+    // 1) Picture embebido vía lofty
+    let probe_result = Probe::open(file_path).and_then(|p| p.read());
+    if let Ok(tagged_file) = probe_result {
+        let tag = tagged_file.primary_tag().or_else(|| tagged_file.first_tag());
+        if let Some(tag) = tag {
+            if let Some(picture) = tag.pictures().first() {
+                let ext = picture
+                    .mime_type()
+                    .and_then(|m| m.ext())
+                    .unwrap_or("jpg");
+                let thumbs_dir = cache_dir.join("thumbnails");
+                std::fs::create_dir_all(&thumbs_dir)?;
+                let out_path = thumbs_dir.join(format!("{}.{}", track_id, ext));
+                std::fs::write(&out_path, picture.data())?;
+                return Ok(Some(out_path));
+            }
+        }
+    }
+
+    // 2) Fallback: sibling cover.jpg / folder.jpg / etc.
+    if let Some(parent) = file_path.parent() {
+        for name in SIBLING_COVER_NAMES {
+            let candidate = parent.join(name);
+            if candidate.is_file() {
+                return Ok(Some(candidate));
+            }
+        }
+    }
+
+    // 3) Sin cover.
+    Ok(None)
 }

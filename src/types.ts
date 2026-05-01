@@ -9,6 +9,9 @@ export type Track = {
   year: number | null;
   genre: string | null;
   format: string | null;
+  /** Ruta absoluta al cover art (cache thumbnail o sibling cover.jpg).
+   *  null si no hay imagen disponible. Se sirve vía `convertFileSrc()`. */
+  coverArtPath: string | null;
 };
 
 export type ScanReport = {
