@@ -44,11 +44,7 @@ function App() {
       )}
 
       <div className="flex-1 min-h-0 overflow-hidden">
-        {view === "library" && (
-          <div className="h-full overflow-auto">
-            <LibraryTable />
-          </div>
-        )}
+        {view === "library" && <LibraryTable />}
         {view === "downloads" && <DownloadsView />}
         {view === "visualizer" && <VisualizerView />}
       </div>

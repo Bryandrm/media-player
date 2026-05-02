@@ -8,8 +8,11 @@ type LibraryState = {
   scanning: boolean;
   lastReport: ScanReport | null;
   error: string | null;
+  /** Query del search input. No se persiste — ephemeral por sesión. */
+  searchQuery: string;
 
   setError: (e: string | null) => void;
+  setSearchQuery: (q: string) => void;
   loadTracks: () => Promise<void>;
   backfillCovers: () => Promise<void>;
   scanDirectory: () => Promise<void>;
@@ -20,8 +23,10 @@ export const useLibraryStore = create<LibraryState>((set) => ({
   scanning: false,
   lastReport: null,
   error: null,
+  searchQuery: "",
 
   setError: (e) => set({ error: e }),
+  setSearchQuery: (q) => set({ searchQuery: q }),
 
   loadTracks: async () => {
     try {

@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getAudioElement } from "../audio/element";
 import { getAudioContext, getMasterGain } from "../audio/context";
+import { filterTracks } from "../lib/search";
 import { useLibraryStore } from "./libraryStore";
 import type { Track } from "../types";
 
@@ -63,16 +64,26 @@ export const usePlayerStore = create<PlayerState>()(
       };
 
       // Devuelve un track random distinto al actual. Usado por next() en
-      // modo shuffle.
-      const pickRandomTrack = (currentId: number | null): Track | undefined => {
-        const tracks = useLibraryStore.getState().tracks;
-        if (tracks.length === 0) return undefined;
-        if (tracks.length === 1) return tracks[0];
+      // modo shuffle. La pool es la queue actual (respeta filtro de search).
+      const pickRandomTrack = (
+        queue: Track[],
+        currentId: number | null,
+      ): Track | undefined => {
+        if (queue.length === 0) return undefined;
+        if (queue.length === 1) return queue[0];
         let candidate: Track;
         do {
-          candidate = tracks[Math.floor(Math.random() * tracks.length)];
+          candidate = queue[Math.floor(Math.random() * queue.length)];
         } while (candidate.id === currentId);
         return candidate;
+      };
+
+      // La "queue" efectiva es siempre el subset filtrado por el search
+      // actual. Buscar "rock" → next/prev navegan sólo entre los matches.
+      // Si no hay query, queue === todos los tracks.
+      const getQueue = (): Track[] => {
+        const { tracks, searchQuery } = useLibraryStore.getState();
+        return filterTracks(tracks, searchQuery);
       };
 
       return {
@@ -101,7 +112,9 @@ export const usePlayerStore = create<PlayerState>()(
 
         togglePlay: async () => {
           if (get().currentTrackId === null) {
-            const first = useLibraryStore.getState().tracks[0];
+            // Si hay search activo, arranca con el primer match — más
+            // consistente con lo que el usuario está viendo.
+            const first = getQueue()[0];
             if (first) get().playTrack(first);
             return;
           }
@@ -139,16 +152,16 @@ export const usePlayerStore = create<PlayerState>()(
         next: () => {
           const id = get().currentTrackId;
           if (id === null) return;
+          const queue = getQueue();
 
           if (get().shuffle) {
-            const target = pickRandomTrack(id);
+            const target = pickRandomTrack(queue, id);
             if (target) get().playTrack(target);
             return;
           }
 
-          const tracks = useLibraryStore.getState().tracks;
-          const idx = tracks.findIndex((t) => t.id === id);
-          const target = idx >= 0 ? tracks[idx + 1] : undefined;
+          const idx = queue.findIndex((t) => t.id === id);
+          const target = idx >= 0 ? queue[idx + 1] : undefined;
           if (target) get().playTrack(target);
         },
 
@@ -157,7 +170,9 @@ export const usePlayerStore = create<PlayerState>()(
           if (id === null) return;
 
           // En shuffle, prev despega del historial (el último track previo
-          // realmente reproducido). Sin historial, fallback a sequential.
+          // realmente reproducido). El historial NO se filtra — si bajaste
+          // un track antes de buscar, prev te lleva ahí aunque el filtro
+          // ahora lo excluya.
           if (get().shuffle) {
             const history = get().playHistory;
             const lastId = history[history.length - 1];
@@ -172,9 +187,9 @@ export const usePlayerStore = create<PlayerState>()(
             }
           }
 
-          const tracks = useLibraryStore.getState().tracks;
-          const idx = tracks.findIndex((t) => t.id === id);
-          const target = idx > 0 ? tracks[idx - 1] : undefined;
+          const queue = getQueue();
+          const idx = queue.findIndex((t) => t.id === id);
+          const target = idx > 0 ? queue[idx - 1] : undefined;
           if (target) get().playTrack(target);
         },
 

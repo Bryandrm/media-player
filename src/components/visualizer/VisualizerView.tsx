@@ -69,7 +69,7 @@ export function VisualizerView() {
         aria-orientation="vertical"
         aria-label="Resize panels"
       />
-      <div className="overflow-auto min-w-0">
+      <div className="min-w-0">
         <LibraryTable />
       </div>
     </div>
