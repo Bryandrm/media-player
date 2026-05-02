@@ -8,8 +8,8 @@ export function VolumeSlider() {
   const toggleMute = usePlayerStore((s) => s.toggleMute);
 
   return (
-    <div className="flex items-center gap-2 ml-2">
-      <Button onClick={toggleMute} size="sm" className="min-w-[78px]">
+    <div className="flex items-center gap-2 ml-2 shrink-0">
+      <Button onClick={toggleMute} size="sm" className="min-w-[76px]">
         {muted ? "UNMUTE" : "MUTE"}
       </Button>
       <input
@@ -19,7 +19,7 @@ export function VolumeSlider() {
         step={0.01}
         value={muted ? 0 : volume}
         onChange={(e) => setVolume(parseFloat(e.target.value))}
-        className="range-brutal w-24"
+        className="range-brutal w-20"
         aria-label="Volume"
       />
     </div>

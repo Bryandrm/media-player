@@ -56,8 +56,8 @@
 | Frontend framework | **React 18 + TypeScript** | Dominio existente, encaja con Butterchurn (que es JS/WebGL). |
 | Build tool frontend | **Vite** | Estándar Tauri, hot reload rápido. |
 | Styling | **Tailwind CSS v4** + CSS vars | Brutalist se puede hacer bien con Tailwind usando utilities crudas. |
-| Base de datos local | **SQLite** vía `rusqlite` | Simple, embebida, cero setup, portable. |
-| ORM Rust | **SQLx** o **Diesel** o queries directas | Decidir en Fase 1; probablemente `sqlx` por simpleza. |
+| Base de datos local | **SQLite** | Embebida, cero setup, portable. |
+| ORM Rust | **SQLx 0.8** runtime-tokio | [ADR-001 Accepted](DECISIONS.md#adr-001) — sin macros checked para no requerir `DATABASE_URL` en build. |
 | Audio playback | **HTML5 Audio + Web Audio API** | Necesario para que Butterchurn reciba el AnalyserNode. |
 | Visualizador | **Butterchurn** (npm: `butterchurn`, `butterchurn-presets`) | Port WebGL de MilkDrop, soporta presets originales. |
 | Downloader | **yt-dlp** (binario externo) | Invocado como child process desde Rust. |
@@ -71,7 +71,7 @@ El usuario (yo mismo) debe tener instalados:
 - **yt-dlp** — en PATH o bundled según decisión de distribución.
 - **ffmpeg** — requerido por yt-dlp para merge de streams y por nosotros para metadata.
 
-**Decisión a tomar en Fase 1:** ¿bundle-ar estos binarios con la app (más fácil UX, más peso, problemas de licencia) o detectar y guiar instalación? Recomendación inicial: **detectar y guiar** — muestra un setup wizard al primer arranque que verifica que ambos existan, con instrucciones por OS si no están.
+**Decisión tomada:** detectar y mostrar banner ([ADR-002 Accepted](DECISIONS.md#adr-002)). El comando `check_dependencies` corre al boot vía `which`; si falta yt-dlp o ffmpeg, el frontend muestra un `DependencyBanner`. El resto del player funciona igual.
 
 ### 2.3 Arquitectura Tauri — separación de responsabilidades
 
@@ -396,24 +396,28 @@ Post-descarga, usar `lofty-rs` en Rust para leer los tags embebidos y poblar la 
 
 ## 6. Roadmap por fases
 
-### Fase 0 — Setup (1–2 sesiones)
-- [ ] Inicializar proyecto Tauri 2 con React + TS + Vite + Tailwind v4.
-- [ ] Configurar ESLint + Prettier + TS strict.
-- [ ] Setup de Rust: crear estructura de módulos (`db`, `audio`, `downloader`, `metadata`).
-- [ ] Migración inicial SQLite con schema base.
-- [ ] Repo Git con README que explique disclaimer legal.
-- [ ] Definir design tokens en Tailwind config (colores, fonts, spacing, shadows).
+### Fase 0 — Setup ✓
+- [x] Inicializar proyecto Tauri 2 con React + TS + Vite + Tailwind v4.
+- [x] Setup de Rust: estructura de módulos (`db`, `audio`, `downloader`, `lyrics`, `commands`, `errors`).
+- [x] Migración inicial SQLite con schema base ([§3.1](#31-esquema-sqlite-propuesta-inicial)).
+- [x] Repo Git con README + disclaimer legal.
+- [x] Design tokens brutalist en `src/styles/tokens.css`.
+- [ ] ESLint + Prettier — pendiente, no bloquea.
+- [x] Smoke test del pipeline de audio (`convertFileSrc` + Web Audio + Butterchurn tap).
 
-### Fase 1 — MVP funcional (alcance acordado)
-- [ ] **Reproductor básico**: cargar archivo local, play/pause/seek/volume, queue en memoria.
-- [ ] **Biblioteca**: importar directorio, scan con `lofty-rs`, listar tracks en UI.
-- [ ] **Downloader**: paste URL → descargar con yt-dlp → agregar a biblioteca, con progreso en tiempo real.
-- [ ] **Visualizador**: Butterchurn conectado al audio pipeline, vista fullscreen, auto-switch de presets.
-- [ ] **Metadata + cover art**: extracción automática de archivos descargados y locales.
-- [ ] **UI brutalist**: implementar los 3 layouts principales (Library, Downloads, Visualizer).
-- [ ] **Crossfade**: implementación con dos elementos `<audio>` + GainNodes.
-- [ ] **Letras**: integración con LRCLIB, panel de letras sincronizadas.
-- [ ] **Polish Fase 1**: keyboard shortcuts, persistencia de estado (último track, volumen), manejo de errores básico.
+### Fase 1 — MVP funcional (~90%)
+- [x] **Reproductor básico**: play/pause/seek, volumen vía `GainNode`, mute, prev/next, shuffle con historial (cap 64).
+- [x] **Biblioteca**: importar directorio, scan recursivo con `lofty-rs`, idempotente vía `UNIQUE(file_path)` + `ON CONFLICT DO NOTHING`, search por tokens (AND).
+- [x] **Downloader**: paste URL → yt-dlp con progreso en tiempo real + fase CONVERTING, idempotente (`--no-overwrites`).
+- [x] **Visualizador**: Butterchurn conectado al `MediaElementAudioSourceNode`, vista side-by-side con la library (split arrastrable + persistido), auto-cycle de presets random cada 5–10s, fullscreen vía `F`.
+- [x] **Metadata + cover art**: extracción de embedded picture (`lofty`) con fallback a `cover.jpg`/`folder.jpg` siblings.
+- [x] **UI brutalist**: 3 layouts + design tokens + `<Button variant>` + `usePressFlash` para tap-to-click.
+- [x] **Keyboard shortcuts**: Space, ←/→, ↑/↓, M, N, P, S, V, F.
+- [x] **Persistencia parcial** (Zustand `persist`): volume, muted, shuffle, presetIndex, visualizerSplit, autoCycle.
+- [ ] **Crossfade**: dos `<audio>` + GainNodes — pendiente.
+- [ ] **Letras**: integración con LRCLIB, panel sincronizado — `lyrics/` stub.
+- [ ] **Persistencia del último track / posición** — pendiente.
+- [ ] **History de descargas persistente** — chunk 2 ([ADR-011](DECISIONS.md#adr-011)).
 
 ### Fase 2 — Refinamiento
 - [ ] Playlists (crear, editar, reordenar, eliminar).
@@ -438,23 +442,37 @@ Post-descarga, usar `lofty-rs` en Rust para leer los tags embebidos y poblar la 
 
 ## 7. Riesgos y decisiones abiertas
 
-### 7.1 Riesgos técnicos
+### 7.1 Riesgos técnicos — estado
 
-| Riesgo | Impacto | Mitigación |
+| Riesgo | Impacto | Estado |
 |---|---|---|
-| Butterchurn con presets pesados baja FPS | Medio | Dejar al usuario elegir presets, degradar calidad de render si FPS cae. |
-| Tauri v2 tiene menos recursos/docs que Electron | Bajo-Medio | Tauri v2 es estable; la comunidad crece. Si se traba, fallback a Electron. |
-| Detección de metadata de yt-dlp inconsistente | Medio | Siempre extraer tags post-descarga con `lofty-rs` como fuente de verdad, no confiar solo en lo que dice yt-dlp. |
-| `<audio>` element + Web Audio tiene CORS issues con archivos locales | Alto | Tauri expone `convert_file_src` que permite acceso a archivos locales sin violar CORS — investigar en Fase 0. |
-| Aprender Rust mientras se construye puede ralentizar | Medio | Empezar con patrones simples (queries directas vs ORM, funciones vs traits complejos). Iterar. |
+| Butterchurn con presets pesados baja FPS | Medio | No observado en práctica con los ~100 presets base. Si aparece, degradar `pixelRatio`/`textureRatio` (ya parametrizado en `createVisualizer`). |
+| Tauri v2 tiene menos recursos/docs que Electron | Bajo-Medio | Mitigado — Tauri 2 estable, no nos topamos con bloqueos serios. |
+| Detección de metadata de yt-dlp inconsistente | Medio | **Mitigado**: post-descarga, `lofty` re-lee tags del archivo final como fuente de verdad. yt-dlp embebe el thumbnail con `--embed-thumbnail`; el extractor de cover art lo recoge igual que con archivos locales. |
+| `<audio>` + Web Audio + archivos locales (CORS) | Alto | **Mitigado**: `convertFileSrc()` + `<audio crossOrigin="anonymous">` + `protocol-asset` feature en `Cargo.toml`. Documentado en ARCHITECTURE §2. |
+| Aprender Rust mientras se construye | Medio | Mitigado iterando: queries directas con `sqlx::query_as::<_, T>`, sin macros; funciones libres en vez de traits; un solo `AppError` enum. |
+| Tailwind v4: utilities de color en orden alfabético rompen overrides | Alto (descubierto durante Fase 1) | **Mitigado**: `<Button variant>` switchea el set entero, no concatena utilidades. Documentado en CLAUDE.md gotcha #1. |
+| `audio.volume` bypassed cuando hay `MediaElementAudioSourceNode` | Alto (descubierto durante Fase 1) | **Mitigado**: volumen via `GainNode`. Ver [ADR-008](DECISIONS.md#adr-008). |
+| `:active` CSS no se ve con tap-to-click de macOS | Medio (UX) | **Mitigado**: `usePressFlash` mantiene flash 150ms via JS. [ADR-009](DECISIONS.md#adr-009). |
+| Butterchurn 2.6.7 no aplica `opts.width`/`height` al canvas | Alto (descubierto durante Fase 1) | **Mitigado**: `setRendererSize(w, h)` explícito + ResizeObserver sobre el contenedor padre. ARCHITECTURE §8. |
+| yt-dlp progress invisible (Python block-buffering + stderr) | Alto (descubierto durante Fase 1) | **Mitigado**: `PYTHONUNBUFFERED=1` + fan-in de stdout+stderr a un mpsc + parser del formato default. ARCHITECTURE §7. |
 
-### 7.2 Decisiones a tomar durante la implementación
+### 7.2 Decisiones tomadas durante la implementación
 
-- **SQLx vs Diesel vs rusqlite crudo** — decidir en Fase 0 tras probar SQLx (favorito).
-- **Bundlear yt-dlp/ffmpeg** — decidir tras primer build funcional de Fase 1.
-- **Font definitiva** — probar Space Grotesk, Archivo Black, JetBrains Mono en mockups.
-- **Acento color final** — naranja tipo Winamp vs amarillo ácido vs verde terminal. Probar los tres.
-- **Windows titlebar** — usar la nativa vs completamente custom (brutalist puro sugiere custom).
+Resueltas en [DECISIONS.md](DECISIONS.md):
+
+- **SQLx vs alternativas** → SQLx 0.8 sin macros checked ([ADR-001 Accepted](DECISIONS.md#adr-001)).
+- **Bundlear yt-dlp/ffmpeg** → detectar y banner ([ADR-002 Accepted](DECISIONS.md#adr-002)).
+- **Acento color** → naranja `#FF3B00` ([ADR-004 Accepted](DECISIONS.md#adr-004)).
+- **Generación de tipos Rust↔TS** → manual mientras la superficie sea chica ([ADR-007 Accepted](DECISIONS.md#adr-007)).
+- **Singleton de audio** → fuera del JSX, en module scope ([ADR-008 Accepted](DECISIONS.md#adr-008)).
+- **Press feedback** → JS hook (no `:active` CSS) ([ADR-009 Accepted](DECISIONS.md#adr-009)).
+- **Idempotencia de scan/download** → `UNIQUE(file_path)` + `ON CONFLICT DO NOTHING` + `--no-overwrites` ([ADR-010 Accepted](DECISIONS.md#adr-010)).
+- **History de descargas** → memoria-only por ahora ([ADR-011 Accepted](DECISIONS.md#adr-011)).
+
+Pendientes:
+- **Font definitiva** ([ADR-003 Proposed](DECISIONS.md#adr-003)) — la app actual usa system font; cargar webfonts en polish visual.
+- **Windows titlebar** ([ADR-005 Proposed](DECISIONS.md#adr-005)) — titlebar nativa por ahora; custom cuando entremos en polish y querramos Windows.
 
 ### 7.3 Preguntas pendientes que Claude Code debería abordar
 
@@ -537,18 +555,20 @@ brutalist-player/
 
 ## 10. Criterios de "done" para el MVP (Fase 1)
 
-El MVP está listo cuando:
+| # | Criterio | Estado |
+|---|---|---|
+| 1 | Abrir la app y ver biblioteca vacía sin errores. | ✓ |
+| 2 | Pegar URL de YouTube → descarga con progreso en tiempo real. | ✓ |
+| 3 | Canción descargada aparece con metadata + cover art. | ✓ |
+| 4 | Click en canción → reproduce con controles funcionales. | ✓ |
+| 5 | Vista Visualizer con Butterchurn reaccionando a la música. | ✓ |
+| 6 | Crossfade al pasar de un track al siguiente. | ✗ pendiente |
+| 7 | Letras sincronizadas vía LRCLIB cuando estén disponibles. | ✗ pendiente |
+| 8 | UI brutalist consistente, no template genérico. | ✓ |
+| 9 | Funciona al menos en macOS (daily del autor). Linux/Windows bonus. | ✓ macOS validado |
+| 10 | Repo con README explicando setup + disclaimer legal. | ✓ |
 
-1. Puedo abrir la app y ver mi biblioteca vacía sin errores.
-2. Puedo pegar una URL de YouTube y ver cómo se descarga con progreso en tiempo real.
-3. La canción descargada aparece en la biblioteca con metadata y cover art.
-4. Puedo hacer click en la canción y reproducirla con controles funcionales.
-5. Puedo ir a la vista Visualizer y ver Butterchurn reaccionando a la música.
-6. El crossfade funciona al pasar de un track al siguiente.
-7. Si hay letras disponibles en LRCLIB, las veo sincronizadas.
-8. La UI se siente brutalist y consistente — no parece un template genérico.
-9. La app funciona al menos en Linux (mi daily) — Windows/macOS como bonus.
-10. El código está en un repo con README que explica setup y disclaimer legal.
+Faltan **2 criterios** (crossfade, letras) + dos polish items: persistencia del último track, history persistente de descargas.
 
 ---
 

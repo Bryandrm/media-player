@@ -1,10 +1,13 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLibraryStore } from "./stores/libraryStore";
 import { useDownloadStore } from "./stores/downloadStore";
 import { useUiStore } from "./stores/uiStore";
 import { useAudioPlayer } from "./hooks/useAudioPlayer";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useDownloadEvents } from "./hooks/useDownloadEvents";
+import { usePlaybackPersist } from "./hooks/usePlaybackPersist";
+import { useMediaSession } from "./hooks/useMediaSession";
+import { useLyricsSync } from "./hooks/useLyricsSync";
 import { Tabs } from "./components/ui/Tabs";
 import { LibraryToolbar } from "./components/library/LibraryToolbar";
 import { LibraryTable } from "./components/library/LibraryTable";
@@ -19,14 +22,29 @@ function App() {
   const checkDependencies = useDownloadStore((s) => s.checkDependencies);
   const view = useUiStore((s) => s.view);
 
+  // VisualizerView se monta lazy en el primer visit a la tab y queda
+  // persistente hasta cerrar la app. Esconderlo via CSS (invisible +
+  // pointer-events-none) en lugar de unmount preserva el WebGL context y
+  // los shaders compilados — sin esto, cada tab change re-pagaba ~100-300ms
+  // de freeze al recompilar el preset actual. Ver VisualizerCanvas para el
+  // detalle del rAF gate.
+  const [visualizerVisited, setVisualizerVisited] = useState(false);
+
   useAudioPlayer();
   useKeyboardShortcuts();
   useDownloadEvents();
+  usePlaybackPersist();
+  useMediaSession();
+  useLyricsSync();
 
   useEffect(() => {
     loadTracks().then(() => backfillCovers());
     checkDependencies();
   }, [loadTracks, backfillCovers, checkDependencies]);
+
+  useEffect(() => {
+    if (view === "visualizer") setVisualizerVisited(true);
+  }, [view]);
 
   return (
     <main className="flex flex-col h-screen">
@@ -43,10 +61,27 @@ function App() {
         </div>
       )}
 
-      <div className="flex-1 min-h-0 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden relative">
         {view === "library" && <LibraryTable />}
         {view === "downloads" && <DownloadsView />}
-        {view === "visualizer" && <VisualizerView />}
+        {/* Visualizer persistente: una vez visitado, queda montado siempre
+            con `absolute inset-0` (mismo tamaño que el contenedor padre,
+            sin afectar el flow). Cuando la vista no es 'visualizer', lo
+            ocultamos con `invisible pointer-events-none` — preserva el
+            layout y dimensions (ResizeObserver no fluctúa), pero los clicks
+            pasan a LibraryTable/DownloadsView debajo. */}
+        {visualizerVisited && (
+          <div
+            className={
+              view === "visualizer"
+                ? "absolute inset-0"
+                : "absolute inset-0 invisible pointer-events-none"
+            }
+            aria-hidden={view !== "visualizer"}
+          >
+            <VisualizerView />
+          </div>
+        )}
       </div>
 
       <PlayerBar />

@@ -22,6 +22,17 @@ pub fn run() {
             let pool = tauri::async_runtime::block_on(db::init(&data_dir))?;
             app.manage(pool);
 
+            // HTTP client para LRCLIB (y cualquier futuro provider de letras o
+            // metadata). User-Agent identificado: best practice de LRCLIB.
+            let http = reqwest::Client::builder()
+                .user_agent(concat!(
+                    "BrutalistPlayer/", env!("CARGO_PKG_VERSION"),
+                    " ( https://github.com/bryandrm/brutalist-player )"
+                ))
+                .build()
+                .expect("failed to build reqwest client");
+            app.manage(http);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -30,6 +41,8 @@ pub fn run() {
             commands::library::library_backfill_covers,
             commands::system::check_dependencies,
             commands::downloader::download_track,
+            commands::lyrics::lyrics_fetch,
+            commands::lyrics::lyrics_set_offset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

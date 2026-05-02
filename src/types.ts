@@ -44,3 +44,26 @@ export type Download = {
   error: string | null;
   trackId: number | null;
 };
+
+/** Status posibles en la columna `lyrics.status`:
+ *  - 'found': hay contenido en synced y/o plain. Incluye el caso
+ *    instrumental confirmado por LRCLIB (ambos blobs null pero `source` set).
+ *  - 'not_found': buscamos en todos los providers y nadie respondió.
+ *  - 'manual_pending': (Fase 2) usuario quiere agregar manualmente. */
+export type LyricsStatus = "found" | "not_found" | "manual_pending";
+
+export type Lyrics = {
+  trackId: number;
+  syncedLyrics: string | null;
+  plainLyrics: string | null;
+  /** Provider que respondió: "embedded" | "lrclib" | "manual" (Fase 2). */
+  source: string | null;
+  sourceId: string | null;
+  /** 0..1. Calculado en lrclib provider basado en duration delta. La UI
+   *  muestra warning si <0.8 — posiblemente es otra versión del track. */
+  confidence: number | null;
+  /** Offset global aplicado a los timestamps. Lo ajusta el usuario con los
+   *  botones [-100][-10][+10][+100][RESET]. */
+  offsetMs: number;
+  status: LyricsStatus;
+};

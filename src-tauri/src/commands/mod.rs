@@ -8,4 +8,5 @@
 
 pub mod downloader;
 pub mod library;
+pub mod lyrics;
 pub mod system;

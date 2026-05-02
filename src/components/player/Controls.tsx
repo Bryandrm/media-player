@@ -8,8 +8,10 @@ export function Controls() {
   const isPlaying = usePlayerStore((s) => s.isPlaying);
   const currentTrackId = usePlayerStore((s) => s.currentTrackId);
   const shuffle = usePlayerStore((s) => s.shuffle);
+  const crossfadeMs = usePlayerStore((s) => s.crossfadeMs);
   const togglePlay = usePlayerStore((s) => s.togglePlay);
   const toggleShuffle = usePlayerStore((s) => s.toggleShuffle);
+  const cycleCrossfade = usePlayerStore((s) => s.cycleCrossfade);
   const next = usePlayerStore((s) => s.next);
   const prev = usePlayerStore((s) => s.prev);
   const tracks = useLibraryStore((s) => s.tracks);
@@ -40,25 +42,42 @@ export function Controls() {
 
   return (
     <>
-      <Button onClick={prev} disabled={!hasPrev}>
+      <Button size="sm" onClick={prev} disabled={!hasPrev}>
         PREV
       </Button>
       <Button
+        size="sm"
         onClick={togglePlay}
         disabled={!canPlay}
-        className="min-w-[90px]"
+        // min-w fija el ancho del botón al de "PAUSE" (5 chars) — sin esto,
+        // el toggle "PLAY" ↔ "PAUSE" cambiaba el width y empujaba la seek
+        // bar y todo lo que sigue a la derecha.
+        className="min-w-[68px]"
       >
         {isPlaying ? "PAUSE" : "PLAY"}
       </Button>
-      <Button onClick={next} disabled={!hasNext}>
+      <Button size="sm" onClick={next} disabled={!hasNext}>
         NEXT
       </Button>
       <Button
+        size="sm"
         onClick={toggleShuffle}
         variant={shuffle ? "active" : "default"}
         aria-pressed={shuffle}
       >
         SHUFFLE
+      </Button>
+      <Button
+        size="sm"
+        onClick={cycleCrossfade}
+        variant={crossfadeMs > 0 ? "active" : "default"}
+        // min-w fija el ancho al de "XFADE 12s" (el label más largo) — sin
+        // esto el toggle entre OFF/3s/6s/12s mueve los botones a la derecha
+        // del player bar.
+        className="min-w-[96px]"
+        aria-label={`Crossfade ${crossfadeMs === 0 ? "off" : `${crossfadeMs / 1000} seconds`}`}
+      >
+        XFADE {crossfadeMs === 0 ? "OFF" : `${crossfadeMs / 1000}s`}
       </Button>
     </>
   );

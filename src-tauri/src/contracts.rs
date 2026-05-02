@@ -71,3 +71,32 @@ pub struct Download {
     pub error: Option<String>,
     pub track_id: Option<i64>,
 }
+
+/// Letras de un track. El backend NO parsea el LRC — guarda el blob raw en
+/// `synced_lyrics` y deja que el frontend lo parsee al renderizar (el parser
+/// vive en `src/lib/lrcParser.ts`).
+///
+/// `status`:
+///   - "found": tenemos contenido en `synced_lyrics` y/o `plain_lyrics`.
+///   - "not_found": ningún provider devolvió nada — cacheado para no
+///     retry-ear automáticamente.
+///   - "manual_pending": (Fase 2) usuario quiere agregar manualmente.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Lyrics {
+    pub track_id: i64,
+    pub synced_lyrics: Option<String>,
+    pub plain_lyrics: Option<String>,
+    /// Provider que respondió: "embedded" | "lrclib" | "manual" (Fase 2).
+    pub source: Option<String>,
+    /// ID en el provider — útil para "submit edit" (Fase 2). null en embedded.
+    pub source_id: Option<String>,
+    /// 0.0..1.0. Calculado en lrclib provider basado en duration delta.
+    /// El frontend muestra warning si está bajo 0.8.
+    pub confidence: Option<f64>,
+    /// Offset global en ms aplicado a todos los timestamps. El usuario lo
+    /// ajusta con los botones [-100][-10][+10][+100][RESET] cuando nota
+    /// desincronización. Se persiste para no re-ajustar cada vez.
+    pub offset_ms: i64,
+    pub status: String,
+}
