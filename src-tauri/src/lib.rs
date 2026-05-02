@@ -39,6 +39,7 @@ pub fn run() {
             commands::library::library_scan_directory,
             commands::library::library_list_tracks,
             commands::library::library_backfill_covers,
+            commands::library::library_backfill_metadata,
             commands::system::check_dependencies,
             commands::downloader::download_track,
             commands::lyrics::lyrics_fetch,

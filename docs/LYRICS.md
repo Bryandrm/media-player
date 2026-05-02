@@ -27,10 +27,11 @@ Mínimo viable para tachar lyrics de los criterios "done" de Fase 1 del PLAN ([�
 Sólo cuando la app esté estable y el MVP de letras lleve un par de semanas en uso.
 
 - **Refactor a trait `LyricsProvider` + resolver** — recién cuando se sume el 3er provider. Antes es ceremonia para 2 funciones.
-- **Genius** como último recurso (sólo plain).
+- **Genius** como último recurso (sólo plain — Genius no tiene letras synced).
 - **Manual paste / edit modal** para tracks no encontrados.
 - **Botón "Search again"** que fuerza refetch ignorando el cache `not_found`.
 - **Tabla `lyrics_search_attempts`** con TTL para evitar martillar providers ante búsquedas repetidas.
+- **Drift correction (`speedRatio`)** — además del `offsetMs` actual, agregar un multiplicador para los timestamps. Cuando el LRC y el audio tienen tempos levemente distintos (típicamente porque LRCLIB devolvió una edición/master diferente), el offset constante no alcanza: el usuario alinea el inicio pero el final se desincroniza. Fórmula: `effectiveTimestamp = lrcTimestamp * speedRatio + offsetMs`. UI: dos botones nuevos junto al offset, `LYRICS SLOWER` / `LYRICS FASTER` (±0.5% o ±1% step). Persistir en `lyrics.speed_ratio REAL DEFAULT 1.0`. Causa raíz suele ser match imperfecto — Fase 3 (identificación) lo elimina.
 
 ### Fase 3 — Avanzado
 
@@ -38,7 +39,7 @@ No comprometido. Se evalúa ítem por ítem según uso real.
 
 - **Musixmatch** opcional con API key del usuario (en `settings`).
 - **NetEase** para cobertura asiática (API reverseada, riesgo de ruptura).
-- **Identificación canónica vía MBID** — sub-sistema propio (eventual `IDENTIFICATION.md`). Sube el match rate de los providers.
+- **Identificación canónica vía AcoustID + Chromaprint → MBID** — sub-sistema propio (eventual `IDENTIFICATION.md`). El "santo grial" del match rate: calculás el fingerprint acústico del audio (~30s de análisis con `chromaprint`/`fpcalc`), lo mandás a la AcoustID API, te devuelve un MBID de MusicBrainz. Con MBID el match contra LRCLIB es **exacto** y elimina por completo los casos de "metadata sucia de yt-dlp" + drift por versiones distintas. Es el deal-breaker para tracks como "Avicii - The Nights" donde la metadata viene como `artist=Avicii - Topic` y el match text-based falla aunque el track esté en LRCLIB. Implementación: lib `chromaprint` (C dep) o binario `fpcalc` (similar al patrón de yt-dlp/ffmpeg como deps del sistema). Big project — su propio doc.
 - **Background job semanal** de re-fetch para tracks `not_found`.
 - **Enhanced LRC (A2 / per-word)** — UI con highlight palabra por palabra.
 - **Submit a LRCLIB** de letras editadas manualmente (contribución a la comunidad).

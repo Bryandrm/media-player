@@ -2,6 +2,8 @@
 //!
 //! Ver docs/PLAN-reproductor-brutalist.md §5.5.
 
+pub mod cleanup;
+
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::prelude::*;
 use lofty::probe::Probe;

@@ -102,6 +102,13 @@ pub async fn download_track(
 
             let meta = audio::extract_metadata(&file_path)
                 .map_err(|e| AppError::Other(format!("metadata read failed: {}", e)))?;
+            // Cleanup heurístico: yt-dlp escribe metadata desde YouTube que
+            // viene con artefactos (artist="X - Topic", title="Y (Official
+            // Video)"). LRCLIB hace match exacto contra (artist, title), así
+            // que un sufijo de más basta para 404 aunque el track esté
+            // indexado. La cleanup es conservadora — sólo strip-ea patrones
+            // claramente-yt-dlp, no contenido legítimo. Ver audio/cleanup.rs.
+            let meta = audio::cleanup::cleanup_metadata(meta);
             let title = meta.title.clone();
 
             let inserted_id = db::tracks::insert_from_metadata(

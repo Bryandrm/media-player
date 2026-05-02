@@ -75,6 +75,43 @@ pub async fn set_cover_art(
     Ok(())
 }
 
+/// Para el backfill de metadata: lista (id, title, artist, source_type) de
+/// **todos** los tracks. Originalmente filtrábamos a `source_type='downloaded'`
+/// para no tocar locales con metadata curada, pero el filtro era incompleto:
+/// tracks descargados manualmente con `yt-dlp` desde CLI y luego scaneados
+/// quedan como `'local'` y la metadata noisy escapaba al cleanup. La cleanup
+/// es idempotente y conservadora — tracks con metadata limpia pasan sin
+/// cambios. Usuarios con metadata local intencionalmente non-standard pueden
+/// optar por no clickear el botón.
+pub async fn list_for_metadata_backfill(
+    pool: &SqlitePool,
+) -> AppResult<Vec<(i64, String, Option<String>, String)>> {
+    let rows: Vec<(i64, String, Option<String>, String)> = sqlx::query_as(
+        "SELECT id, title, artist, source_type FROM tracks",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// Actualiza title + artist de un track. Usado por el backfill de cleanup
+/// metadata. Sólo updateamos los campos que la cleanup puede modificar —
+/// album/year/genre/etc. los preservamos como están.
+pub async fn update_title_and_artist(
+    pool: &SqlitePool,
+    track_id: i64,
+    title: &str,
+    artist: Option<&str>,
+) -> AppResult<()> {
+    sqlx::query("UPDATE tracks SET title = ?, artist = ? WHERE id = ?")
+        .bind(title)
+        .bind(artist)
+        .bind(track_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Lista todos los tracks ordenados por artista + álbum + número de pista.
 pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Track>> {
     let rows = sqlx::query_as::<_, Track>(

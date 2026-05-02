@@ -90,3 +90,15 @@ pub async fn set_offset(
         .await?;
     Ok(())
 }
+
+/// Borra la fila de lyrics de un track. Usado por `library_backfill_metadata`
+/// cuando la metadata del track cambia (artist/title nuevos invalidan el
+/// match contra LRCLIB que cacheamos antes — el resultado anterior, sea
+/// `found` o `not_found`, ya no aplica).
+pub async fn delete_for_track(pool: &SqlitePool, track_id: i64) -> AppResult<()> {
+    sqlx::query("DELETE FROM lyrics WHERE track_id = ?")
+        .bind(track_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}

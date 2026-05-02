@@ -10,11 +10,16 @@ type LibraryState = {
   error: string | null;
   /** Query del search input. No se persiste — ephemeral por sesión. */
   searchQuery: string;
+  /** True mientras corre el comando de backfill metadata — evita doble click. */
+  cleaning: boolean;
+  /** Cantidad de tracks updateados por el último backfill. null = nunca corrió. */
+  lastCleanedCount: number | null;
 
   setError: (e: string | null) => void;
   setSearchQuery: (q: string) => void;
   loadTracks: () => Promise<void>;
   backfillCovers: () => Promise<void>;
+  backfillMetadata: () => Promise<void>;
   scanDirectory: () => Promise<void>;
 };
 
@@ -24,6 +29,8 @@ export const useLibraryStore = create<LibraryState>((set) => ({
   lastReport: null,
   error: null,
   searchQuery: "",
+  cleaning: false,
+  lastCleanedCount: null,
 
   setError: (e) => set({ error: e }),
   setSearchQuery: (q) => set({ searchQuery: q }),
@@ -49,6 +56,27 @@ export const useLibraryStore = create<LibraryState>((set) => ({
     } catch (e) {
       // Silent fail — el backfill es polish, no crítico.
       console.warn("backfill covers failed:", e);
+    }
+  },
+
+  backfillMetadata: async () => {
+    // Aplica cleanup heurístico (audio/cleanup.rs) a tracks ya descargados —
+    // útil cuando bumpeamos las heurísticas o cuando hay tracks viejos
+    // descargados antes de que existiera el cleanup. Sólo afecta tracks
+    // con `source_type = 'downloaded'`.
+    set({ cleaning: true, error: null });
+    try {
+      const updated = await invoke<number>("library_backfill_metadata");
+      // Re-leer tracks aunque updated sea 0 — el contador en UI reflejará.
+      if (updated > 0) {
+        const list = await invoke<Track[]>("library_list_tracks");
+        set({ tracks: list });
+      }
+      set({ lastCleanedCount: updated });
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ cleaning: false });
     }
   },
 

@@ -180,3 +180,85 @@ pub async fn library_backfill_covers(
 
     Ok(count)
 }
+
+/// Aplica `cleanup_metadata` a tracks ya en DB (filtrado a `source_type =
+/// 'downloaded'` — los tracks locales suelen tener metadata curada y no
+/// queremos modificarla). Actualiza sólo cuando la cleanup produce un cambio
+/// real respecto al valor actual — para no hacer write-amplification ni
+/// mutar tracks que ya estaban limpios.
+///
+/// Usado para "limpiar la library" después de bumpear las heurísticas de
+/// cleanup, o post-migración si el usuario tenía tracks descargados antes
+/// de que existiera el cleanup.
+///
+/// Devuelve la cantidad de tracks que cambiaron.
+#[tauri::command]
+pub async fn library_backfill_metadata(pool: State<'_, SqlitePool>) -> AppResult<usize> {
+    let rows = db::tracks::list_for_metadata_backfill(&pool).await?;
+    let total_candidates = rows.len();
+
+    let mut updated = 0usize;
+    for (id, title, artist, source_type) in rows {
+        // Construir un TrackMetadata "minimal" sólo con los campos que la
+        // cleanup mira. Los otros valores (duration, bitrate, etc.) no se
+        // usan por la cleanup, así que default-eados.
+        let proposed = audio::cleanup::cleanup_metadata(crate::audio::TrackMetadata {
+            title: title.clone(),
+            artist: artist.clone(),
+            album: None,
+            duration_ms: 0,
+            track_number: None,
+            year: None,
+            genre: None,
+            bitrate: None,
+            sample_rate: None,
+            format: None,
+        });
+
+        // Skip si la cleanup no cambió nada — evita UPDATE innecesario y
+        // mantiene el `last_played_at` y otros campos no tocados.
+        if proposed.title == title && proposed.artist == artist {
+            // Log para diagnóstico — el usuario puede ver qué tracks no
+            // matchearon ninguna heurística. Sólo prefijo y comilla simple
+            // para que sea legible en los logs.
+            eprintln!(
+                "[backfill metadata]  skip id={} src={} artist={:?} title={:?}",
+                id, source_type, artist, title
+            );
+            continue;
+        }
+        eprintln!(
+            "[backfill metadata]    UP id={} src={} artist {:?} → {:?}, title {:?} → {:?}",
+            id, source_type, artist, proposed.artist, title, proposed.title
+        );
+
+        if let Err(e) = db::tracks::update_title_and_artist(
+            &pool,
+            id,
+            &proposed.title,
+            proposed.artist.as_deref(),
+        )
+        .await
+        {
+            eprintln!("[backfill metadata] update failed for track {}: {}", id, e);
+            continue;
+        }
+        // Invalidar cache de lyrics: el resultado guardado fue contra la
+        // metadata vieja (sucia). Sea found o not_found, ya no es válido —
+        // el próximo lyrics_fetch debe re-querear con artist/title limpios.
+        // Best-effort: no fail-eamos el backfill si el delete falla.
+        if let Err(e) = db::lyrics::delete_for_track(&pool, id).await {
+            eprintln!(
+                "[backfill metadata] lyrics cache invalidation failed for {}: {}",
+                id, e
+            );
+        }
+        updated += 1;
+    }
+
+    eprintln!(
+        "[backfill metadata] candidates={} updated={}",
+        total_candidates, updated
+    );
+    Ok(updated)
+}
