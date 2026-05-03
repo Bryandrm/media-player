@@ -93,7 +93,13 @@ export function VisualizerView() {
         aria-orientation="vertical"
         aria-label="Resize panels"
       />
-      <div className="min-w-0">
+      {/* min-h-0 + overflow-hidden son necesarios para que el flex column
+          interno de LibraryTable (h-full + flex-1 + overflow-auto) pueda
+          calcular su altura correctamente dentro de la grid cell.
+          Sin min-h-0 el grid item default es min-content y el div crece
+          con el contenido en vez de scrollear. Mismo gotcha clásico de
+          CSS grid + flex anidado. */}
+      <div className="min-w-0 min-h-0 overflow-hidden">
         <LibraryTable />
       </div>
     </div>

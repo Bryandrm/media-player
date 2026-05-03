@@ -4,6 +4,7 @@ mod contracts;
 mod db;
 mod downloader;
 mod errors;
+mod identification;
 mod lyrics;
 
 use tauri::Manager;
@@ -33,6 +34,10 @@ pub fn run() {
                 .expect("failed to build reqwest client");
             app.manage(http);
 
+            // Estado del bulk identify (running + cancel flags). Compartido
+            // entre el comando que lanza el task y el que cancela.
+            app.manage(commands::identification::BulkIdentifyState::default());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -44,6 +49,11 @@ pub fn run() {
             commands::downloader::download_track,
             commands::lyrics::lyrics_fetch,
             commands::lyrics::lyrics_set_offset,
+            commands::identification::identification_identify_track,
+            commands::identification::identification_get_api_key,
+            commands::identification::identification_set_api_key,
+            commands::identification::identification_identify_all,
+            commands::identification::identification_cancel_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

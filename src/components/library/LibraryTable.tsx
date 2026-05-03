@@ -1,9 +1,15 @@
 import { useMemo } from "react";
 import { useLibraryStore } from "../../stores/libraryStore";
 import { usePlayerStore } from "../../stores/playerStore";
+import { useIdentificationStore } from "../../stores/identificationStore";
+import { useDownloadStore } from "../../stores/downloadStore";
 import { formatDuration } from "../../lib/format";
 import { filterTracks } from "../../lib/search";
-import type { TrackLyricsStatus } from "../../types";
+import type {
+  Track,
+  TrackIdentificationStatus,
+  TrackLyricsStatus,
+} from "../../types";
 import { MarqueeText } from "../ui/MarqueeText";
 import { LibrarySearchBar } from "./LibrarySearchBar";
 
@@ -44,16 +50,111 @@ function LyricsIndicator({
   return <span className="text-muted">—</span>;
 }
 
+// Indicador de identification + trigger inline. La celda misma es el
+// botón cuando hay acción posible (status null/api_error/low_confidence)
+// — sin context menus, sin botones flotantes (no hay precedente en la
+// app y romperíamos brutalist agregando affordances ocultas).
+//
+//   null            → "ID" muted, clickable (acción inicial)
+//   inFlight        → "..." muted (animación implícita por el cambio)
+//   identified      → "[ID]" en accent (mismo lenguaje que [L]), no-op click
+//   low_confidence  → "?" muted, clickable (retriable, score subió posiblemente)
+//   no_match        → "—" muted (no clickable — no va a aparecer)
+//   fingerprint_failed → "!" muted (no clickable — archivo no soportado)
+//   api_error       → "⌛" muted, clickable (retriable)
+//
+// En la fila currente (bg accent), el accent del [ID] desaparece — usamos
+// foreground para que quede visible contra el fondo naranja, mismo patrón
+// que LyricsIndicator.
+function IdentificationIndicator({
+  status,
+  isCurrent,
+  inFlight,
+  clickable,
+}: {
+  status: TrackIdentificationStatus | null;
+  isCurrent: boolean;
+  inFlight: boolean;
+  clickable: boolean;
+}) {
+  if (inFlight) return <span className="text-muted">...</span>;
+  if (status === null) {
+    // Affordance discreta: gris con hover en accent sólo cuando es
+    // clickable (y no estamos en la fila currente, donde el hover row
+    // pisa el color de la celda).
+    return (
+      <span
+        className={
+          clickable && !isCurrent
+            ? "text-muted hover:text-accent"
+            : "text-muted"
+        }
+      >
+        ID
+      </span>
+    );
+  }
+  if (status === "identified") {
+    return <span className={isCurrent ? "" : "text-accent"}>[ID]</span>;
+  }
+  if (status === "low_confidence") return <span className="text-muted">?</span>;
+  if (status === "no_match") return <span className="text-muted">—</span>;
+  if (status === "fingerprint_failed") return <span className="text-muted">!</span>;
+  // api_error
+  return <span className="text-muted">⌛</span>;
+}
+
+const IDENTIFY_RETRIABLE_STATUSES: ReadonlyArray<TrackIdentificationStatus | null> = [
+  null,
+  "low_confidence",
+  "api_error",
+];
+
 export function LibraryTable() {
   const tracks = useLibraryStore((s) => s.tracks);
   const searchQuery = useLibraryStore((s) => s.searchQuery);
+  const loadTracks = useLibraryStore((s) => s.loadTracks);
   const currentTrackId = usePlayerStore((s) => s.currentTrackId);
   const playTrack = usePlayerStore((s) => s.playTrack);
+  const identify = useIdentificationStore((s) => s.identify);
+  const identifying = useIdentificationStore((s) => s.identifying);
+  const apiKey = useIdentificationStore((s) => s.apiKey);
+  const openApiKeyModal = useIdentificationStore((s) => s.openApiKeyModal);
+  const deps = useDownloadStore((s) => s.deps);
 
   const filtered = useMemo(
     () => filterTracks(tracks, searchQuery),
     [tracks, searchQuery],
   );
+
+  // Click en la celda ID → cascade fpcalc → AcoustID. Tres guards antes:
+  //   1. fpcalc instalado (sin él, fingerprint imposible).
+  //   2. API key seteada (sin ella, AcoustID rechaza).
+  //   3. Status retriable (no clickeamos identified/no_match/fingerprint_failed).
+  // Después del identify: refrescamos la library para que aparezca el
+  // indicador nuevo + la metadata canónica (si pisamos title/artist).
+  const onIdentifyClick = async (e: React.MouseEvent, track: Track) => {
+    e.stopPropagation(); // que no dispare playTrack del row.
+    if (!IDENTIFY_RETRIABLE_STATUSES.includes(track.identificationStatus)) return;
+
+    if (!deps?.fpcalc) {
+      alert(
+        "fpcalc not found.\n\nInstall on macOS: brew install chromaprint",
+      );
+      return;
+    }
+    if (!apiKey || apiKey.trim() === "") {
+      openApiKeyModal();
+      return;
+    }
+    const result = await identify(track.id);
+    // loadTracks refresca el indicador ID + metadata; siempre lo corremos
+    // (incluso si status fue no_match) para que el indicador transicione
+    // de null a su nuevo estado.
+    if (result !== null) {
+      await loadTracks();
+    }
+  };
 
   // Empty state global (sin tracks importados todavía) vs filtro vacío
   // (hay tracks pero ninguno matchea el query) — mensajes distintos para
@@ -86,6 +187,9 @@ export function LibraryTable() {
               {/* Columna L: indicador de letras. Width pequeño porque sólo
                   contiene 1-3 chars. */}
               <col className="w-10" />
+              {/* Columna ID: indicador de identification (AcoustID).
+                  Mismo width que L — máximo 4 chars ("[ID]"). */}
+              <col className="w-12" />
               <col className="w-3/5" />
               <col className="w-2/5" />
               <col className="w-24" />
@@ -96,6 +200,12 @@ export function LibraryTable() {
                 <th className="text-left px-3 py-2" title="Lyrics status">
                   L
                 </th>
+                <th
+                  className="text-left px-3 py-2"
+                  title="Identification status (AcoustID)"
+                >
+                  ID
+                </th>
                 <th className="text-left px-3 py-2">TITLE</th>
                 <th className="text-left px-3 py-2">ARTIST</th>
                 <th className="text-right px-3 py-2">DURATION</th>
@@ -104,6 +214,10 @@ export function LibraryTable() {
             <tbody>
               {filtered.map((t, i) => {
                 const isCurrent = t.id === currentTrackId;
+                const inFlight = identifying.has(t.id);
+                const idClickable = IDENTIFY_RETRIABLE_STATUSES.includes(
+                  t.identificationStatus,
+                );
                 return (
                   <tr
                     key={t.id}
@@ -119,6 +233,28 @@ export function LibraryTable() {
                     </td>
                     <td className="px-3 py-2 font-bold">
                       <LyricsIndicator status={t.lyricsStatus} isCurrent={isCurrent} />
+                    </td>
+                    <td
+                      className={`px-3 py-2 font-bold ${
+                        idClickable && !inFlight ? "cursor-pointer" : ""
+                      }`}
+                      onClick={
+                        idClickable && !inFlight
+                          ? (e) => onIdentifyClick(e, t)
+                          : undefined
+                      }
+                      title={
+                        idClickable && !inFlight
+                          ? "Identify with AcoustID"
+                          : undefined
+                      }
+                    >
+                      <IdentificationIndicator
+                        status={t.identificationStatus}
+                        isCurrent={isCurrent}
+                        inFlight={inFlight}
+                        clickable={idClickable}
+                      />
                     </td>
                     <td className="px-3 py-2">
                       <MarqueeText text={t.title} />

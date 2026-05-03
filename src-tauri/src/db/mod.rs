@@ -1,4 +1,5 @@
 pub mod lyrics;
+pub mod settings;
 pub mod tracks;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};

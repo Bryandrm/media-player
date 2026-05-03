@@ -23,6 +23,21 @@ pub enum AppError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
 
+    // Identification (AcoustID + Chromaprint). fpcalc se invoca como child
+    // process y puede fallar de tres maneras distintas; las separamos para
+    // que el frontend muestre mensajes claros (vs un error genérico).
+    #[error("fpcalc failed: {0}")]
+    FpcalcFailed(String),
+
+    #[error("fpcalc output parse error: {0}")]
+    FpcalcParse(String),
+
+    #[error("AcoustID API error: {0}")]
+    AcoustIdApi(String),
+
+    #[error("AcoustID API key not configured — set it in Settings")]
+    AcoustIdNoApiKey,
+
     #[error("{0}")]
     Other(String),
 }

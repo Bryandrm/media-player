@@ -129,7 +129,8 @@ pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Track>> {
                     WHEN l.synced_lyrics IS NOT NULL THEN 'synced'
                     WHEN l.plain_lyrics IS NOT NULL THEN 'plain'
                     ELSE 'instrumental'
-                END AS lyrics_status
+                END AS lyrics_status,
+                t.acoustid_id, t.mbid_recording, t.identification_status
          FROM tracks t
          LEFT JOIN lyrics l ON l.track_id = t.id
          ORDER BY
@@ -142,4 +143,132 @@ pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Track>> {
     .await?;
 
     Ok(rows)
+}
+
+/// Snapshot mínimo del track para el cascade de identification: lo que
+/// necesitamos leer antes de fingerprintear. La duración la usamos sólo si
+/// el fingerprint ya está cacheado (skipping fpcalc); cuando recalculamos,
+/// fpcalc devuelve la suya propia.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct TrackForIdentification {
+    pub file_path: String,
+    pub duration_ms: i64,
+    pub acoustid_fingerprint: Option<String>,
+}
+
+pub async fn get_for_identification(
+    pool: &SqlitePool,
+    track_id: i64,
+) -> AppResult<Option<TrackForIdentification>> {
+    let row = sqlx::query_as::<_, TrackForIdentification>(
+        "SELECT file_path, duration_ms, acoustid_fingerprint \
+         FROM tracks WHERE id = ?",
+    )
+    .bind(track_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+/// Guarda el fingerprint computado por fpcalc — separado del save_identification
+/// porque queremos cachearlo aunque la llamada a AcoustID falle (un retry de
+/// `api_error` no debe re-correr fpcalc, que es la parte CPU-intensiva).
+pub async fn save_fingerprint(
+    pool: &SqlitePool,
+    track_id: i64,
+    fingerprint: &str,
+) -> AppResult<()> {
+    sqlx::query("UPDATE tracks SET acoustid_fingerprint = ? WHERE id = ?")
+        .bind(fingerprint)
+        .bind(track_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Persiste un match aceptado de AcoustID. Pisa title/artist con los valores
+/// canónicos de MusicBrainz y guarda los originales en original_title/
+/// original_artist (sólo la primera vez — si ya estaban poblados de un
+/// identify previo, no los sobreescribimos para preservar el verdadero
+/// "antes" en caso de re-identifies sucesivos).
+///
+/// Si `canonical_title` o `canonical_artist` vienen vacíos (recording de MB
+/// con metadata incompleta), no pisamos ese campo — preferimos retener lo
+/// que ya teníamos.
+pub async fn save_identification(
+    pool: &SqlitePool,
+    track_id: i64,
+    acoustid_id: &str,
+    mbid: &str,
+    canonical_title: &str,
+    canonical_artist: &str,
+) -> AppResult<()> {
+    // Hacemos el update en una sola query con CASE expressions:
+    //   - title/artist: pisamos sólo si canonical_* no está vacío.
+    //   - original_*: poblamos sólo si todavía es NULL (primer identify).
+    sqlx::query(
+        "UPDATE tracks SET \
+            acoustid_id = ?, \
+            mbid_recording = ?, \
+            identification_status = 'identified', \
+            identification_attempted_at = CURRENT_TIMESTAMP, \
+            original_title = CASE WHEN original_title IS NULL THEN title ELSE original_title END, \
+            original_artist = CASE WHEN original_artist IS NULL THEN artist ELSE original_artist END, \
+            title = CASE WHEN ? != '' THEN ? ELSE title END, \
+            artist = CASE WHEN ? != '' THEN ? ELSE artist END \
+         WHERE id = ?",
+    )
+    .bind(acoustid_id)
+    .bind(mbid)
+    .bind(canonical_title)
+    .bind(canonical_title)
+    .bind(canonical_artist)
+    .bind(canonical_artist)
+    .bind(track_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Lista los track IDs candidatos para el bulk identify: nunca intentados
+/// (`identification_status IS NULL`) o que fallaron por red/quota
+/// (`'api_error'`, retriable). Excluye `'identified'` (ya está), `'no_match'`
+/// (no va a aparecer), `'low_confidence'` (mismo audio = mismo score) y
+/// `'fingerprint_failed'` (problema del archivo).
+///
+/// Orden por id ASC = orden de inserción ≈ orden estable. No nos importa
+/// el orden de proceso, sólo que sea determinístico para que un cancel +
+/// retomar siga la misma secuencia.
+pub async fn list_identifiable(pool: &SqlitePool) -> AppResult<Vec<i64>> {
+    let ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM tracks \
+         WHERE identification_status IS NULL \
+            OR identification_status = 'api_error' \
+         ORDER BY id ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(ids)
+}
+
+/// Marca el resultado de un identify que NO fue aceptado (low_confidence,
+/// no_match, fingerprint_failed, api_error). No toca title/artist.
+/// `identification_attempted_at` se actualiza siempre — útil para Fase 2/3
+/// si decidimos política "no retriar antes de N días".
+pub async fn update_identification_status(
+    pool: &SqlitePool,
+    track_id: i64,
+    status: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE tracks SET \
+            identification_status = ?, \
+            identification_attempted_at = CURRENT_TIMESTAMP \
+         WHERE id = ?",
+    )
+    .bind(status)
+    .bind(track_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }

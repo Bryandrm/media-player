@@ -172,8 +172,12 @@ export function LyricsView() {
           })}
         </div>
 
-        {/* Offset controls. Brutalist buttons size="sm". */}
-        <div className="px-6 py-2 border-t-2 border-fg flex items-center gap-2 text-xs uppercase tracking-wider">
+        {/* Offset controls. Brutalist buttons size="sm". shrink-0 es
+            crítico — sin él, cuando la lista de líneas es larga, el
+            flex-shrink default comprime esta barra y los botones quedan
+            tapados/fuera del viewport. Mismo issue que sufrimos con el
+            Header de arriba. */}
+        <div className="shrink-0 px-6 py-2 border-t-2 border-fg flex items-center gap-2 text-xs uppercase tracking-wider">
           <span className="text-muted min-w-[110px]">
             OFFSET: {userOffset >= 0 ? "+" : ""}
             {userOffset}MS
@@ -212,7 +216,7 @@ function Header({
 }) {
   const lowConfidence = confidence !== null && confidence < 0.8;
   return (
-    <div className="px-6 py-2 border-b-2 border-fg text-xs uppercase tracking-wider flex justify-between items-center">
+    <div className="shrink-0 px-6 py-2 border-b-2 border-fg text-xs uppercase tracking-wider flex justify-between items-center">
       <span className="text-muted">
         {mode === "synced" ? "SYNCED" : "PLAIN ONLY"} — {source ?? "UNKNOWN"}
       </span>

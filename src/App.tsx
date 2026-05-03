@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { useLibraryStore } from "./stores/libraryStore";
 import { useDownloadStore } from "./stores/downloadStore";
 import { useUiStore } from "./stores/uiStore";
+import { useIdentificationStore } from "./stores/identificationStore";
 import { useAudioPlayer } from "./hooks/useAudioPlayer";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useDownloadEvents } from "./hooks/useDownloadEvents";
+import { useIdentificationEvents } from "./hooks/useIdentificationEvents";
 import { usePlaybackPersist } from "./hooks/usePlaybackPersist";
 import { useMediaSession } from "./hooks/useMediaSession";
 import { useLyricsSync } from "./hooks/useLyricsSync";
@@ -14,12 +16,14 @@ import { LibraryTable } from "./components/library/LibraryTable";
 import { PlayerBar } from "./components/player/PlayerBar";
 import { VisualizerView } from "./components/visualizer/VisualizerView";
 import { DownloadsView } from "./components/downloads/DownloadsView";
+import { ApiKeyModal } from "./components/identification/ApiKeyModal";
 
 function App() {
   const loadTracks = useLibraryStore((s) => s.loadTracks);
   const backfillCovers = useLibraryStore((s) => s.backfillCovers);
   const error = useLibraryStore((s) => s.error);
   const checkDependencies = useDownloadStore((s) => s.checkDependencies);
+  const loadApiKey = useIdentificationStore((s) => s.loadApiKey);
   const view = useUiStore((s) => s.view);
 
   // VisualizerView se monta lazy en el primer visit a la tab y queda
@@ -33,6 +37,7 @@ function App() {
   useAudioPlayer();
   useKeyboardShortcuts();
   useDownloadEvents();
+  useIdentificationEvents();
   usePlaybackPersist();
   useMediaSession();
   useLyricsSync();
@@ -40,7 +45,8 @@ function App() {
   useEffect(() => {
     loadTracks().then(() => backfillCovers());
     checkDependencies();
-  }, [loadTracks, backfillCovers, checkDependencies]);
+    loadApiKey();
+  }, [loadTracks, backfillCovers, checkDependencies, loadApiKey]);
 
   useEffect(() => {
     if (view === "visualizer") setVisualizerVisited(true);
@@ -85,6 +91,7 @@ function App() {
       </div>
 
       <PlayerBar />
+      <ApiKeyModal />
     </main>
   );
 }

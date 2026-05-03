@@ -32,6 +32,24 @@ pub struct Track {
     ///   - NULL            — todavía no fetcheamos para este track
     /// El frontend lo usa para el indicador en la library.
     pub lyrics_status: Option<String>,
+
+    /// AcoustID UUID propio (distinto del MBID). Útil sólo internamente
+    /// para futuras Fase 3 ops; el frontend lo recibe pero no lo usa hoy.
+    pub acoustid_id: Option<String>,
+    /// MBID de la grabación canónica en MusicBrainz. NULL = nunca
+    /// identificamos o el match fue rechazado por low_confidence/no_match.
+    /// Cuando está poblado, `lyrics/lrclib.rs::try_lrclib` lo usa como
+    /// query exacto a LRCLIB (`?track_mbid=<uuid>`).
+    pub mbid_recording: Option<String>,
+    /// Estado de la última corrida de identification:
+    ///   - 'identified'         — match aceptado, mbid_recording poblado
+    ///   - 'low_confidence'     — hubo match pero score < 0.85
+    ///   - 'no_match'           — AcoustID devolvió results: []
+    ///   - 'fingerprint_failed' — fpcalc errored
+    ///   - 'api_error'          — red / 5xx / quota — retriable
+    ///   - NULL                 — nunca se intentó
+    /// El frontend lo usa para el indicador ID en la library.
+    pub identification_status: Option<String>,
 }
 
 /// Reporte de un scan de directorio.
@@ -44,12 +62,18 @@ pub struct ScanReport {
     pub errors: usize,
 }
 
-/// Estado de las dependencias externas (yt-dlp, ffmpeg). Detectadas al boot.
+/// Estado de las dependencias externas (yt-dlp, ffmpeg, fpcalc). Detectadas
+/// al boot. Cada una desbloquea features distintas — el frontend muestra
+/// un banner por cada faltante con qué feature se queda inactiva.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DependencyStatus {
     pub yt_dlp: bool,
     pub ffmpeg: bool,
+    /// Chromaprint binary. Necesario para identificación canónica
+    /// (AcoustID). Sin él, la feature IDENTIFY queda disabled — el
+    /// resto del player funciona idéntico.
+    pub fpcalc: bool,
 }
 
 /// Estados terminales o transitorios de una descarga, espejado en la columna

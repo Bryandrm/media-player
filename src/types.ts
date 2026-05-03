@@ -11,6 +11,21 @@ export type TrackLyricsStatus =
   | "instrumental"
   | "not_found";
 
+/** Estado de la última corrida de identification (AcoustID + Chromaprint):
+ *    - 'identified':         match aceptado, mbidRecording poblado
+ *    - 'low_confidence':     hubo match pero score < 0.85
+ *    - 'no_match':           AcoustID no devolvió results
+ *    - 'fingerprint_failed': fpcalc errored (archivo corrupto / formato raro)
+ *    - 'api_error':          red / 5xx / quota — retriable
+ *    - null:                 nunca se intentó
+ *  Ver docs/IDENTIFICATION.md §3.1. */
+export type TrackIdentificationStatus =
+  | "identified"
+  | "low_confidence"
+  | "no_match"
+  | "fingerprint_failed"
+  | "api_error";
+
 export type Track = {
   id: number;
   filePath: string;
@@ -26,6 +41,21 @@ export type Track = {
    *  null si no hay imagen disponible. Se sirve vía `convertFileSrc()`. */
   coverArtPath: string | null;
   lyricsStatus: TrackLyricsStatus | null;
+  acoustidId: string | null;
+  mbidRecording: string | null;
+  identificationStatus: TrackIdentificationStatus | null;
+};
+
+/** Resultado del comando identification_identify_track. Los campos
+ *  opcionales sólo están poblados cuando status === 'identified'. */
+export type IdentificationResult = {
+  trackId: number;
+  status: TrackIdentificationStatus;
+  score: number | null;
+  mbid: string | null;
+  acoustidId: string | null;
+  canonicalTitle: string | null;
+  canonicalArtist: string | null;
 };
 
 export type ScanReport = {
@@ -38,6 +68,10 @@ export type ScanReport = {
 export type DependencyStatus = {
   ytDlp: boolean;
   ffmpeg: boolean;
+  /** Chromaprint binary (`fpcalc`). Necesario para identificación canónica
+   *  vía AcoustID. Sin él la feature IDENTIFY queda disabled — el resto
+   *  del player funciona idéntico. */
+  fpcalc: boolean;
 };
 
 export type DownloadStatus =
