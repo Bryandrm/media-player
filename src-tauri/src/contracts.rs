@@ -24,6 +24,14 @@ pub struct Track {
     /// (`<app_cache>/thumbnails/<id>.jpg`) o a un sibling como `cover.jpg`
     /// dentro de la carpeta del track. NULL si no encontramos nada.
     pub cover_art_path: Option<String>,
+    /// Estado derivado de la tabla `lyrics` via LEFT JOIN en `list_all`:
+    ///   - 'synced'        — hay synced_lyrics (mejor experiencia, karaoke)
+    ///   - 'plain'         — sólo plain_lyrics
+    ///   - 'instrumental'  — LRCLIB confirmó track sin letras
+    ///   - 'not_found'     — buscamos y nadie tenía letras
+    ///   - NULL            — todavía no fetcheamos para este track
+    /// El frontend lo usa para el indicador en la library.
+    pub lyrics_status: Option<String>,
 }
 
 /// Reporte de un scan de directorio.

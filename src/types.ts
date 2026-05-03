@@ -1,3 +1,16 @@
+/** Status derivado de la tabla `lyrics` para mostrar el indicador en la
+ *  library:
+ *    - 'synced':       hay synced_lyrics → mejor experiencia
+ *    - 'plain':        sólo plain_lyrics → útil pero sin highlight
+ *    - 'instrumental': LRCLIB confirmó track sin letras
+ *    - 'not_found':    buscamos y nadie devolvió letras
+ *    - null:           todavía no fetcheamos para este track */
+export type TrackLyricsStatus =
+  | "synced"
+  | "plain"
+  | "instrumental"
+  | "not_found";
+
 export type Track = {
   id: number;
   filePath: string;
@@ -12,6 +25,7 @@ export type Track = {
   /** Ruta absoluta al cover art (cache thumbnail o sibling cover.jpg).
    *  null si no hay imagen disponible. Se sirve vía `convertFileSrc()`. */
   coverArtPath: string | null;
+  lyricsStatus: TrackLyricsStatus | null;
 };
 
 export type ScanReport = {

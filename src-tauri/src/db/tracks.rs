@@ -113,16 +113,30 @@ pub async fn update_title_and_artist(
 }
 
 /// Lista todos los tracks ordenados por artista + álbum + número de pista.
+/// Incluye `lyrics_status` derivado de la tabla `lyrics` via LEFT JOIN —
+/// computado en SQL para no necesitar una segunda query del frontend.
 pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Track>> {
+    // CASE expression resuelve los 5 estados posibles (ver Track.lyrics_status
+    // en contracts.rs). Orden de WHEN importa: 'not_found' antes que el check
+    // de synced/plain (porque una row con status='not_found' tiene synced y
+    // plain en NULL, pero queremos el estado explícito 'not_found').
     let rows = sqlx::query_as::<_, Track>(
-        "SELECT id, file_path, title, artist, album, duration_ms,
-                track_number, year, genre, format, cover_art_path
-         FROM tracks
+        "SELECT t.id, t.file_path, t.title, t.artist, t.album, t.duration_ms,
+                t.track_number, t.year, t.genre, t.format, t.cover_art_path,
+                CASE
+                    WHEN l.track_id IS NULL THEN NULL
+                    WHEN l.status = 'not_found' THEN 'not_found'
+                    WHEN l.synced_lyrics IS NOT NULL THEN 'synced'
+                    WHEN l.plain_lyrics IS NOT NULL THEN 'plain'
+                    ELSE 'instrumental'
+                END AS lyrics_status
+         FROM tracks t
+         LEFT JOIN lyrics l ON l.track_id = t.id
          ORDER BY
-           COALESCE(artist, 'ZZZ'),
-           COALESCE(album, 'ZZZ'),
-           COALESCE(track_number, 0),
-           title",
+           COALESCE(t.artist, 'ZZZ'),
+           COALESCE(t.album, 'ZZZ'),
+           COALESCE(t.track_number, 0),
+           t.title",
     )
     .fetch_all(pool)
     .await?;
