@@ -42,33 +42,59 @@
 ## 2. Pipeline de audio (el flujo crítico)
 
 ```
-Archivo en disco  ──►  Tauri expone vía asset protocol
-                       (convertFileSrc)
+Archivo en disco  ──►  Tauri expone vía asset protocol (convertFileSrc)
                                 │
                                 ▼
-                <audio> singleton (new Audio() en module scope,
-                                   no en JSX — ver §6.2)
-                                │
-                                ▼
-               MediaElementAudioSourceNode (source)
-                                │
-                                ▼
-                      GainNode (masterGain)  ← volume + mute
-                                │
-                                ├──────► AudioContext.destination
-                                │
-                                └──► Butterchurn.connectAudio(source)
-                                     (tapea el source pre-gain;
-                                      el visualizer "ve" la señal
-                                      siempre, aunque el usuario
-                                      mutee el output)
+        ┌────────────────────────────────────────────┐
+        │  audioA (canal A)        audioB (canal B)  │   singletons en
+        │  - new Audio()           - new Audio()     │   module scope —
+        │  - crossOrigin="anonymous"                 │   ver §6.2
+        └────────┬──────────────────┬────────────────┘
+                 ▼                  ▼
+              sourceA            sourceB        (MediaElementAudioSourceNode)
+                 │                  │
+                 ▼                  ▼
+            channelGainA       channelGainB     ← crossfade ramps (1=activo,
+                 │                  │             0=inactivo)
+                 └────────┬─────────┘
+                          ▼
+                  preMasterGain  ──► Butterchurn.connectAudio()  (tap del visualizer:
+                          │                                        ve la mezcla de
+                          ▼                                        ambos canales,
+                    masterGain                                     pre-volume/mute)
+                          │ ← volume + mute (slider, M key)
+                          ▼
+                   playPauseGain
+                          │ ← fade in/out al play/pause (200ms in, 150ms out)
+                          ▼
+                  AudioContext.destination
 ```
 
-**Implementación:** [src/audio/element.ts](../src/audio/element.ts) y [src/audio/context.ts](../src/audio/context.ts). Una sola instancia de `<audio>`, una sola de `AudioContext`, una sola de `MediaElementAudioSourceNode` (la API sólo permite uno por elemento).
+**Implementación:** [src/audio/element.ts](../src/audio/element.ts) y [src/audio/context.ts](../src/audio/context.ts).
+
+Tres niveles de gain con responsabilidades distintas:
+- **`channelGainA/B`**: control de crossfade entre canales. 1 = audible, 0 = silencio.
+- **`masterGain`**: control de volumen del usuario + mute. Único stage donde el slider de volumen escribe.
+- **`playPauseGain`**: fade in/out de play/pause. Independiente del volumen — el usuario puede mover el slider durante un fade sin interferencia.
+
+`preMasterGain` es un junction node (gain fijo en 1) que existe sólo para que el visualizer tape la mezcla de ambos canales pre-volumen. Sin esto, Butterchurn perdería todo el audio del canal B durante un crossfade.
 
 ### 2.1 Por qué el volumen va por GainNode, no por `audio.volume`
 
 Una vez que llamás `ctx.createMediaElementSource(audio)`, Chromium **bypassea** `audio.volume` y `audio.muted`. La señal sale del elemento al grafo Web Audio y no respeta los controles HTML. Por eso `setVolume` y `toggleMute` escriben a `masterGain.gain.value`. (Gotcha #2 en CLAUDE.md.)
+
+### 2.2 Crossfade y play/pause fade — detalle
+
+**Crossfade** (ADR-012): cuando `_onTimeUpdate` detecta que faltan `<= crossfadeMs/1000` para terminar el track, dispara `startCrossfade`:
+1. Precarga próximo track en el canal inactivo (`audio.src = ...; audio.play()`).
+2. Schedule de `linearRampToValueAtTime` sobre los dos channelGains: viejo 1→0, nuevo 0→1, en `crossfadeMs` segundos del reloj AudioContext.
+3. Swap del `activeId` (el "canal activo" pasa a ser el nuevo). `useAudioPlayer` filtra eventos por `audio === getAudioElement()` para que el viejo no pise el state durante el fade.
+4. setTimeout en wall-clock para `finishCrossfade`: pausa el viejo + clear de su src.
+
+**Play/pause fade** (ADR-013): `togglePlay` branchea sobre `isPlaying` del store (eager update) en vez de `audio.paused` para soportar doble-click rápido durante un fade.
+- Play: `audio.play()` + `fadeInPlayPause()` (`cancelAndHoldAtTime + linearRampToValueAtTime` 0→1 over 200ms).
+- Pause: `fadeOutPlayPause(onFadeOut)` (ramp current→0 over 150ms), después `onFadeOut` llama `audio.pause()`.
+- Crítico: `cancelAndHoldAtTime(t)` (no `cancelScheduledValues + setValueAtTime(g.value, t)`) porque `g.value` lee el INTRÍNSECO del AudioParam, no el computado del ramp en curso (Gotcha #9).
 
 ### 2.2 Validación inicial (2026-04-21)
 
@@ -95,8 +121,9 @@ El smoke test del pipeline confirmó tres requisitos permanentes:
 **Library** ([commands/library.rs](../src-tauri/src/commands/library.rs))
 ```rust
 library_scan_directory(path: String) -> AppResult<ScanReport>
-library_list_tracks() -> AppResult<Vec<Track>>
-library_backfill_covers() -> AppResult<usize>   // re-extrae cover de tracks viejos sin imagen
+library_list_tracks() -> AppResult<Vec<Track>>     // Track incluye lyrics_status via LEFT JOIN
+library_backfill_covers() -> AppResult<usize>      // re-extrae cover de tracks viejos sin imagen
+library_backfill_metadata() -> AppResult<usize>    // aplica cleanup heurístico a metadata yt-dlp
 ```
 
 **Downloader** ([commands/downloader.rs](../src-tauri/src/commands/downloader.rs))
@@ -110,18 +137,15 @@ El comando bloquea hasta que yt-dlp termina, pero la UI no espera al return — 
 check_dependencies() -> DependencyStatus  // { ytDlp: bool, ffmpeg: bool }
 ```
 
-### 3.3 Comandos en backlog (por feature pendiente)
-
+**Lyrics** ([commands/lyrics.rs](../src-tauri/src/commands/lyrics.rs))
 ```rust
-// Letras (LRCLIB):
-lyrics_fetch(track_id: i64) -> AppResult<Option<Lyrics>>
-
-// Persistencia de último track:
-playback_save_state(track_id: i64, position_ms: i64)
-playback_load_state() -> Option<{ track_id, position_ms }>
-
-// Borrado / settings: no implementados aún. Se agregan cuando los pida la UI.
+lyrics_fetch(track_id: i64) -> AppResult<Option<Lyrics>>      // cache-first; si miss, corre cascade
+lyrics_set_offset(track_id: i64, offset_ms: i64) -> AppResult<()>
 ```
+
+### 3.3 Comandos en backlog
+
+Persistencia del último track + posición se hace **client-side** vía localStorage en `usePlaybackPersist` — no requirió comando backend. Borrado de tracks, settings, y comandos relacionados a Fase 2/3 features aún no implementados.
 
 ---
 
@@ -135,7 +159,11 @@ playback_load_state() -> Option<{ track_id, position_ms }>
 
 `sqlx migrate` con archivos en `src-tauri/migrations/`. La app corre `sqlx::migrate!("./migrations").run(&pool)` al boot, **antes** de registrar comandos. Forward-only en desarrollo; sin `down` migrations hasta que sea necesario.
 
-Schema actual: una sola migración (`20260421000001_initial_schema.sql`) que crea `tracks`, `playlists`, `playlist_tracks`, `lyrics`, `downloads`, `settings` + 3 índices sobre `tracks`. Las tablas `playlists`, `playlist_tracks`, `lyrics`, `downloads`, `settings` están creadas pero todavía sin uso real desde el código (Fase 2 / pendientes Fase 1).
+Schema actual: dos migraciones.
+- `20260421000001_initial_schema.sql` — `tracks`, `playlists`, `playlist_tracks`, `lyrics`, `downloads`, `settings` + 3 índices sobre `tracks`.
+- `20260502000001_lyrics_phase1.sql` — aditiva sobre `lyrics`: agrega `offset_ms`, `status`, `source_id`, `confidence`, `last_used_at` + índice `idx_lyrics_status`. La validación de `status ∈ {'found','not_found','manual_pending'}` se hace en código Rust (SQLite no soporta CHECK añadido por ALTER).
+
+Tablas en uso activo: `tracks`, `lyrics`. Tablas creadas pero sin código que las use: `playlists`, `playlist_tracks`, `downloads`, `settings` (Fase 2+).
 
 ### 4.3 Paths
 
@@ -154,29 +182,40 @@ Schema actual: una sola migración (`20260421000001_initial_schema.sql`) que cre
 
 ```
 src-tauri/src/
-├── lib.rs                  # bootstrap: tauri::Builder, init de pool, invoke_handler
+├── lib.rs                  # bootstrap: tauri::Builder, pool init, reqwest::Client init,
+│                           # invoke_handler
 ├── main.rs                 # shim que llama lib::run
-├── contracts.rs            # tipos compartidos con el frontend (Track, ScanReport, Download, etc)
-├── errors.rs               # AppError enum + AppResult; serialize custom a string
+├── contracts.rs            # tipos compartidos con el frontend (Track con lyrics_status,
+│                           # Lyrics, ScanReport, Download, etc)
+├── errors.rs               # AppError enum + AppResult; serialize custom a string;
+│                           # variantes: Database, Io, Http, NotFound, InvalidInput, Other
 ├── db/
 │   ├── mod.rs              # init() del pool + sqlx migrate
-│   └── tracks.rs           # insert_from_metadata, list_all, set_cover_art, find_id_by_path
+│   ├── tracks.rs           # insert_from_metadata, list_all (con LEFT JOIN a lyrics),
+│   │                       # set_cover_art, list_for_metadata_backfill,
+│   │                       # update_title_and_artist
+│   └── lyrics.rs           # get_for_track, upsert, mark_not_found, set_offset,
+│                           # delete_for_track
 ├── audio/
-│   └── mod.rs              # is_audio_file, extract_metadata (lofty), extract_cover_art
+│   ├── mod.rs              # is_audio_file, extract_metadata (lofty), extract_cover_art
+│   └── cleanup.rs          # cleanup_metadata heurístico (post-yt-dlp); 23 unit tests
 ├── downloader/
 │   └── mod.rs              # run_yt_dlp + parsers de progreso y postprocess
 ├── lyrics/
-│   └── mod.rs              # stub vacío — pendiente Fase 1
+│   ├── mod.rs              # fetch_lyrics: cascade Embedded → LRCLIB → mark_not_found
+│   ├── embedded.rs         # try_embedded: lee USLT vía lofty
+│   └── lrclib.rs           # try_lrclib: /api/get con field fallback + /api/search fallback
 └── commands/               # thin wrappers
     ├── mod.rs
-    ├── library.rs
-    ├── downloader.rs
-    └── system.rs
+    ├── library.rs          # scan_directory, list_tracks, backfill_covers, backfill_metadata
+    ├── downloader.rs       # download_track
+    ├── lyrics.rs           # lyrics_fetch (cache-first), lyrics_set_offset
+    └── system.rs           # check_dependencies
 ```
 
 **Regla:** `commands/*` no contiene lógica. Reciben args, llaman al módulo de dominio, mapean errores a `AppError`. Los tests viven en los módulos.
 
-Diferencias con la propuesta original del PLAN: no hay `db/playlists.rs` ni `db/downloads.rs` ni `db/settings.rs` (las tablas existen pero no las usa código todavía). `audio/metadata.rs` se colapsó a `audio/mod.rs`. `downloader/ytdlp.rs` + `downloader/progress.rs` se colapsaron a `downloader/mod.rs` (cuando crezca, separar). `lyrics/lrclib.rs` no existe aún.
+Diferencias con la propuesta original del PLAN: no hay `db/playlists.rs` ni `db/downloads.rs` ni `db/settings.rs` (las tablas existen pero no las usa código todavía). `downloader/ytdlp.rs` + `downloader/progress.rs` se colapsaron a `downloader/mod.rs` (cuando crezca, separar).
 
 ---
 
@@ -187,25 +226,31 @@ Diferencias con la propuesta original del PLAN: no hay `db/playlists.rs` ni `db/
 ```
 src/stores/
 ├── playerStore.ts     currentTrackId, isPlaying, currentTime, duration,
-│                       volume, muted, shuffle, playHistory (cap 64).
-│                       Acciones: playTrack, togglePlay, seek, setVolume,
-│                       toggleMute, toggleShuffle, next, prev. Persiste
-│                       sólo { volume, muted, shuffle }.
-├── libraryStore.ts    tracks, scanning, lastReport, error, searchQuery.
-│                       Acciones: loadTracks, scanDirectory, backfillCovers,
-│                       setSearchQuery. No persiste nada (la DB es la fuente
-│                       de verdad; searchQuery es ephemeral).
-├── uiStore.ts         view, presetIndex, visualizerSplit, autoCycle.
-│                       Persiste { presetIndex, visualizerSplit, autoCycle }.
-│                       version: 1 — bumpear cuando cambie un default que
-│                       ya esté en localStorage del usuario.
+│                       volume, muted, shuffle, crossfadeMs, _isCrossfading,
+│                       playHistory (cap 64). Acciones: playTrack,
+│                       loadTrackForResume, togglePlay (con eager update +
+│                       fade), seek, setVolume, toggleMute, toggleShuffle,
+│                       cycleCrossfade, next, prev. Persiste sólo
+│                       { volume, muted, shuffle, crossfadeMs }.
+├── libraryStore.ts    tracks, scanning, lastReport, error, searchQuery,
+│                       cleaning, lastCleanedCount. Acciones: loadTracks,
+│                       scanDirectory, backfillCovers, backfillMetadata,
+│                       setSearchQuery. No persiste nada (DB es la fuente).
+├── uiStore.ts         view, presetIndex, visualizerSplit, autoCycle,
+│                       playerPaneMode ('visualizer' | 'lyrics'). Persiste
+│                       { presetIndex, visualizerSplit, autoCycle,
+│                       playerPaneMode }. version: 1 — bumpear al cambiar
+│                       un default ya persistido.
+├── lyricsStore.ts     current (Lyrics | null), forTrackId, loading,
+│                       notFound, error. Acciones: fetch (con race-guard),
+│                       setOffset (optimistic update), clear. No persiste —
+│                       la DB es la cache.
 └── downloadStore.ts   downloads (lista en memoria), deps, submitting, error.
                         Acciones de UI (startDownload, checkDependencies) +
-                        acciones que llaman los handlers de evento
-                        (upsertDownload, updateProgress, removeDownload).
+                        acciones que llaman los handlers de evento.
 ```
 
-Las acciones internas que sólo llama el adaptador de eventos (no la UI) van con prefijo `_` en `playerStore` (`_onTimeUpdate`, `_onPlay`, etc.) — convención simple para distinguir handlers de "API pública" de la store.
+Las acciones internas que sólo llama el adaptador de eventos (no la UI) van con prefijo `_` en `playerStore` (`_onTimeUpdate`, `_onPlay`, `_isCrossfading`, etc.) — convención simple para distinguir handlers de "API pública" de la store.
 
 ### 6.2 Singleton de audio fuera del JSX
 
@@ -217,11 +262,52 @@ Razón: Butterchurn (un subtree distinto, montado/desmontado al cambiar de vista
 
 [src/hooks/useDownloadEvents.ts](../src/hooks/useDownloadEvents.ts) se monta una sola vez en `App.tsx`. `Promise.all([...listen(...)])` setea los handlers; cleanup en unmount. Los handlers escriben directo al `downloadStore` (y, en `download-completed`, refrescan la library). Componentes de hoja **no** llaman `listen()`.
 
-[src/hooks/useAudioPlayer.ts](../src/hooks/useAudioPlayer.ts) hace lo mismo para los eventos del `<audio>` singleton (`timeupdate`, `play`, `pause`, `ended`, `durationchange`).
+[src/hooks/useAudioPlayer.ts](../src/hooks/useAudioPlayer.ts) atacha listeners en **ambos** audios (canal A y B) para los eventos del `<audio>` singleton (`timeupdate`, `play`, `pause`, `ended`, `durationchange`). Cada handler filtra por `audio === getAudioElement()` para que sólo el canal activo actualice el store — durante un crossfade ambos canales reproducen pero sólo el "nuevo" (el que el usuario está escuchando en su modelo mental) maneja el state.
+
+### 6.4 Hooks globales montados en App
+
+```
+useAudioPlayer       eventos del <audio> → playerStore
+useKeyboardShortcuts Space, ←/→, ↑/↓, M, N, P, S, V, F
+useDownloadEvents    eventos download-* → downloadStore
+usePlaybackPersist   ¿qué track + posición? localStorage entre sesiones
+useMediaSession      MediaSession API (media keys, AirPods, Now Playing)
+useLyricsSync        auto-fetch de letras on currentTrackId change
+```
 
 ---
 
-## 7. Pipeline de descarga — detalle
+## 7. Lyrics — sub-sistema
+
+Ver [LYRICS.md](./LYRICS.md) para el plan completo por fases.
+
+**Fase 1 (implementada)**: Embedded (USLT vía lofty) + LRCLIB. Sin trait abstraction — dos `async fn` libres en `src-tauri/src/lyrics/`. Ver [ADR-015](./DECISIONS.md#adr-015).
+
+**Cascade** (`fetch_lyrics`):
+1. **Embedded**: lee `ItemKey::Lyrics` del archivo (USLT en ID3v2). Sólo plain en Fase 1; SYLT (synced embebido) queda Fase 2.
+2. **LRCLIB**: cascade interna — `/api/get` con todos los campos → `/api/get` sin album → `/api/search` (fuzzy keyword search). Cada nivel valida `duration` con tolerancia ±10s para evitar matches a versiones equivocadas (live/edit/remix).
+3. Si nada matchea: `mark_not_found` (cache `status='not_found'` para no re-pegarle automáticamente).
+
+**Cleanup heurístico** ([audio/cleanup.rs](../src-tauri/src/audio/cleanup.rs)) corre antes de insertar metadata de yt-dlp. Strip de sufijos de YouTube (`- Topic`, `OfficialVEVO`, `(Official Video)`, etc) + extracción de `Artist - Title` patterns. **Conservador por elección** — falsos negativos preferibles a falsos positivos. Ver [ADR-016](./DECISIONS.md#adr-016).
+
+**Auto-fetch on track change** ([useLyricsSync](../src/hooks/useLyricsSync.ts)): cada vez que cambia `currentTrackId`, dispara `lyrics_fetch` en background y refresca la library. La cache previene requests duplicados. Pobla el indicador `L` en la library con el uso natural. Ver [ADR-017](./DECISIONS.md#adr-017).
+
+**Indicador `L` en LibraryTable**:
+- `[L]` accent → synced
+- `·` muted → plain only
+- `♪` muted → instrumental confirmado por LRCLIB
+- `—` muted → not_found (buscamos, no había)
+- vacío → no fetcheado todavía
+
+`lyrics_status` se computa en SQL via CASE en `db::tracks::list_all` con LEFT JOIN a `lyrics` — el frontend recibe el estado por track sin necesidad de query separada.
+
+**Sincronización en runtime** ([useSyncedLyrics](../src/hooks/useSyncedLyrics.ts)): `requestAnimationFrame` con cursor incremental. rAF en vez de `timeupdate` (que dispara cada ~250ms y se siente lento) — para letras synced el delay perceptible importa. Cursor amortizado O(1) durante reproducción lineal; reset a -1 en `seeked`.
+
+**Parser LRC**: [src/lib/lrcParser.ts](../src/lib/lrcParser.ts) — TS, no Rust. El backend guarda el blob crudo en `lyrics.synced_lyrics` y el frontend lo parsea al renderizar. Maneja múltiples timestamps por línea (`[00:25.43][01:32.10]Chorus`), tags de metadata (`[ti:]`, `[ar:]`, `[al:]`, `[offset:]`), BOM, CRLF. Líneas malformadas se descartan silenciosamente (best-effort).
+
+---
+
+## 8. Pipeline de descarga — detalle
 
 ```
 1. Usuario pega URL → DownloadForm → downloadStore.startDownload(url)
@@ -273,7 +359,7 @@ Razón: Butterchurn (un subtree distinto, montado/desmontado al cambiar de vista
 
 ---
 
-## 8. Visualizer — sizing y vida del canvas
+## 9. Visualizer — sizing, vida del canvas, persistent mount
 
 Butterchurn 2.6.7 tiene dos footguns que pagamos:
 
@@ -283,32 +369,55 @@ Butterchurn 2.6.7 tiene dos footguns que pagamos:
 
 Implementación: [src/components/visualizer/VisualizerCanvas.tsx](../src/components/visualizer/VisualizerCanvas.tsx).
 
-Auto-cycle de presets: [src/hooks/useAutoCyclePresets.ts](../src/hooks/useAutoCyclePresets.ts). Sólo corre mientras `VisualizerView` está montado — si navegás a LIBRARY, el timer se cancela. Re-armado en cada cambio de `presetIndex` (manual o automático), para que un click no dispare un auto-cambio 1s después.
+### 9.1 Persistent mount + visibility-gated rAF
+
+`butterchurn.createVisualizer` + `loadPreset` compilan shaders WebGL sincrono en el main thread (~100-300ms de freeze). Re-montar el componente en cada cambio de tab era inaceptable como UX. Ver [ADR-014](./DECISIONS.md#adr-014).
+
+**Solución implementada:**
+1. **Mount lazy + persistente**: `App.tsx` mantiene flag `visualizerVisited`. Primera entrada a la tab visualizer lo flippea a true, ahí se monta `VisualizerView`. Una vez montado queda montado hasta cerrar la app.
+2. **Hidden via CSS**: cuando `view !== "visualizer"`, el wrapper de `VisualizerView` recibe `absolute inset-0 invisible pointer-events-none` — preserva dimensions (no fluctúa el ResizeObserver) pero los clicks pasan a la vista activa abajo.
+3. **rAF gated por `visible`**: el render loop dentro de `VisualizerCanvas` se separa del init effect y depende de `visible = view === "visualizer" && paneMode === "visualizer"`. Cuando false, cancela rAF — el canvas queda con el último frame estático.
+4. **Auto-cycle gated también**: sino cambiaría `presetIndex` en background y dispararía `loadPreset` (recompila shaders) → freeze invisible. Ver [src/hooks/useAutoCyclePresets.ts](../src/hooks/useAutoCyclePresets.ts).
+5. **ResizeObserver skipea size 0**: caso `display: none` reportaría 0×0 al ocultar el pane lyrics; setRendererSize(0,0) shrinkearía framebuffers y al volver tocaría re-allocar.
+
+**Costo**: ~50MB RAM (GPU buffers + shaders compilados + JS state) que viven mientras la app corre. En Apple Silicon (memoria unificada) ~0.3% del total, despreciable.
+
+### 9.2 Toggle visualizer ↔ lyrics
+
+VisualizerView tiene un `PaneToggle` arriba del pane izquierdo (`VISUALIZER` / `LYRICS`). El estado vive en `uiStore.playerPaneMode` (persistido). En modo lyrics, el wrapper del canvas + PresetSelector recibe `hidden` (display:none). Canvas conserva su WebGL context — el toggle es instantáneo.
+
+La library queda en el pane derecho del split, visible en ambos modos.
 
 ---
 
-## 9. Seguridad y permisos Tauri
+## 10. Seguridad y permisos Tauri
 
 `src-tauri/tauri.conf.json` actual:
 
 - **`assetProtocol.scope: ["**"]`** — abierto a todo. Aceptable porque el proyecto no se distribuye. Para distribución habría que cerrarlo a `$HOME/Music/BrutalistPlayer/**` + el directorio que el usuario seleccione en el dialog.
-- **Plugins habilitados:** `tauri-plugin-opener`, `tauri-plugin-dialog`. No hay HTTP plugin (las requests a LRCLIB no están implementadas; cuando las haya, allowlist `https://lrclib.net/*`). No hay shell plugin (yt-dlp y ffmpeg los spawneamos directo con `tokio::process::Command` desde Rust, no desde JS).
+- **Plugins habilitados:** `tauri-plugin-opener`, `tauri-plugin-dialog`. HTTP a LRCLIB se hace desde Rust con `reqwest` (rustls-tls, sin OpenSSL) — no via Tauri http plugin, así que no hay allowlist a configurar. Shell: yt-dlp y ffmpeg los spawneamos directo con `tokio::process::Command` desde Rust, no desde JS.
 - **CSP:** `null` (sin restricciones). Ajustar antes de cualquier distribución.
 
 ---
 
-## 10. Áreas sin resolver (tracking)
+## 11. Áreas sin resolver (tracking)
 
-| # | Tema | Bloquea | Tracking |
-|---|------|---------|----------|
-| 1 | Letras sincronizadas (LRCLIB + UI panel) | Cierre Fase 1 | `lyrics/` stub; PLAN §5.4 |
-| 2 | Crossfade entre tracks | Cierre Fase 1 | PLAN §5.2 |
-| 3 | Persistencia último track / posición | Cierre Fase 1 | PLAN §6.1 |
-| 4 | Persistir downloads a tabla `downloads` | Polish | sección 7 |
-| 5 | Cancelación / retry de descargas en UI | Polish | sección 7 |
-| 6 | Playlists de yt-dlp (multi-URL) | Backlog post Fase 1 | memoria del proyecto |
-| 7 | Tightening del `assetProtocol.scope` | Pre-distribución | sección 9 |
-| 8 | Generación automática de tipos Rust↔TS | Polish | [ADR-007](./DECISIONS.md#adr-007) |
-| 9 | MPRIS en Linux / media keys | Fase 2 | PLAN §5.2 |
+Fase 1 cerrada. Lo que queda es Fase 2/3 backlog:
+
+| # | Tema | Fase | Tracking |
+|---|------|------|----------|
+| 1 | AcoustID + Chromaprint (identificación canónica) | 3 (próximo) | LYRICS.md Fase 3, propio sub-doc |
+| 2 | Persistir downloads a tabla `downloads` | Polish | sección 8, [ADR-011](./DECISIONS.md#adr-011) |
+| 3 | Cancelación / retry de descargas en UI | Polish | sección 8 |
+| 4 | Playlists de yt-dlp (multi-URL) | Polish | memoria del proyecto |
+| 5 | Lyrics Fase 2 (Genius, manual paste, drift correction, refetch) | 2 | LYRICS.md |
+| 6 | Playlists (CRUD, reordenar, M3U export) | 2 | PLAN §6.1 Fase 2 |
+| 7 | Equalizer 10-band BiquadFilter | 2 | PLAN §6.1 Fase 2 |
+| 8 | Test MediaSession en Windows | Cross-platform | useMediaSession.ts TODO |
+| 9 | Webfonts (Space Grotesk + JetBrains Mono) | Polish | [ADR-003](./DECISIONS.md#adr-003) |
+| 10 | Windows titlebar custom | Polish | [ADR-005](./DECISIONS.md#adr-005) |
+| 11 | Tightening `assetProtocol.scope` | Pre-distribución | §10 |
+| 12 | MPRIS en Linux | 2 | PLAN §6.1 Fase 2 |
+| 13 | Generación automática de tipos Rust↔TS | Polish | [ADR-007](./DECISIONS.md#adr-007) |
 
 Las decisiones tomadas durante la implementación (ADR-001 sqlx, ADR-002 detect-not-bundle, ADR-008 audio singleton, etc.) están en [DECISIONS.md](./DECISIONS.md).

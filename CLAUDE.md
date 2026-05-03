@@ -23,14 +23,19 @@ Documentos fuente de verdad:
 - **Estado React:** Zustand 5 con `persist` middleware. Stores por dominio:
   `playerStore`, `libraryStore`, `uiStore`, `downloadStore`.
 - **Backend:** Rust. SQLite vía `sqlx` 0.8 (runtime tokio).
-- **Audio:** singleton `<audio>` (no en JSX, `new Audio()` en `audio/element.ts`)
-  → `MediaElementAudioSourceNode` → `GainNode` → destination. Butterchurn
-  tapea el source. **El volumen real se controla con el `GainNode`**, no
-  con `audio.volume` (ver Gotchas).
+- **Audio:** **dos** singletons `<audio>` (channel A y B, fuera de JSX, en
+  `audio/element.ts`) para soportar crossfade. Pipeline:
+  `audioA/B → sourceA/B → channelGainA/B → preMasterGain → masterGain → playPauseGain → destination`.
+  Butterchurn tapea `preMasterGain` (mezcla de los dos canales). **El volumen
+  real se controla con `masterGain`**, no con `audio.volume` (ver Gotcha #2).
+  Fade in/out al play/pause via `playPauseGain` con `cancelAndHoldAtTime`.
 - **Visualizer:** `butterchurn` 2.6 + `butterchurn-presets` 2.4 (~100 presets base).
+  Mount **persistente** post-primer-visit (ver Gotcha #8).
+- **Lyrics:** `lofty` (USLT embebido) + `LRCLIB` API. Parser LRC en frontend.
+  Auto-fetch on track change para poblar el indicador `L` en la library.
 - **Externos:** `yt-dlp` y `ffmpeg` como child processes (deps del sistema,
-  no bundled). `lofty-rs` para tags + cover art. `LRCLIB` API para letras
-  (pendiente).
+  no bundled). `lofty-rs` para tags + cover art + USLT. `reqwest` para HTTP
+  con `rustls-tls` (sin OpenSSL).
 
 ---
 
@@ -51,35 +56,54 @@ src/
 ├── App.tsx                 layout shell + monta hooks globales
 ├── main.tsx
 ├── audio/
-│   ├── element.ts          singleton <audio>
-│   └── context.ts          singleton AudioContext + source + masterGain
+│   ├── element.ts          singletons <audio> A/B + activeId
+│   └── context.ts          AudioContext + channelGains + preMasterGain
+│                           + masterGain + playPauseGain + fade helpers
 ├── components/
 │   ├── ui/                 Button, Tabs, MarqueeText (genéricos)
-│   ├── library/            LibraryTable, LibrarySearchBar, LibraryToolbar
-│   ├── player/             PlayerBar, Controls, SeekBar, VolumeSlider, CoverArt
-│   ├── visualizer/         VisualizerView, VisualizerCanvas, PresetSelector
-│   └── downloads/          DownloadsView, DownloadForm, DownloadQueue, ...
-├── hooks/                  useAudioPlayer, useKeyboardShortcuts, usePressFlash, …
-├── stores/                 playerStore, libraryStore, uiStore, downloadStore
-├── lib/                    format.ts, search.ts (puros, sin React)
+│   ├── library/            LibraryTable (con indicador L), LibrarySearchBar,
+│   │                       LibraryToolbar (SCAN + CLEAN METADATA)
+│   ├── player/             PlayerBar, Controls (con XFADE button), SeekBar,
+│   │                       VolumeSlider, CoverArt
+│   ├── visualizer/         VisualizerView (con toggle vis/lyrics + persistent
+│   │                       mount), VisualizerCanvas, PresetSelector
+│   ├── lyrics/             LyricsView (panel sincronizado)
+│   └── downloads/          DownloadsView, DownloadForm, DownloadQueue, …
+├── hooks/                  useAudioPlayer, useKeyboardShortcuts, usePressFlash,
+│                           usePlaybackPersist, useMediaSession, useLyricsSync,
+│                           useSyncedLyrics (rAF active-line tracking),
+│                           useAutoCyclePresets, useDownloadEvents
+├── stores/                 playerStore, libraryStore, uiStore, downloadStore,
+│                           lyricsStore
+├── lib/                    format.ts, search.ts, lrcParser.ts (puros)
 ├── styles/tokens.css       design tokens + range/marquee/progress CSS
-└── types.ts                Track, Download, DependencyStatus, etc.
+└── types.ts                Track (con lyricsStatus), Download, Lyrics, …
 
 src-tauri/src/
-├── lib.rs                  Tauri builder + invoke_handler
-├── commands/               thin wrappers — library, downloader, system
-├── db/                     sqlx queries por tabla (tracks, …)
+├── lib.rs                  Tauri builder + invoke_handler + reqwest::Client
+├── commands/               thin wrappers — library, downloader, system, lyrics
+├── db/                     sqlx queries por tabla (tracks, lyrics)
 ├── audio/                  lofty: extract_metadata + extract_cover_art
+│   └── cleanup.rs          heurísticas para limpiar metadata yt-dlp
+│                           (Topic/VEVO/Official Video/Artist - Title prefix)
 ├── downloader/             yt-dlp child process + stdout/stderr fan-in
+├── lyrics/                 fetch_lyrics cascade: embedded.rs (USLT) +
+│                           lrclib.rs (get + search fallback)
 ├── contracts.rs            tipos serializados a TS
 └── errors.rs               AppError + AppResult
 ```
 
 **Estado actual:**
 - Fase 0 (setup) ✓
-- Fase 1 (MVP) ~90%: player + library + downloads + visualizer + cover art +
-  search ✓. Pendientes: letras (LRCLIB), crossfade, persistencia de
-  último track, polish.
+- Fase 1 (MVP) **100%** ✓ — los 10 criterios "done" cerrados.
+  - Letras (LRCLIB + USLT): ✓ con cleanup heurístico de metadata + search
+    fallback + indicador `L` en library + auto-fetch on track change.
+  - Crossfade: ✓ (off/3/6/12s, dual audio elements + channelGain ramps).
+  - Persistencia último track + posición: ✓ (localStorage, restore sin
+    auto-play).
+  - Media keys: ✓ (MediaSession API — testeado en macOS, pendiente Windows).
+- Próximo: AcoustID + Chromaprint para identificación canónica del audio
+  (Fase 3 de lyrics, sub-sistema propio).
 
 ---
 
@@ -203,6 +227,41 @@ Sin `PYTHONUNBUFFERED=1` en el env del child, yt-dlp queda con stdout
 block-buffered cuando lo conectás a un pipe. Resultado: el progreso
 aparece en tandas o nunca. Ya está seteado en
 [downloader/mod.rs](src-tauri/src/downloader/mod.rs).
+
+### 8. Visualizer mount = ~100-300ms de freeze
+`butterchurn.createVisualizer` + `loadPreset` compilan shaders WebGL
+sincrono en el main thread. Por eso VisualizerView se monta **persistente**
+(post-primer-visit) y se oculta con `visibility: hidden` + `pointer-events:
+none` cuando no se ve. El rAF loop se pausa (gated por `view + paneMode`)
+para no quemar CPU/GPU mientras está oculto. **No re-mountar el canvas**
+en cambios de tab/paneMode — el costo se paga una sola vez.
+
+### 9. `AudioParam.value` lee el valor INTRÍNSECO, no computado
+En Chromium/WebKit, leer `gain.value` devuelve la última asignación directa
+(`gain.value = X`), NO el valor que un ramp activo está produciendo en
+ese momento. Si querés cancelar un ramp y empezar otro **desde el valor
+audible actual** (ej: pause-fade interrumpido por play), usá
+`gain.cancelAndHoldAtTime(t)` — inserta un setValueAtTime implícito con
+el valor computado. Sin esto, los fades se sienten como "click" abrupto
+en vez de transición continua. Ver [audio/context.ts](src/audio/context.ts).
+
+### 10. Tauri: Rust hot-reload no existe
+Cambios en `src-tauri/src/*.rs` requieren matar y volver a levantar
+`pnpm tauri dev`. Vite hace HMR del frontend, pero el binario Rust es
+un proceso aparte que sigue corriendo el código compilado al startup.
+Síntoma: el comando que acabás de modificar tiene comportamiento viejo.
+
+### 11. yt-dlp metadata viene sucia — heurísticas tienen tradeoffs
+yt-dlp escribe metadata desde campos de YouTube que vienen ruidosos:
+`artist="Avicii - Topic"`, `title="Avicii - The Nights (Official Video)"`,
+artistas `"AviciiOfficialVEVO"` (canales sin espacios). El cleanup en
+[audio/cleanup.rs](src-tauri/src/audio/cleanup.rs) tiene **heurísticas
+conservadoras** — strip de patrones específicos (Topic, VEVO,
+OfficialVEVO, parens con Official Video/Lyric Video/etc, prefix
+`<artist> - ` en title). Trade-off explícito: preferir falsos negativos
+(no limpiar) sobre falsos positivos (borrar contenido legítimo). Para
+matchear tracks que las heurísticas no alcanzan, la solución correcta
+es AcoustID + Chromaprint (Fase 3 de lyrics) — no más heurísticas.
 
 ---
 

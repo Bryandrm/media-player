@@ -405,31 +405,36 @@ Post-descarga, usar `lofty-rs` en Rust para leer los tags embebidos y poblar la 
 - [ ] ESLint + Prettier — pendiente, no bloquea.
 - [x] Smoke test del pipeline de audio (`convertFileSrc` + Web Audio + Butterchurn tap).
 
-### Fase 1 — MVP funcional (~90%)
+### Fase 1 — MVP funcional ✓ (cerrada 2026-05-02)
 - [x] **Reproductor básico**: play/pause/seek, volumen vía `GainNode`, mute, prev/next, shuffle con historial (cap 64).
 - [x] **Biblioteca**: importar directorio, scan recursivo con `lofty-rs`, idempotente vía `UNIQUE(file_path)` + `ON CONFLICT DO NOTHING`, search por tokens (AND).
 - [x] **Downloader**: paste URL → yt-dlp con progreso en tiempo real + fase CONVERTING, idempotente (`--no-overwrites`).
-- [x] **Visualizador**: Butterchurn conectado al `MediaElementAudioSourceNode`, vista side-by-side con la library (split arrastrable + persistido), auto-cycle de presets random cada 5–10s, fullscreen vía `F`.
-- [x] **Metadata + cover art**: extracción de embedded picture (`lofty`) con fallback a `cover.jpg`/`folder.jpg` siblings.
+- [x] **Visualizador**: Butterchurn conectado al `MediaElementAudioSourceNode`, vista side-by-side con la library (split arrastrable + persistido), auto-cycle de presets random cada 5–10s, fullscreen vía `F`. **Persistent mount** (no re-creación al cambiar tabs) ([ADR-014](DECISIONS.md#adr-014)).
+- [x] **Toggle visualizer ↔ lyrics** dentro del split, persistido en `playerPaneMode`.
+- [x] **Metadata + cover art**: extracción de embedded picture (`lofty`) con fallback a `cover.jpg`/`folder.jpg` siblings + cleanup heurístico post-yt-dlp ([ADR-016](DECISIONS.md#adr-016)).
 - [x] **UI brutalist**: 3 layouts + design tokens + `<Button variant>` + `usePressFlash` para tap-to-click.
 - [x] **Keyboard shortcuts**: Space, ←/→, ↑/↓, M, N, P, S, V, F.
-- [x] **Persistencia parcial** (Zustand `persist`): volume, muted, shuffle, presetIndex, visualizerSplit, autoCycle.
-- [ ] **Crossfade**: dos `<audio>` + GainNodes — pendiente.
-- [ ] **Letras**: integración con LRCLIB, panel sincronizado — `lyrics/` stub.
-- [ ] **Persistencia del último track / posición** — pendiente.
-- [ ] **History de descargas persistente** — chunk 2 ([ADR-011](DECISIONS.md#adr-011)).
+- [x] **Persistencia** (Zustand `persist`): volume, muted, shuffle, crossfadeMs, presetIndex, visualizerSplit, autoCycle, playerPaneMode.
+- [x] **Persistencia último track + posición** (localStorage, restore sin auto-play).
+- [x] **Crossfade** (off/3/6/12s) — dual audio elements + channelGain ramps ([ADR-012](DECISIONS.md#adr-012)).
+- [x] **Fade in/out al play/pause** ([ADR-013](DECISIONS.md#adr-013)).
+- [x] **Media keys** (F7/F8/F9 + AirPods + lock screen) — MediaSession API. Testeado macOS, pendiente Windows.
+- [x] **Letras** (LRCLIB + USLT embebido) con panel sincronizado, click-to-seek, offset adjustable. Cleanup heurístico de metadata + LRCLIB search fallback. Indicador `L` en library. Auto-fetch on track change ([ADR-015](DECISIONS.md#adr-015), [ADR-017](DECISIONS.md#adr-017)).
 
 ### Fase 2 — Refinamiento
 - [ ] Playlists (crear, editar, reordenar, eliminar).
-- [ ] Búsqueda rápida (fuzzy) en biblioteca.
 - [ ] Equalizer básico (BiquadFilterNode chain — 10 bandas).
 - [ ] Smart playlists / auto-queue basado en género, año, o recientemente agregado.
 - [ ] Drag & drop de archivos para agregar a biblioteca.
-- [ ] Media keys integration.
 - [ ] MPRIS en Linux para integración con panel del sistema.
 - [ ] Exportar playlists a M3U.
+- [ ] **Lyrics Fase 2**: Genius (último recurso plain), manual paste, refetch botón, drift correction (`speedRatio`), tabla `lyrics_search_attempts` con TTL — ver [LYRICS.md](LYRICS.md).
+- [ ] History persistente de descargas (chunk 2 — ADR-011).
+- [x] ~~Búsqueda rápida en biblioteca~~ — implementada en Fase 1 (token AND match).
+- [x] ~~Media keys integration~~ — implementada en Fase 1 (MediaSession API).
 
 ### Fase 3 — Nice to haves / exploratorio
+- [ ] **AcoustID + Chromaprint** — identificación canónica del audio vía fingerprinting → MBID de MusicBrainz → match exacto contra LRCLIB. Elimina los problemas de metadata sucia + drift por versiones distintas que combatimos con heurísticas en Fase 1. Sub-sistema con su propio doc (`IDENTIFICATION.md` futuro). Ver [LYRICS.md Fase 3](LYRICS.md).
 - [ ] Grabación del visualizador como video (WebCodecs API).
 - [ ] Modo DJ: mezcla manual entre dos decks (BPM detection, sync).
 - [ ] Scrobbling local (historial propio, no last.fm).
@@ -553,7 +558,7 @@ brutalist-player/
 
 ---
 
-## 10. Criterios de "done" para el MVP (Fase 1)
+## 10. Criterios de "done" para el MVP (Fase 1) ✓
 
 | # | Criterio | Estado |
 |---|---|---|
@@ -562,13 +567,13 @@ brutalist-player/
 | 3 | Canción descargada aparece con metadata + cover art. | ✓ |
 | 4 | Click en canción → reproduce con controles funcionales. | ✓ |
 | 5 | Vista Visualizer con Butterchurn reaccionando a la música. | ✓ |
-| 6 | Crossfade al pasar de un track al siguiente. | ✗ pendiente |
-| 7 | Letras sincronizadas vía LRCLIB cuando estén disponibles. | ✗ pendiente |
+| 6 | Crossfade al pasar de un track al siguiente. | ✓ |
+| 7 | Letras sincronizadas vía LRCLIB cuando estén disponibles. | ✓ |
 | 8 | UI brutalist consistente, no template genérico. | ✓ |
-| 9 | Funciona al menos en macOS (daily del autor). Linux/Windows bonus. | ✓ macOS validado |
+| 9 | Funciona al menos en macOS (daily del autor). Linux/Windows bonus. | ✓ macOS validado, Windows pendiente test |
 | 10 | Repo con README explicando setup + disclaimer legal. | ✓ |
 
-Faltan **2 criterios** (crossfade, letras) + dos polish items: persistencia del último track, history persistente de descargas.
+**Fase 1 cerrada al 100% el 2026-05-02.** Próximo: AcoustID + Chromaprint (Fase 3) para identificación canónica del audio.
 
 ---
 

@@ -22,6 +22,12 @@
 | ADR-009 | Press feedback via JS (no `:active` CSS) | Accepted |
 | ADR-010 | Idempotencia de scan/download via UNIQUE + ON CONFLICT | Accepted |
 | ADR-011 | History de descargas en memoria (chunk 1) | Accepted |
+| ADR-012 | Crossfade via dual `<audio>` + channelGain ramps | Accepted |
+| ADR-013 | Fade in/out al play/pause via `playPauseGain` dedicado | Accepted |
+| ADR-014 | Persistent visualizer mount + visibility-gated rAF | Accepted |
+| ADR-015 | Lyrics Fase 1 sin trait abstraction | Accepted |
+| ADR-016 | Cleanup heurístico de metadata post-yt-dlp | Accepted |
+| ADR-017 | Auto-fetch de lyrics on track change para indicador library | Accepted |
 
 ---
 
@@ -267,3 +273,176 @@ Acelerar el MVP del downloader. La feature crítica era ver progreso en tiempo r
 ### Consecuencias
 - Cuando se quiera "Downloads History" persistente: agregar inserts a `downloads` desde `commands::downloader::download_track`, leerlos al boot, hidratar el store. El schema ya está listo.
 - Reintentos / cancelación posteriores al cierre de la app no son posibles. Si se cierra la app durante una descarga, `kill_on_drop(true)` mata el child y queda un `_pending/` huérfano.
+
+---
+
+## ADR-012 — Crossfade via dual `<audio>` + channelGain ramps
+
+**Fecha:** 2026-05-02 · **Estado:** Accepted
+
+### Contexto
+PLAN §5.2 pedía crossfade configurable (off/3/6/12s) entre tracks consecutivos. Un solo `<audio>` no permite overlap real — sólo puede reproducir una source a la vez. Necesitamos dos audios reproduciendo simultáneamente durante la transición.
+
+### Decisión
+Dos singletons `<audio>` (channel A y B) en module scope. Web Audio graph:
+```
+audioA → sourceA → channelGainA ─┐
+                                 ├─→ preMasterGain → masterGain → playPauseGain → destination
+audioB → sourceB → channelGainB ─┘
+```
+- `channelGainA/B`: 1 = canal activo (audible), 0 = canal inactivo (silencio).
+- Trigger: `_onTimeUpdate` chequea `duration - currentTime <= crossfadeMs/1000`. Si hay próximo track y no hay crossfade en curso, dispara `startCrossfade`.
+- Crossfade: precarga próximo en canal inactivo, schedule de `linearRampToValueAtTime` sobre los dos `gain.gain` (reloj AudioContext), swap del `activeId`. Después de `crossfadeMs` (setTimeout en wall-clock), pausa el viejo y limpia su src.
+- Cancelación: cualquier acción manual (playTrack, prev) llama `cancelCrossfade` que snappea a (active=1, inactive=0) hard.
+
+### Razón
+- `linearRampToValueAtTime` corre en AudioContext clock — no se desincroniza con frame drops del rendering.
+- `preMasterGain` como junction node: el visualizer tapea ahí, ve la mezcla de los dos canales durante el fade.
+- ChannelGain separado del masterGain (volumen) y playPauseGain (fade play/pause): cada control opera independiente sin interferirse.
+
+### Consecuencias
+- `useAudioPlayer` listenea eventos en **ambos** audios y filtra por `audio === getAudioElement()` (el activo). Sin el filtro, `timeupdate`/`ended` del canal viejo durante un fade pisarían el state del nuevo.
+- Pausar durante crossfade: pausamos los dos audios. Los gain ramps siguen corriendo en AudioContext clock incluso si el audio está pausado — al reanudar el fade puede haber "saltado". UX aceptable.
+- Track demasiado corto (<crossfadeMs): skip crossfade, dejamos terminar natural.
+
+---
+
+## ADR-013 — Fade in/out al play/pause via `playPauseGain` dedicado
+
+**Fecha:** 2026-05-02 · **Estado:** Accepted
+
+### Contexto
+Click en PAUSE cortaba el audio abruptamente — clic audible. El usuario pidió un fade gradual. El `masterGain` no sirve porque también lo usa el slider de volumen y `toggleMute`; mezclar ambos roles produce conflictos cuando el usuario ajusta volumen durante un fade.
+
+### Decisión
+`GainNode` dedicado `playPauseGain` después de `masterGain` y antes de `destination`:
+```
+masterGain (volume + mute) → playPauseGain (play/pause fade) → destination
+```
+- `togglePlay` en branch "play": `audio.play()` + `fadeInPlayPause()` ramp 0→1 over 200ms.
+- `togglePlay` en branch "pause": `fadeOutPlayPause(onFadeOut)` ramp current→0 over 150ms, después callback llama `audio.pause()`.
+- togglePlay branchea sobre `isPlaying` del store (no `audio.paused`) y hace **eager update** del flag — así doble click rápido durante un fade-out no entra dos veces al branch de pause.
+- Para empezar un ramp limpio desde el valor actual, usamos `cancelAndHoldAtTime(t)` en lugar de `cancelScheduledValues + setValueAtTime(g.value, t)`. Razón: `g.value` lee el valor INTRÍNSECO del AudioParam, no el computado del ramp en curso → con un fade-out a la mitad y click play, el snap a 0 era audible. `cancelAndHoldAtTime` inserta un `setValueAtTime` implícito con el valor computado actual.
+
+### Razón
+- Asimétrico (play más largo que pause) era counterintuitive para el usuario; fades simétricos a 200/150ms son ambos perceptibles y se sienten naturales.
+- Visualizer tapea `preMasterGain` (upstream del fade), así que el visualizer no se silencia durante el fade — sigue reaccionando como si el audio estuviera saliendo full volume.
+
+### Consecuencias
+- `playPauseGain` arranca en 0 al inicializar el grafo. Primer `audio.play()` dispara `fadeInPlayPause` que ramp 0→1 — la app "cobra vida" gradualmente al primer playback. Sin esto, primer track entraría a volumen full instantáneo.
+- Auto-advance entre tracks (track A termina → next() → track B): el ramp no afecta porque `playPauseGain` ya está en 1; el ramp 1→1 es no-op. Crossfade (si activo) maneja la transición vía channelGains.
+
+---
+
+## ADR-014 — Persistent visualizer mount + visibility-gated rAF
+
+**Fecha:** 2026-05-02 · **Estado:** Accepted
+
+### Contexto
+Cada vez que el usuario navegaba a la tab VISUALIZER (o toggleaba paneMode entre visualizer/lyrics), Butterchurn re-creaba el WebGL context y recompilaba shaders del preset actual. Costo: ~100-300ms de freeze del main thread. Inaceptable como UX cuando el usuario alterna entre vistas seguido.
+
+### Decisión
+**Mount lazy + persist** del `VisualizerView`:
+1. `App.tsx` mantiene flag `visualizerVisited`. Primera entrada a la tab visualizer lo flippea a true; ahí se monta el componente.
+2. Una vez montado, queda montado hasta cerrar la app. Se "oculta" via CSS (`absolute inset-0 invisible pointer-events-none`) cuando `view !== "visualizer"`.
+3. El rAF loop dentro de `VisualizerCanvas` se separa del init effect y se gate-ea por `visible` (`view === "visualizer" && paneMode === "visualizer"`). Cuando false, cancela rAF — el canvas queda con el último frame estático, sin quemar CPU/GPU.
+4. Auto-cycle de presets también se gate-ea por `visible` (sino cambiaría `presetIndex` en background y dispararía `loadPreset` → recompilación de shaders → freeze invisible).
+5. ResizeObserver skipea cuando `clientWidth/Height === 0` (caso `display: none` en padre).
+
+### Razón
+- WebGL context creation + shader compilation son irrecuperables cada vez que se desmontan. Mount persistente paga el costo una vez.
+- Memoria: ~50MB combinados (GPU buffers + JS state). En Apple Silicon (memoria unificada) es ~0.3% del total — despreciable.
+- `visibility: hidden` + `pointer-events: none` preserva las dimensiones del layout — ResizeObserver no fluctúa entre 0 y full size, los framebuffers internos no se re-allocan al volver.
+
+### Consecuencias
+- Primera visita: paga el freeze (~100-300ms). Subsecuentes navegaciones: instantáneas.
+- El canvas debe renderizarse en `absolute inset-0` dentro de un padre `relative` para que coexista con LibraryTable/DownloadsView en el mismo slot del layout principal.
+- Trade-off: en sesiones donde el usuario nunca abre el visualizer, no paga el costo (lazy). Sólo paga al primer visit.
+
+---
+
+## ADR-015 — Lyrics Fase 1 sin trait abstraction
+
+**Fecha:** 2026-05-02 · **Estado:** Accepted
+
+### Contexto
+Una investigación inicial proponía un sistema de letras con trait `LyricsProvider` + `LyricsResolver` cascade, soportando 4 providers (Embedded, LRCLIB, Musixmatch, Genius). CLAUDE.md dice "preferir patrones simples sobre abstracciones prematuras" — el plan era over-engineered para Fase 1.
+
+### Decisión
+Slim Fase 1 con dos providers como **funciones libres**, sin trait:
+- `embedded.rs`: `try_embedded(file_path)` lee USLT vía lofty.
+- `lrclib.rs`: `try_lrclib(query)` con field fallback (con/sin album) + search fallback (`/api/search` después de `/api/get`).
+- `mod.rs::fetch_lyrics`: cascade Embedded → LRCLIB → mark_not_found, política híbrida (preferir synced, retener mejor plain como fallback).
+
+Schema aditivo a la tabla `lyrics` existente (no rename). Comandos: `lyrics_fetch` (cache-first), `lyrics_set_offset`. Parser LRC en frontend (TS) — el backend sólo guarda el blob raw.
+
+Plan documentado en [LYRICS.md](./LYRICS.md) con Fases 2 y 3.
+
+### Razón
+Dos providers no justifican el costo de una abstracción dyn-dispatch. Si en Fase 2 sumamos Genius (3er provider), refactorizamos al trait — momento donde el patrón paga su costo.
+
+### Consecuencias
+- Code path explícito y debuggeable.
+- Fase 2 (Genius, manual paste, refetch) requiere refactor cuando se sume el provider; pero lo haremos con el contexto de un sistema funcionando, no a ciegas.
+- Fase 3 (AcoustID) cambia el game completo — el match rate sube tanto que muchos features de Fase 2 (manual paste, drift correction) pierden urgencia. Por eso Fase 2 queda diferida.
+
+---
+
+## ADR-016 — Cleanup heurístico de metadata post-yt-dlp
+
+**Fecha:** 2026-05-02 · **Estado:** Accepted
+
+### Contexto
+yt-dlp escribe metadata desde campos de YouTube que vienen ruidosos: `artist="Avicii - Topic"` (canales auto-generados), `artist="AviciiOfficialVEVO"` (canales VEVO sin espacios), `title="Avicii - The Nights (Official Video)"` con prefijo redundante de artista + sufijos de tipo de video. LRCLIB hace match exacto contra (artist, title) — un sufijo de más basta para 404 aunque el track esté indexado.
+
+### Decisión
+[`audio/cleanup.rs`](../src-tauri/src/audio/cleanup.rs) con heurísticas conservadoras aplicadas en dos puntos:
+1. **Post-download**: en `commands/downloader.rs` después de `extract_metadata`, antes de INSERT.
+2. **Backfill manual**: comando `library_backfill_metadata` + botón "CLEAN METADATA" en LibraryToolbar para limpiar tracks ya en DB.
+
+Heurísticas:
+- Strip de sufijos de artist: `OfficialVEVO`, `OfficialChannel`, `- Topic`, ` VEVO`, ` Vevo`, `VEVO`, `Vevo`, ` Official`. Orden por longitud — `OfficialVEVO` antes de `VEVO`.
+- Strip de patrones parentizados/bracketed en title: `(Official Music Video)`, `(Lyric Video)`, `(Audio)`, `[HD]`, `[NCS Release]`, `[Free Download]`, etc.
+- Si artist está vacío y title contiene ` - `: split en el primer separador.
+- Si artist seteado y title empieza con `<artist> - ` (case-insensitive): strip prefix.
+- Defensive `.trim()` al inicio (whitespace/BOM invisible de yt-dlp).
+- Backfill invalida lyrics cache (`DELETE FROM lyrics WHERE track_id = ?`) cuando cambia metadata — sino el `not_found` cacheado contra la metadata vieja sigue válido.
+
+23 unit tests cubriendo casos típicos + idempotencia + preservación de paréntesis legítimos (`(feat. X)`, `(cover)`).
+
+### Razón
+**Conservador por elección**: preferir falsos negativos (no limpiar) sobre falsos positivos (borrar contenido legítimo). El caso `Hello (cover)` o `Levitating (feat. DaBaby)` sería catastrófico si lo strip-eáramos.
+
+### Consecuencias
+- El cleanup resuelve los casos típicos pero no todos. Casos como `artist="VisibleNoiseRecords" title="LOSTPROPHETS - Rooftops"` (uploader = sello, no artista canónico) están fuera del alcance de heurísticas text-based.
+- La solución correcta para casos remanentes es **AcoustID** (Fase 3) — fingerprint del audio te da MBID canónico, sin heurística.
+- El backfill procesa **todos** los tracks (no sólo `source_type='downloaded'`) — tracks descargados manualmente con yt-dlp CLI y luego scaneados quedaban como `'local'` y la metadata noisy escapaba.
+
+---
+
+## ADR-017 — Auto-fetch de lyrics on track change para indicador library
+
+**Fecha:** 2026-05-02 · **Estado:** Accepted
+
+### Contexto
+La library tiene una columna `L` con indicador del estado de lyrics (`[L]` synced, `·` plain, `♪` instrumental, `—` not_found, vacío = no fetcheado). Para que el indicador sirva, necesitamos saber el estado de cada track. La opción "fetchear toda la library al boot" es agresiva (potencialmente cientos de requests a LRCLIB de una). La opción "fetchear sólo cuando se abre la pane" deja la library siempre vacía de indicadores hasta que el usuario explore manualmente.
+
+### Decisión
+Auto-fetch en cada `currentTrackId` change, sin importar la vista actual. Implementado en [`useLyricsSync`](../src/hooks/useLyricsSync.ts):
+```ts
+useEffect(() => {
+  if (trackId === null) { useLyricsStore.getState().clear(); return; }
+  void fetchAndRefreshLibrary(trackId);
+}, [trackId]);
+```
+Después del fetch, recargamos la library (`loadTracks`) para que el SQL JOIN con `lyrics` devuelva el `lyricsStatus` actualizado y la UI re-renderice con el indicador.
+
+### Razón
+- La library se va poblando **gradualmente con el uso natural**: a medida que el usuario reproduce tracks, los indicadores aparecen.
+- Cache en DB previene requests duplicados — segunda reproducción del mismo track es no-op de red.
+- Costo: 1 request a LRCLIB por track nuevo. Para 200 tracks reproducidos en un mes → 200 requests totales. Trivial.
+
+### Consecuencias
+- `loadTracks` se llama después de cada fetch — incluye una query SQL al backend. Para libraries grandes (>1000 tracks) podría notarse; optimización con dirty-flag postergada hasta que sea necesario.
+- Tracks que el usuario nunca reproduce nunca tienen indicador. Aceptable — si no los escucha, probablemente no le interesa el estado de letras.
+- El `lyricsStatus` en SQL se computa via CASE en `list_all` — los 5 estados (synced/plain/instrumental/not_found/null) salen de un solo LEFT JOIN sin segunda query.
