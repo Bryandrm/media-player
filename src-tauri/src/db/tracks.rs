@@ -130,7 +130,8 @@ pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Track>> {
                     WHEN l.plain_lyrics IS NOT NULL THEN 'plain'
                     ELSE 'instrumental'
                 END AS lyrics_status,
-                t.acoustid_id, t.mbid_recording, t.identification_status
+                t.acoustid_id, t.mbid_recording, t.identification_status,
+                t.acoustid_score
          FROM tracks t
          LEFT JOIN lyrics l ON l.track_id = t.id
          ORDER BY
@@ -195,6 +196,9 @@ pub async fn save_fingerprint(
 /// Si `canonical_title` o `canonical_artist` vienen vacíos (recording de MB
 /// con metadata incompleta), no pisamos ese campo — preferimos retener lo
 /// que ya teníamos.
+///
+/// `score` es el confidence numérico devuelto por AcoustID (0..1). Lo
+/// persistimos para el tooltip en la UI + análisis empírico del threshold.
 pub async fn save_identification(
     pool: &SqlitePool,
     track_id: i64,
@@ -202,6 +206,7 @@ pub async fn save_identification(
     mbid: &str,
     canonical_title: &str,
     canonical_artist: &str,
+    score: f64,
 ) -> AppResult<()> {
     // Hacemos el update en una sola query con CASE expressions:
     //   - title/artist: pisamos sólo si canonical_* no está vacío.
@@ -210,6 +215,7 @@ pub async fn save_identification(
         "UPDATE tracks SET \
             acoustid_id = ?, \
             mbid_recording = ?, \
+            acoustid_score = ?, \
             identification_status = 'identified', \
             identification_attempted_at = CURRENT_TIMESTAMP, \
             original_title = CASE WHEN original_title IS NULL THEN title ELSE original_title END, \
@@ -220,6 +226,7 @@ pub async fn save_identification(
     )
     .bind(acoustid_id)
     .bind(mbid)
+    .bind(score)
     .bind(canonical_title)
     .bind(canonical_title)
     .bind(canonical_artist)

@@ -15,7 +15,7 @@ pub async fn get_for_track(
 ) -> AppResult<Option<Lyrics>> {
     let row = sqlx::query_as::<_, Lyrics>(
         "SELECT track_id, synced_lyrics, plain_lyrics, source, source_id, \
-                confidence, offset_ms, status \
+                confidence, offset_ms, speed_ratio, status \
          FROM lyrics WHERE track_id = ?",
     )
     .bind(track_id)
@@ -25,13 +25,16 @@ pub async fn get_for_track(
 }
 
 /// Inserta o actualiza la fila de lyrics. UPSERT por `track_id` (PK).
-/// `offset_ms` no se toca acá — preserva el ajuste manual del usuario incluso
-/// si refetcheamos las letras (el offset es del track, no del provider).
+/// `offset_ms` y `speed_ratio` se respetan: si ya existían (usuario
+/// ajustó manualmente) NO se pisan al refetchear. Excepción: si el caller
+/// pasa `lyrics.speed_ratio != 1.0` Y la fila existente está en 1.0, sí
+/// pisamos — eso es el caso de auto-baseline al fresh-fetch.
 pub async fn upsert(pool: &SqlitePool, lyrics: &Lyrics) -> AppResult<()> {
     sqlx::query(
         "INSERT INTO lyrics (track_id, synced_lyrics, plain_lyrics, source, \
-                             source_id, confidence, status, fetched_at, last_used_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) \
+                             source_id, confidence, speed_ratio, status, \
+                             fetched_at, last_used_at) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) \
          ON CONFLICT(track_id) DO UPDATE SET \
              synced_lyrics = excluded.synced_lyrics, \
              plain_lyrics = excluded.plain_lyrics, \
@@ -40,7 +43,11 @@ pub async fn upsert(pool: &SqlitePool, lyrics: &Lyrics) -> AppResult<()> {
              confidence = excluded.confidence, \
              status = excluded.status, \
              fetched_at = CURRENT_TIMESTAMP, \
-             last_used_at = CURRENT_TIMESTAMP",
+             last_used_at = CURRENT_TIMESTAMP, \
+             speed_ratio = CASE \
+                 WHEN lyrics.speed_ratio != 1.0 THEN lyrics.speed_ratio \
+                 ELSE excluded.speed_ratio \
+             END",
     )
     .bind(lyrics.track_id)
     .bind(&lyrics.synced_lyrics)
@@ -48,6 +55,7 @@ pub async fn upsert(pool: &SqlitePool, lyrics: &Lyrics) -> AppResult<()> {
     .bind(&lyrics.source)
     .bind(&lyrics.source_id)
     .bind(lyrics.confidence)
+    .bind(lyrics.speed_ratio)
     .bind(&lyrics.status)
     .execute(pool)
     .await?;
@@ -88,6 +96,37 @@ pub async fn set_offset(
         .bind(track_id)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+/// Actualiza sólo el speed_ratio. Llamado cuando el usuario clickea
+/// SLOWER/FASTER. Usamos clamps amplios (0.5..2.0) — más allá significa
+/// que el "match" entre LRC y audio está completamente equivocado, mejor
+/// que el usuario re-busque la letra que insistir con drift extremo.
+pub async fn set_speed_ratio(
+    pool: &SqlitePool,
+    track_id: i64,
+    speed_ratio: f64,
+) -> AppResult<()> {
+    let clamped = speed_ratio.clamp(0.5, 2.0);
+    sqlx::query("UPDATE lyrics SET speed_ratio = ? WHERE track_id = ?")
+        .bind(clamped)
+        .bind(track_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Reset de offset + speed_ratio a sus valores neutros. Usado por el
+/// botón RESET de la UI, que hace "vuelvo a los timestamps originales
+/// del LRC sin ningún ajuste".
+pub async fn reset_sync(pool: &SqlitePool, track_id: i64) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE lyrics SET offset_ms = 0, speed_ratio = 1.0 WHERE track_id = ?",
+    )
+    .bind(track_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

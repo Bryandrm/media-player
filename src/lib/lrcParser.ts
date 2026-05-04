@@ -134,13 +134,29 @@ function applyMetadataTag(meta: LrcMetadata, key: string, value: string): void {
   }
 }
 
-/** Aplica el offset del LRC + el ajustado por el usuario al timestamp de
- *  la línea. Se usa en el momento de consumir (rAF loop, click-to-seek) —
- *  los timestamps originales se preservan en `LrcLine`. */
+/** Aplica el offset del LRC + el ajustado por el usuario + el speedRatio
+ *  al timestamp de la línea. Se usa en el momento de consumir (rAF loop,
+ *  click-to-seek) — los timestamps originales se preservan en `LrcLine`.
+ *
+ *  Fórmula:
+ *    `effective = (timestamp + lrcOffset) * speedRatio + userOffset`
+ *
+ *  Por qué speedRatio se aplica DESPUÉS de sumar `lrcOffset` pero ANTES
+ *  de sumar `userOffset`: el lrcOffset es un ajuste constante del archivo
+ *  LRC (parte de los timestamps originales), así que sumarlo antes del
+ *  multiplicador mantiene la semántica del archivo. El userOffset es un
+ *  shift externo aplicado al timeline final (ej: padding de YouTube) y
+ *  debe ser absoluto, no escalado por la corrección de tempo.
+ *
+ *  Ejemplo: si el LRC tiene `[offset:-500]` y la canción del usuario
+ *  necesita speedRatio=1.02 + userOffset=+8000ms:
+ *    line @ 60_000ms → (60_000 + -500) * 1.02 + 8_000 = 68_690ms */
 export function effectiveTimestampMs(
   line: LrcLine,
   lrcOffsetMs: number,
   userOffsetMs: number,
+  speedRatio: number = 1.0,
 ): number {
-  return Math.max(0, line.timestampMs + lrcOffsetMs + userOffsetMs);
+  const scaled = (line.timestampMs + lrcOffsetMs) * speedRatio;
+  return Math.max(0, scaled + userOffsetMs);
 }

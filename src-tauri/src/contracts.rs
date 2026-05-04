@@ -43,13 +43,16 @@ pub struct Track {
     pub mbid_recording: Option<String>,
     /// Estado de la última corrida de identification:
     ///   - 'identified'         — match aceptado, mbid_recording poblado
-    ///   - 'low_confidence'     — hubo match pero score < 0.85
+    ///   - 'low_confidence'     — hubo match pero score < threshold (0.80)
     ///   - 'no_match'           — AcoustID devolvió results: []
     ///   - 'fingerprint_failed' — fpcalc errored
     ///   - 'api_error'          — red / 5xx / quota — retriable
     ///   - NULL                 — nunca se intentó
     /// El frontend lo usa para el indicador ID en la library.
     pub identification_status: Option<String>,
+    /// Score numérico de AcoustID (0..1) para el match aceptado. NULL si
+    /// no hubo identify exitoso. La UI lo muestra en tooltip del [ID].
+    pub acoustid_score: Option<f64>,
 }
 
 /// Reporte de un scan de directorio.
@@ -130,5 +133,12 @@ pub struct Lyrics {
     /// ajusta con los botones [-100][-10][+10][+100][RESET] cuando nota
     /// desincronización. Se persiste para no re-ajustar cada vez.
     pub offset_ms: i64,
+    /// Multiplicador de tempo aplicado a los timestamps del LRC para
+    /// corregir drift cuando LRCLIB tiene la letra de una edición distinta
+    /// del audio del usuario. Default 1.0 (sin corrección). Fórmula:
+    /// `audioTimeMs = lrcTimeMs * speed_ratio + offset_ms`. Se prepuebla
+    /// automático si `audioDur / lrcLibDur` difiere de 1.0 en >0.5%, y
+    /// el usuario lo ajusta fino con los botones SLOWER/FASTER (±0.5%).
+    pub speed_ratio: f64,
     pub status: String,
 }

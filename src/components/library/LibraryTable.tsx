@@ -110,6 +110,36 @@ const IDENTIFY_RETRIABLE_STATUSES: ReadonlyArray<TrackIdentificationStatus | nul
   "api_error",
 ];
 
+// Tooltip de la celda ID: combina el status legible + score si lo
+// tenemos (sólo en `identified` — los otros status no tienen score
+// persistido). Devuelve undefined cuando no hay nada útil para
+// no añadir un title vacío al DOM.
+function idTooltip(t: Track, clickable: boolean): string | undefined {
+  const score = t.acoustidScore;
+  switch (t.identificationStatus) {
+    case "identified":
+      return score !== null
+        ? `Identified (score ${score.toFixed(3)})`
+        : "Identified";
+    case "low_confidence":
+      return clickable
+        ? "Low confidence — click to retry with same fingerprint"
+        : "Low confidence — match below threshold";
+    case "no_match":
+      return "No match in AcoustID database";
+    case "fingerprint_failed":
+      return "fpcalc failed on this file";
+    case "api_error":
+      return clickable
+        ? "API error — click to retry"
+        : "API error";
+    case null:
+      return clickable ? "Identify with AcoustID" : undefined;
+    default:
+      return undefined;
+  }
+}
+
 export function LibraryTable() {
   const tracks = useLibraryStore((s) => s.tracks);
   const searchQuery = useLibraryStore((s) => s.searchQuery);
@@ -243,11 +273,7 @@ export function LibraryTable() {
                           ? (e) => onIdentifyClick(e, t)
                           : undefined
                       }
-                      title={
-                        idClickable && !inFlight
-                          ? "Identify with AcoustID"
-                          : undefined
-                      }
+                      title={idTooltip(t, idClickable && !inFlight)}
                     >
                       <IdentificationIndicator
                         status={t.identificationStatus}

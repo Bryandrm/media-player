@@ -43,6 +43,7 @@ pub fn try_embedded(track_id: i64, file_path: &Path) -> AppResult<Option<Lyrics>
         source_id: None,
         confidence: Some(1.0), // tag embebido = correspondencia 1:1 con el track
         offset_ms: 0,
+        speed_ratio: 1.0, // embedded = mismo audio = sin drift por definición
         status: "found".to_string(),
     }))
 }

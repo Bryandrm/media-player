@@ -76,3 +76,25 @@ pub async fn lyrics_set_offset(
 ) -> AppResult<()> {
     db::lyrics::set_offset(&pool, track_id, offset_ms).await
 }
+
+/// Actualiza el `speed_ratio` (drift correction) de un track. Usado por
+/// los botones SLOWER/FASTER de la UI.
+#[tauri::command]
+pub async fn lyrics_set_speed_ratio(
+    track_id: i64,
+    speed_ratio: f64,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<()> {
+    db::lyrics::set_speed_ratio(&pool, track_id, speed_ratio).await
+}
+
+/// Resetea offset + speed_ratio a sus valores neutros (0 y 1.0). Usado por
+/// el botón RESET — el usuario quiere "vuelvo a los timestamps originales
+/// del LRC sin ningún ajuste".
+#[tauri::command]
+pub async fn lyrics_reset_sync(
+    track_id: i64,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<()> {
+    db::lyrics::reset_sync(&pool, track_id).await
+}

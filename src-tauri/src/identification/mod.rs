@@ -26,9 +26,12 @@ use crate::errors::{AppError, AppResult};
 
 /// Threshold conservador. Por debajo, el match no se acepta (status pasa a
 /// `low_confidence`). En la práctica AcoustID devuelve >= 0.95 cuando hay
-/// match real; valores entre 0.5 y 0.85 suelen ser ruido. Si vemos falsos
-/// positivos, subir a 0.90.
-const SCORE_THRESHOLD: f64 = 0.85;
+/// match real; valores entre 0.5 y 0.85 suelen ser ruido pero el rango
+/// 0.80-0.85 captura matches legítimos limítrofes (typical edge: tracks
+/// con encoding distinto al canónico). 0.80 es el valor activo después
+/// de validación con la library del autor — track 29 a 0.824 era match
+/// correcto. Si vemos falsos positivos, subir a 0.85+.
+const SCORE_THRESHOLD: f64 = 0.80;
 
 /// Resultado del cascade tal como se devuelve al frontend. Los campos opcionales
 /// están poblados sólo cuando `status == "identified"`.
@@ -150,6 +153,7 @@ pub async fn identify_track(
                 &m.mbid,
                 &m.title,
                 &m.artist,
+                m.score,
             )
             .await?;
             Ok(IdentificationResult {

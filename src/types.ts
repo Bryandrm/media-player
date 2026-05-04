@@ -44,6 +44,9 @@ export type Track = {
   acoustidId: string | null;
   mbidRecording: string | null;
   identificationStatus: TrackIdentificationStatus | null;
+  /** Score (0..1) que devolvió AcoustID para el match aceptado. null si
+   *  no hubo identify exitoso. La UI lo muestra como tooltip en [ID]. */
+  acoustidScore: number | null;
 };
 
 /** Resultado del comando identification_identify_track. Los campos
@@ -113,5 +116,11 @@ export type Lyrics = {
   /** Offset global aplicado a los timestamps. Lo ajusta el usuario con los
    *  botones [-100][-10][+10][+100][RESET]. */
   offsetMs: number;
+  /** Multiplicador de tempo para corregir drift cuando el LRC viene de un
+   *  master con tempo distinto al audio del usuario (típico ±0.5%–2%).
+   *  Default 1.0. Se prepuebla automático al fetchear (vía duration ratio
+   *  audio vs LRCLIB) y el usuario lo ajusta fino con SLOWER/FASTER.
+   *  Fórmula: `audioTimeMs = lrcTimeMs * speedRatio + offsetMs`. */
+  speedRatio: number;
   status: LyricsStatus;
 };

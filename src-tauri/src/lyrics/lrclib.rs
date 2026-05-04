@@ -121,6 +121,7 @@ async fn fetch_one(
             source_id: Some(body.id.to_string()),
             confidence: Some(1.0),
             offset_ms: 0,
+            speed_ratio: 1.0,
             status: "found".to_string(),
         }));
     }
@@ -132,6 +133,7 @@ async fn fetch_one(
     }
 
     let confidence = confidence_from_duration(body.duration, q.duration_seconds);
+    let speed_ratio = auto_speed_ratio(body.duration, q.duration_seconds);
 
     Ok(Some(Lyrics {
         track_id,
@@ -141,6 +143,7 @@ async fn fetch_one(
         source_id: Some(body.id.to_string()),
         confidence: Some(confidence),
         offset_ms: 0,
+        speed_ratio,
         status: "found".to_string(),
     }))
 }
@@ -155,6 +158,32 @@ fn confidence_from_duration(returned: f32, expected_seconds: u32) -> f64 {
         3..=5 => 0.8,
         6..=10 => 0.5,
         _ => 0.3,
+    }
+}
+
+/// Auto-baseline del `speed_ratio` cuando la duración que reporta LRCLIB
+/// difiere significativamente del audio del usuario. Premisa: si los
+/// archivos vienen de masters con tempos distintos, la duración total
+/// también difiere proporcionalmente — `audioDur / lrcLibDur` aproxima
+/// el ratio que necesitamos para alinear timestamps.
+///
+/// Threshold 0.5%: por debajo, devolvemos 1.0 porque el offset solo
+/// alcanza y un speedRatio cercano a 1 introduce ruido sin ganancia.
+/// Arriba, devolvemos el ratio clampeado al rango sano [0.5, 2.0].
+///
+/// Limitaciones: si el LRC tiene un outro instrumental largo no
+/// representado en líneas, la duración LRCLIB iguala al audio canónico
+/// pero el "tempo de las líneas" no — la heurística sobre/sub-corrige.
+/// Es OK como baseline; el usuario corrige fino con SLOWER/FASTER.
+fn auto_speed_ratio(lrclib_duration: f32, audio_duration_seconds: u32) -> f64 {
+    if audio_duration_seconds == 0 || lrclib_duration <= 0.0 {
+        return 1.0;
+    }
+    let ratio = (audio_duration_seconds as f64) / (lrclib_duration as f64);
+    if (ratio - 1.0).abs() <= 0.005 {
+        1.0
+    } else {
+        ratio.clamp(0.5, 2.0)
     }
 }
 
@@ -210,6 +239,7 @@ async fn search_fuzzy(
         // Penalizar por ser match fuzzy. clamp inferior 0.3 para no dar
         // confidence ridículamente bajo (que equivaldría a un error).
         let confidence = (base_confidence * 0.85).max(0.3);
+        let speed_ratio = auto_speed_ratio(result.duration, q.duration_seconds);
         return Ok(Some(Lyrics {
             track_id,
             synced_lyrics: result.synced_lyrics,
@@ -218,6 +248,7 @@ async fn search_fuzzy(
             source_id: Some(result.id.to_string()),
             confidence: Some(confidence),
             offset_ms: 0,
+            speed_ratio,
             status: "found".to_string(),
         }));
     }

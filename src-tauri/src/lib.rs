@@ -49,6 +49,8 @@ pub fn run() {
             commands::downloader::download_track,
             commands::lyrics::lyrics_fetch,
             commands::lyrics::lyrics_set_offset,
+            commands::lyrics::lyrics_set_speed_ratio,
+            commands::lyrics::lyrics_reset_sync,
             commands::identification::identification_identify_track,
             commands::identification::identification_get_api_key,
             commands::identification::identification_set_api_key,

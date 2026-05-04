@@ -1,0 +1,23 @@
+-- Lyrics Fase 2.a: drift correction vía speed_ratio.
+--
+-- El offsetMs constante no alcanza cuando el LRC y el audio del usuario
+-- vienen de masters/ediciones distintas con tempos levemente diferentes
+-- (típico ±0.5% a ±2%). El offset alinea el inicio pero al final se
+-- desincroniza acumulativo.
+--
+-- Fórmula nueva al consumir cada timestamp:
+--     audioTimeMs = lrcTimestampMs * speedRatio + offsetMs
+--
+-- speedRatio = 1.0 → comportamiento idéntico a antes (no drift assumed).
+--   < 1.0 → LRC corre "más rápido" en relación al audio (audio es más lento)
+--   > 1.0 → LRC corre "más lento" en relación al audio (audio es más rápido)
+--
+-- Auto-baseline al fetch: cuando LRCLIB devuelve una `duration` que difiere
+-- del audio del usuario en >0.5%, prepoblamos speedRatio con la ratio
+-- (audioDurationSeconds / lrcLibDurationSeconds). Diferencias menores se
+-- dejan en 1.0 — el offset solo basta y un speedRatio muy cercano a 1
+-- introduce inestabilidad numérica para tracks largos.
+--
+-- Ver docs/LYRICS.md §0 Fase 2.a.
+
+ALTER TABLE lyrics ADD COLUMN speed_ratio REAL NOT NULL DEFAULT 1.0;
