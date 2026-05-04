@@ -38,6 +38,16 @@ pub enum AppError {
     #[error("AcoustID API key not configured — set it in Settings")]
     AcoustIdNoApiKey,
 
+    // Karaoke (forced alignment via WhisperX).
+    #[error("whisperx not installed — install via: pipx install whisperx")]
+    WhisperxMissing,
+
+    #[error("whisperx alignment failed: {0}")]
+    WhisperxFailed(String),
+
+    #[error("whisperx output parse error: {0}")]
+    WhisperxParse(String),
+
     #[error("{0}")]
     Other(String),
 }

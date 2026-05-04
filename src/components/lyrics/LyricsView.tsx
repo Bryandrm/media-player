@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLibraryStore } from "../../stores/libraryStore";
 import { useLyricsStore } from "../../stores/lyricsStore";
 import { usePlayerStore } from "../../stores/playerStore";
+import { useDownloadStore } from "../../stores/downloadStore";
 import { useSyncedLyrics } from "../../hooks/useSyncedLyrics";
 import { effectiveTimestampMs, parseLrc, type LrcLine } from "../../lib/lrcParser";
 import { getAudioElement } from "../../audio/element";
@@ -53,10 +54,13 @@ export function LyricsView() {
   const loading = useLyricsStore((s) => s.loading);
   const notFound = useLyricsStore((s) => s.notFound);
   const error = useLyricsStore((s) => s.error);
+  const aligning = useLyricsStore((s) => s.aligning);
   const setOffset = useLyricsStore((s) => s.setOffset);
   const setSpeedRatio = useLyricsStore((s) => s.setSpeedRatio);
   const resetSync = useLyricsStore((s) => s.resetSync);
+  const alignTrack = useLyricsStore((s) => s.alignTrack);
   const tracks = useLibraryStore((s) => s.tracks);
+  const whisperxAvailable = useDownloadStore((s) => s.deps?.whisperx ?? false);
 
   const track = useMemo(
     () => (trackId === null ? null : tracks.find((t) => t.id === trackId) ?? null),
@@ -101,12 +105,16 @@ export function LyricsView() {
       // SET OFFSET HERE: el usuario nos dice "esta línea es la que está
       // sonando AHORA". Calculamos el offset que hace que el timestamp
       // efectivo de esa línea iguale el audio.currentTime actual.
-      // Resolviendo: audioMs = (lrcTimestamp + lrcOffset) * speedRatio + newUserOffset
-      //              newUserOffset = audioMs - (lrcTimestamp + lrcOffset) * speedRatio
+      // Resolviendo: audioMs = (rawTs + lrcOffset) * speedRatio + newUserOffset
+      //              newUserOffset = audioMs - (rawTs + lrcOffset) * speedRatio
+      // `rawTs` = timestamp de la primera palabra (cuando hay alineación)
+      // o del marker de línea (fallback). Mismo principio que el cursor:
+      // para líneas alineadas usamos la verdad de whisperx, no el LRC.
+      const rawTs = line.wordTimestampsMs?.[0] ?? line.timestampMs;
       const audio = getAudioElement();
       const audioMs = audio.currentTime * 1000;
       const newOffset = Math.round(
-        audioMs - (line.timestampMs + lrcOffset) * speedRatio,
+        audioMs - (rawTs + lrcOffset) * speedRatio,
       );
       setOffset(trackId, newOffset);
       setAlignMode(false);
@@ -130,6 +138,11 @@ export function LyricsView() {
   const onReset = () => {
     if (trackId === null) return;
     resetSync(trackId);
+  };
+
+  const onAutoAlign = () => {
+    if (trackId === null || aligning) return;
+    void alignTrack(trackId);
   };
 
   // Escape sale del modo ALIGN sin aplicar nada.
@@ -240,11 +253,6 @@ export function LyricsView() {
                 ref={isActive ? activeLineRef : null}
                 className={cls}
                 onClick={() => onLineClick(line)}
-                style={
-                  isActive
-                    ? ({ "--total": displayText.length } as React.CSSProperties)
-                    : undefined
-                }
               >
                 {isActive
                   ? splitLineIntoTokens(displayText).map((tok, k) =>
@@ -253,16 +261,11 @@ export function LyricsView() {
                         // como break opportunities al envolver.
                         tok.text
                       ) : (
-                        <span
-                          key={k}
-                          className="karaoke-word"
-                          style={
-                            {
-                              "--char-offset": tok.offset,
-                              "--word-length": tok.text.length,
-                            } as React.CSSProperties
-                          }
-                        >
+                        // `--word-progress` lo escribe useSyncedLyrics
+                        // cada frame por palabra. JS hace el cálculo
+                        // (linear o A2 según haya wordTimestampsMs); CSS
+                        // sólo renderea el gradient.
+                        <span key={k} className="karaoke-word">
                           {tok.text}
                         </span>
                       ),
@@ -294,7 +297,7 @@ export function LyricsView() {
             <Button size="sm" onClick={() => adjustOffset(100)}>+100</Button>
             <Button size="sm" onClick={() => adjustOffset(1000)}>+1S</Button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-muted min-w-[110px]">
               SPEED: {(speedRatio * 100).toFixed(1)}%
             </span>
@@ -311,6 +314,28 @@ export function LyricsView() {
               {alignMode ? "ALIGN: CLICK A LINE" : "ALIGN"}
             </Button>
             <Button size="sm" onClick={onReset}>RESET</Button>
+            {/* AUTO-ALIGN: forced alignment via WhisperX. Visible sólo si
+                whisperx está instalado. Tarda ~30s-2min — UI no se bloquea
+                pero el botón muestra "ALIGNING..." mientras corre. Texto
+                cambia a RE-ALIGN una vez que aligned_at está poblado. */}
+            {whisperxAvailable && (
+              <Button
+                size="sm"
+                onClick={onAutoAlign}
+                disabled={aligning || trackId === null}
+                title={
+                  lyrics?.alignedAt
+                    ? `Last aligned: ${lyrics.alignedAt}`
+                    : "Run whisperx forced alignment"
+                }
+              >
+                {aligning
+                  ? "ALIGNING..."
+                  : lyrics?.alignedAt
+                    ? "RE-ALIGN"
+                    : "AUTO-ALIGN"}
+              </Button>
+            )}
           </div>
         </div>
       </div>

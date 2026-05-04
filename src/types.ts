@@ -75,6 +75,10 @@ export type DependencyStatus = {
    *  vía AcoustID. Sin él la feature IDENTIFY queda disabled — el resto
    *  del player funciona idéntico. */
   fpcalc: boolean;
+  /** WhisperX binary (instalado vía pipx). Necesario para forced alignment
+   *  de letras (per-word timing real). Sin él la feature AUTO-ALIGN queda
+   *  disabled — el karaoke fill cae al modo linear. */
+  whisperx: boolean;
 };
 
 export type DownloadStatus =
@@ -122,5 +126,16 @@ export type Lyrics = {
    *  audio vs LRCLIB) y el usuario lo ajusta fino con SLOWER/FASTER.
    *  Fórmula: `audioTimeMs = lrcTimeMs * speedRatio + offsetMs`. */
   speedRatio: number;
+  /** Timestamp ISO de cuándo corrimos forced alignment para este track
+   *  (vía `karaoke_auto_align`). null = nunca alineado, los timestamps
+   *  per-palabra del karaoke fill caen al modo linear. Cuando hay valor,
+   *  `syncedLyrics` está en formato A2 con `<mm:ss.xx>word` por palabra. */
+  alignedAt: string | null;
+  /** LRC raw de LRCLIB tal como vino la primera vez. Backup para que
+   *  re-aligns no se basen en el A2 generado por un align previo
+   *  (que perpetuaría errores). Null para rows creadas antes de la
+   *  migración 20260504. El frontend no lo usa hoy — vive en el contrato
+   *  por completitud. */
+  originalSyncedLyrics: string | null;
   status: LyricsStatus;
 };

@@ -15,7 +15,8 @@ pub async fn get_for_track(
 ) -> AppResult<Option<Lyrics>> {
     let row = sqlx::query_as::<_, Lyrics>(
         "SELECT track_id, synced_lyrics, plain_lyrics, source, source_id, \
-                confidence, offset_ms, speed_ratio, status \
+                confidence, offset_ms, speed_ratio, aligned_at, \
+                original_synced_lyrics, status \
          FROM lyrics WHERE track_id = ?",
     )
     .bind(track_id)
@@ -30,11 +31,16 @@ pub async fn get_for_track(
 /// pasa `lyrics.speed_ratio != 1.0` Y la fila existente está en 1.0, sí
 /// pisamos — eso es el caso de auto-baseline al fresh-fetch.
 pub async fn upsert(pool: &SqlitePool, lyrics: &Lyrics) -> AppResult<()> {
+    // original_synced_lyrics: lo escribimos en INSERT (excluded.synced_lyrics
+    // es el LRC raw recién fetcheado); en UPDATE preservamos el existente
+    // si ya estaba poblado (COALESCE) — sólo lo populamos si era NULL,
+    // que pasa para rows que existían antes de esta migración.
     sqlx::query(
         "INSERT INTO lyrics (track_id, synced_lyrics, plain_lyrics, source, \
                              source_id, confidence, speed_ratio, status, \
+                             original_synced_lyrics, \
                              fetched_at, last_used_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) \
          ON CONFLICT(track_id) DO UPDATE SET \
              synced_lyrics = excluded.synced_lyrics, \
              plain_lyrics = excluded.plain_lyrics, \
@@ -47,7 +53,12 @@ pub async fn upsert(pool: &SqlitePool, lyrics: &Lyrics) -> AppResult<()> {
              speed_ratio = CASE \
                  WHEN lyrics.speed_ratio != 1.0 THEN lyrics.speed_ratio \
                  ELSE excluded.speed_ratio \
-             END",
+             END, \
+             original_synced_lyrics = COALESCE( \
+                 lyrics.original_synced_lyrics, \
+                 excluded.original_synced_lyrics \
+             ), \
+             aligned_at = NULL",
     )
     .bind(lyrics.track_id)
     .bind(&lyrics.synced_lyrics)
@@ -57,6 +68,9 @@ pub async fn upsert(pool: &SqlitePool, lyrics: &Lyrics) -> AppResult<()> {
     .bind(lyrics.confidence)
     .bind(lyrics.speed_ratio)
     .bind(&lyrics.status)
+    // En el primer INSERT, original = synced (el LRC tal como vino de LRCLIB).
+    // En subsequent UPDATE, COALESCE preserva el original si ya existe.
+    .bind(&lyrics.synced_lyrics)
     .execute(pool)
     .await?;
     Ok(())
@@ -124,6 +138,36 @@ pub async fn reset_sync(pool: &SqlitePool, track_id: i64) -> AppResult<()> {
     sqlx::query(
         "UPDATE lyrics SET offset_ms = 0, speed_ratio = 1.0 WHERE track_id = ?",
     )
+    .bind(track_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Guarda el resultado de un forced alignment exitoso. Sobreescribe el
+/// `synced_lyrics` con la versión A2 (timestamps por palabra) y setea
+/// `aligned_at = NOW`.
+///
+/// **También resetea `offset_ms` y `speed_ratio`** porque los ajustes
+/// manuales del usuario estaban compensando el drift del LRC original;
+/// con timestamps alineados a audio, esos ajustes ya no aplican y dejan
+/// la letra desfasada por la cantidad que el usuario había compensado.
+/// Si después del align hay residual misalignment (raro), el usuario
+/// puede re-ajustar manualmente.
+pub async fn save_aligned(
+    pool: &SqlitePool,
+    track_id: i64,
+    a2_lyrics: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE lyrics SET \
+            synced_lyrics = ?, \
+            aligned_at = CURRENT_TIMESTAMP, \
+            offset_ms = 0, \
+            speed_ratio = 1.0 \
+         WHERE track_id = ?",
+    )
+    .bind(a2_lyrics)
     .bind(track_id)
     .execute(pool)
     .await?;

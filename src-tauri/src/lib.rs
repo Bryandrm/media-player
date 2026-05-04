@@ -5,6 +5,7 @@ mod db;
 mod downloader;
 mod errors;
 mod identification;
+mod karaoke;
 mod lyrics;
 
 use tauri::Manager;
@@ -56,6 +57,7 @@ pub fn run() {
             commands::identification::identification_set_api_key,
             commands::identification::identification_identify_all,
             commands::identification::identification_cancel_all,
+            commands::karaoke::karaoke_auto_align,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

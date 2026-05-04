@@ -21,6 +21,11 @@ type LyricsState = {
   notFound: boolean;
   error: string | null;
 
+  /** True mientras corre `karaoke_auto_align` para algún track. Es global
+   *  (no per-track) porque el flujo es one-at-a-time desde la UI — el
+   *  botón AUTO-ALIGN está disabled mientras `aligning`. */
+  aligning: boolean;
+
   fetch: (trackId: number) => Promise<void>;
   setOffset: (trackId: number, offsetMs: number) => Promise<void>;
   /** Ajusta el speedRatio (drift correction). Optimistic update igual
@@ -29,6 +34,10 @@ type LyricsState = {
   /** Reset de offset + speedRatio a valores neutros. Usado por el botón
    *  RESET. Optimistic update + persiste backend. */
   resetSync: (trackId: number) => Promise<void>;
+  /** Corre forced alignment vía whisperx (Tauri command). Tarda ~30s-2min
+   *  la primera vez por download del modelo wav2vec2. Al terminar, refetcha
+   *  el lyrics del backend para que el A2 nuevo entre al store. */
+  alignTrack: (trackId: number) => Promise<void>;
   /** Reset al cambiar de track o cerrar el panel — evita mostrar las
    *  letras del track viejo durante un cambio. */
   clear: () => void;
@@ -40,6 +49,7 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
   loading: false,
   notFound: false,
   error: null,
+  aligning: false,
 
   fetch: async (trackId) => {
     // Race-guard: si ya estamos fetch-eando para este trackId, no duplicar.
@@ -112,6 +122,29 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
       await invoke("lyrics_reset_sync", { trackId });
     } catch (e) {
       console.warn("lyrics_reset_sync failed:", e);
+    }
+  },
+
+  alignTrack: async (trackId) => {
+    if (get().aligning) return;
+    set({ aligning: true, error: null });
+    try {
+      await invoke("karaoke_auto_align", { trackId });
+      // synced_lyrics fue reescrito en backend con A2. Forzamos refetch
+      // limpiando el state cacheado para que el siguiente fetch lea fresh
+      // de la DB (el cache-check del comando lyrics_fetch devuelve la
+      // fila con el A2 nuevo).
+      const current = get().current;
+      if (current && current.trackId === trackId) {
+        set({ current: null, forTrackId: null });
+      }
+      await get().fetch(trackId);
+    } catch (e) {
+      const msg = String(e);
+      console.warn("karaoke_auto_align failed:", msg);
+      set({ error: msg });
+    } finally {
+      set({ aligning: false });
     }
   },
 

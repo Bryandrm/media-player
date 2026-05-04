@@ -159,44 +159,35 @@
  * Por qué per-word y NO un solo gradient sobre la línea entera: cuando el
  * texto envuelve a dos filas visuales, un gradient único llenaba ambas
  * filas en paralelo (mismo % de fill izq→der en cada fila). Splittear en
- * palabras inline-block hace que cada palabra calcule su propio fill
- * basado en su `--char-offset` dentro de la línea — el browser envuelve
- * naturalmente entre palabras y cada palabra se llena en orden.
+ * palabras inline-block hace que cada palabra se rellene independiente —
+ * el browser envuelve naturalmente entre palabras y cada palabra se llena
+ * en orden.
  *
- * Variables (set por JSX/JS):
- *   --progress    (0..1)  — escrita por useSyncedLyrics cada frame en .karaoke-line
- *   --total       int     — total de chars de la línea, set en .karaoke-line
- *   --char-offset int     — char index donde arranca esta palabra, set en cada .karaoke-word
- *   --word-length int     — chars de esta palabra, set en cada .karaoke-word
+ * Variable única (set por JS cada frame en cada .karaoke-word):
+ *   --word-progress (0..1)
  *
- * Math:
- *   fillChars = clamp(0, progress*total − charOffset, wordLength)
- *   fillPct   = fillChars / wordLength
+ * El cálculo de qué valor escribir vive en useSyncedLyrics — soporta dos
+ * modos:
+ *   - LINEAR (LRC estándar): interpolación uniforme dentro de la línea
+ *     basada en char-offset. Aproximación; falla en rap/ritmos irregulares.
+ *   - WORD-TIMESTAMPS (A2 / aligned): cada palabra usa sus propios bounds
+ *     en tiempo real. Provistos por whisperx forced alignment.
  *
  * Linear-gradient con dos stops en la MISMA posición = edge HARD entre
  * accent y muted, consistente con brutalist. Color de pre-sweep es muted
  * (gris) — distingue "todavía no" de "ya pasó".
  */
-.karaoke-line {
-  /* Contenedor. La var --progress vive acá; --total se setea inline por
-     componente (depende de la línea concreta). Las palabras heredan ambas. */
-}
-
 .karaoke-word {
   display: inline-block;
-  --fill-pct: calc(
-    clamp(
-      0,
-      calc(var(--progress, 0) * var(--total, 1) - var(--char-offset, 0)),
-      var(--word-length, 1)
-    ) / var(--word-length, 1)
-  );
+  /* "Sung yet" → accent. "Not sung yet (within active line)" → fg (blanco).
+     Distingue visualmente del gris de líneas YA pasadas. Sin esto, la mitad
+     no cantada de la línea activa parece "ya pasada" y confunde al usuario. */
   background: linear-gradient(
     to right,
     var(--color-accent) 0%,
-    var(--color-accent) calc(var(--fill-pct) * 100%),
-    var(--color-muted) calc(var(--fill-pct) * 100%),
-    var(--color-muted) 100%
+    var(--color-accent) calc(var(--word-progress, 0) * 100%),
+    var(--color-fg) calc(var(--word-progress, 0) * 100%),
+    var(--color-fg) 100%
   );
   background-clip: text;
   -webkit-background-clip: text;

@@ -65,9 +65,9 @@ pub struct ScanReport {
     pub errors: usize,
 }
 
-/// Estado de las dependencias externas (yt-dlp, ffmpeg, fpcalc). Detectadas
-/// al boot. Cada una desbloquea features distintas — el frontend muestra
-/// un banner por cada faltante con qué feature se queda inactiva.
+/// Estado de las dependencias externas. Detectadas al boot. Cada una
+/// desbloquea features distintas — el frontend muestra un banner por cada
+/// faltante con qué feature se queda inactiva.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DependencyStatus {
@@ -77,6 +77,11 @@ pub struct DependencyStatus {
     /// (AcoustID). Sin él, la feature IDENTIFY queda disabled — el
     /// resto del player funciona idéntico.
     pub fpcalc: bool,
+    /// WhisperX binary (instalado vía pipx). Necesario para forced
+    /// alignment de letras (per-word timing real). Sin él, la feature
+    /// AUTO-ALIGN queda disabled — las letras siguen funcionando con
+    /// karaoke fill linear (interpolación dentro de la línea).
+    pub whisperx: bool,
 }
 
 /// Estados terminales o transitorios de una descarga, espejado en la columna
@@ -140,5 +145,16 @@ pub struct Lyrics {
     /// automático si `audioDur / lrcLibDur` difiere de 1.0 en >0.5%, y
     /// el usuario lo ajusta fino con los botones SLOWER/FASTER (±0.5%).
     pub speed_ratio: f64,
+    /// Timestamp de cuándo corrimos forced alignment para esta letra.
+    /// NULL = nunca alineada (fallback al karaoke linear). Cuando hay
+    /// valor, `synced_lyrics` está en formato A2 (timestamps por palabra).
+    /// Ver docs/KARAOKE.md.
+    pub aligned_at: Option<String>,
+    /// Backup del LRC raw que vino de LRCLIB la primera vez. Se usa como
+    /// fuente de verdad para re-alignments — sin esto, cada RE-ALIGN
+    /// operaba sobre el A2 generado por el align anterior, propagando
+    /// errores. NULL para rows pre-fix; el caller debe caer a `synced_lyrics`
+    /// como fallback en ese caso.
+    pub original_synced_lyrics: Option<String>,
     pub status: String,
 }

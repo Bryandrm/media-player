@@ -33,4 +33,6 @@ tokio = { version = "1", features = ["process", "io-util"] }
 # json activa `.json()` deserialize en Response. Sin gzip/brotli — LRCLIB
 # devuelve plain JSON chico.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+# tempfile: dirs efímeros para los JSON in/out de subprocess WhisperX.
+tempfile = "3"
 

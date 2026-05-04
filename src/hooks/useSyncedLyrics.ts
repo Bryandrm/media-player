@@ -50,22 +50,109 @@ export function useSyncedLyrics(
     // Computa el timestamp efectivo de una línea en tiempo de AUDIO (no LRC).
     // Misma fórmula que `effectiveTimestampMs` del parser, en línea para no
     // pagar la importación + clamp en el rAF loop.
-    const effectiveOf = (line: LrcLine): number =>
-      (line.timestampMs + lrcOffsetMs) * speedRatio + userOffsetMs;
+    //
+    // Cuando la línea viene de un forced alignment (tiene wordTimestampsMs),
+    // usamos el timestamp de la PRIMERA PALABRA en lugar del de la línea.
+    // Razón: el line.timestampMs viene de LRCLIB y puede tener drift acumulado
+    // o estar mal alineado al audio del usuario; whisperx nos dio cuándo
+    // EMPIEZA REALMENTE la primera palabra. Sin este cambio, el cursor avanza
+    // a la línea (mostrándola como activa) antes de que se cante, y el desfase
+    // se acumula a lo largo del track.
+    const effectiveOf = (line: LrcLine): number => {
+      const rawTs = line.wordTimestampsMs?.[0] ?? line.timestampMs;
+      return (rawTs + lrcOffsetMs) * speedRatio + userOffsetMs;
+    };
 
+    /** Actualiza `--word-progress` (0..1) en cada `.karaoke-word` de la
+     *  línea activa. Dos modos según si el LRC es A2 (aligned) o estándar:
+     *   - A2: usa `wordTimestampsMs[i]` como bound start de cada palabra.
+     *     End = bound start de la próxima palabra, o de la próxima línea
+     *     para la última.
+     *   - Linear: distribuye la línea uniforme por chars (aproximación —
+     *     misma matemática que la versión vieja con --char-offset). */
     const updateProgress = (cursor: number, currentMs: number) => {
       if (!progressRef?.current || cursor < 0) return;
-      const lineMs = effectiveOf(lines[cursor]);
-      const nextMs =
+      const wordSpans = progressRef.current.querySelectorAll<HTMLElement>(
+        ".karaoke-word",
+      );
+      if (wordSpans.length === 0) return;
+
+      const line = lines[cursor];
+      const nextLineEff =
         cursor + 1 < lines.length
           ? effectiveOf(lines[cursor + 1])
-          : lineMs + TRAILING_LINE_DURATION_MS;
-      const span = Math.max(1, nextMs - lineMs);
-      const progress = Math.max(0, Math.min(1, (currentMs - lineMs) / span));
-      // Direct DOM mutation — fuera del flujo React. El re-render de React
-      // sólo dispara cuando cambia activeIndex (1 vez por línea); el fill
-      // visual se actualiza por CSS var fluidamente.
-      progressRef.current.style.setProperty("--progress", String(progress));
+          : effectiveOf(line) + TRAILING_LINE_DURATION_MS;
+
+      const wordTs = line.wordTimestampsMs;
+      if (wordTs && wordTs.length > 0) {
+        // === Modo A2 / forced-aligned ===
+        for (let i = 0; i < wordSpans.length; i++) {
+          // Bound start: timestamp de la palabra. Si por alguna razón hay
+          // menos timestamps que spans (defensivo), usar el último o
+          // line.timestampMs como fallback.
+          const rawStart = wordTs[i] ?? wordTs[wordTs.length - 1] ?? line.timestampMs;
+          const startEff = (rawStart + lrcOffsetMs) * speedRatio + userOffsetMs;
+          // Bound end:
+          //   - próxima palabra, si la hay → fill termina cuando arranca la
+          //     siguiente palabra (transición continua entre palabras).
+          //   - última palabra Y tenemos lastWordEndMs (forced alignment con
+          //     trailing end marker) → usamos el end real, palabra para de
+          //     llenarse cuando el cantante termina de cantarla. Sin esto,
+          //     la última palabra seguía rellenándose durante el silencio
+          //     hasta la próxima línea (visible al usuario como "letra
+          //     avanza durante espacio vacío").
+          //   - última palabra SIN lastWordEndMs (LRC manual / pre-fix) →
+          //     fallback a nextLineEff. Compatible con A2 viejo.
+          let endEff: number;
+          if (i + 1 < wordTs.length) {
+            endEff = (wordTs[i + 1] + lrcOffsetMs) * speedRatio + userOffsetMs;
+          } else if (line.lastWordEndMs !== undefined) {
+            endEff =
+              (line.lastWordEndMs + lrcOffsetMs) * speedRatio + userOffsetMs;
+          } else {
+            endEff = nextLineEff;
+          }
+          const span = Math.max(1, endEff - startEff);
+          const wp = Math.max(0, Math.min(1, (currentMs - startEff) / span));
+          wordSpans[i].style.setProperty("--word-progress", String(wp));
+        }
+      } else {
+        // === Modo linear (LRC estándar) ===
+        // Reproducimos la misma matemática que el CSS calc anterior:
+        //   fillChars = clamp(0, lineProgress*total - charOffset, wordLength)
+        //   wp = fillChars / wordLength
+        // Iteramos las palabras en orden y mantenemos un charOffset
+        // acumulado para mapear span ↔ posición en la línea.
+        const text = line.text;
+        const total = Math.max(1, text.length);
+        const lineMs = effectiveOf(line);
+        const lineSpan = Math.max(1, nextLineEff - lineMs);
+        const lineProgress = Math.max(
+          0,
+          Math.min(1, (currentMs - lineMs) / lineSpan),
+        );
+
+        // Tokenize manteniendo separadores para tracking del offset.
+        const tokens = text.split(/(\s+)/).filter((t) => t.length > 0);
+        let charOffset = 0;
+        let wordIdx = 0;
+        for (const token of tokens) {
+          if (/^\s+$/.test(token)) {
+            charOffset += token.length;
+            continue;
+          }
+          if (wordIdx >= wordSpans.length) break;
+          const wordLen = Math.max(1, token.length);
+          const fillChars = Math.max(
+            0,
+            Math.min(wordLen, lineProgress * total - charOffset),
+          );
+          const wp = fillChars / wordLen;
+          wordSpans[wordIdx].style.setProperty("--word-progress", String(wp));
+          wordIdx++;
+          charOffset += token.length;
+        }
+      }
     };
 
     const update = () => {
