@@ -134,18 +134,44 @@ El comando bloquea hasta que yt-dlp termina, pero la UI no espera al return — 
 
 **System** ([commands/system.rs](../src-tauri/src/commands/system.rs))
 ```rust
-check_dependencies() -> DependencyStatus  // { ytDlp: bool, ffmpeg: bool }
+check_dependencies() -> DependencyStatus
+// { ytDlp: bool, ffmpeg: bool, fpcalc: bool, whisperx: bool }
+// Usa resolve_binary() con fallback a ~/.local/bin/, /usr/local/bin/,
+// /opt/homebrew/bin/ — el proceso Tauri en macOS no siempre hereda PATH
+// completo del shell.
 ```
 
 **Lyrics** ([commands/lyrics.rs](../src-tauri/src/commands/lyrics.rs))
 ```rust
-lyrics_fetch(track_id: i64) -> AppResult<Option<Lyrics>>      // cache-first; si miss, corre cascade
-lyrics_set_offset(track_id: i64, offset_ms: i64) -> AppResult<()>
+lyrics_fetch(track_id) -> AppResult<Option<Lyrics>>          // cache-first; cascade si miss
+lyrics_set_offset(track_id, offset_ms) -> AppResult<()>      // user offset
+lyrics_set_speed_ratio(track_id, speed_ratio) -> AppResult<()> // drift correction
+lyrics_reset_sync(track_id) -> AppResult<()>                 // offset=0 + speed=1.0
+```
+
+**Identification** ([commands/identification.rs](../src-tauri/src/commands/identification.rs))
+```rust
+identification_identify_track(track_id) -> AppResult<IdentificationResult>
+identification_get_api_key() -> AppResult<Option<String>>
+identification_set_api_key(key: String) -> AppResult<()>
+identification_identify_all() -> AppResult<()>     // bulk; emit progress events
+identification_cancel_all() -> AppResult<()>       // setea cancel flag
+```
+Eventos: `identification-progress { done, total, current_track_id, last_status }`,
+`identification-completed { total, identified, low_confidence, no_match,
+fingerprint_failed, api_error, cancelled }`.
+
+**Karaoke** ([commands/karaoke.rs](../src-tauri/src/commands/karaoke.rs))
+```rust
+karaoke_auto_align(track_id) -> AppResult<()>
+// Lee lyrics.original_synced_lyrics; spawnea karaoke_align.py via python
+// del venv whisperx; recibe word timings; serializa A2 LRC con trailing
+// markers; guarda con save_aligned (que también resetea offset/speed).
 ```
 
 ### 3.3 Comandos en backlog
 
-Persistencia del último track + posición se hace **client-side** vía localStorage en `usePlaybackPersist` — no requirió comando backend. Borrado de tracks, settings, y comandos relacionados a Fase 2/3 features aún no implementados.
+Persistencia del último track + posición se hace **client-side** vía localStorage en `usePlaybackPersist` — no requirió comando backend. Borrado de tracks, edit lyrics, y comandos relacionados a Fase 2.c/3 features aún no implementados.
 
 ---
 
@@ -183,19 +209,29 @@ Tablas en uso activo: `tracks`, `lyrics`. Tablas creadas pero sin código que la
 ```
 src-tauri/src/
 ├── lib.rs                  # bootstrap: tauri::Builder, pool init, reqwest::Client init,
-│                           # invoke_handler
+│                           # BulkIdentifyState manage(), invoke_handler
 ├── main.rs                 # shim que llama lib::run
-├── contracts.rs            # tipos compartidos con el frontend (Track con lyrics_status,
-│                           # Lyrics, ScanReport, Download, etc)
+├── contracts.rs            # tipos compartidos con el frontend (Track con lyrics_status +
+│                           # identification_status + acoustid_score, Lyrics con
+│                           # speed_ratio + aligned_at + original_synced_lyrics,
+│                           # DependencyStatus con whisperx, ScanReport, Download)
 ├── errors.rs               # AppError enum + AppResult; serialize custom a string;
-│                           # variantes: Database, Io, Http, NotFound, InvalidInput, Other
+│                           # variantes: Database, Io, Http, NotFound, InvalidInput,
+│                           # FpcalcFailed/Parse, AcoustIdApi, AcoustIdNoApiKey,
+│                           # WhisperxMissing/Failed/Parse, Other
 ├── db/
 │   ├── mod.rs              # init() del pool + sqlx migrate
-│   ├── tracks.rs           # insert_from_metadata, list_all (con LEFT JOIN a lyrics),
-│   │                       # set_cover_art, list_for_metadata_backfill,
-│   │                       # update_title_and_artist
-│   └── lyrics.rs           # get_for_track, upsert, mark_not_found, set_offset,
-│                           # delete_for_track
+│   ├── tracks.rs           # insert_from_metadata, list_all (con LEFT JOIN a lyrics +
+│   │                       # cols identification), set_cover_art,
+│   │                       # list_for_metadata_backfill, update_title_and_artist,
+│   │                       # save_fingerprint, save_identification (con backup
+│   │                       # original_title/artist), update_identification_status,
+│   │                       # list_identifiable
+│   ├── lyrics.rs           # get_for_track, upsert (con COALESCE para preservar
+│   │                       # original_synced_lyrics + speed_ratio), mark_not_found,
+│   │                       # set_offset, set_speed_ratio, reset_sync,
+│   │                       # save_aligned, delete_for_track
+│   └── settings.rs         # get/set key-value (acoustid_api_key)
 ├── audio/
 │   ├── mod.rs              # is_audio_file, extract_metadata (lofty), extract_cover_art
 │   └── cleanup.rs          # cleanup_metadata heurístico (post-yt-dlp); 23 unit tests
@@ -205,17 +241,42 @@ src-tauri/src/
 │   ├── mod.rs              # fetch_lyrics: cascade Embedded → LRCLIB → mark_not_found
 │   ├── embedded.rs         # try_embedded: lee USLT vía lofty
 │   └── lrclib.rs           # try_lrclib: /api/get con field fallback + /api/search fallback
+├── identification/         # AcoustID + Chromaprint (forced fingerprinting → MBID)
+│   ├── mod.rs              # identify_track cascade, IdentificationResult, threshold 0.80
+│   ├── fpcalc.rs           # spawn fpcalc -json + parse output
+│   └── acoustid.rs         # HTTP a AcoustID API + parse response
+├── karaoke/                # Forced alignment de lyrics via WhisperX
+│   ├── mod.rs              # align_track cascade, parse_lrc_lines, build_segments
+│   │                       # (tight LRC bounds), build_a2_lrc (con trailing markers);
+│   │                       # 11 unit tests
+│   └── whisperx.rs         # spawn Python wrapper (resources/scripts/karaoke_align.py),
+│                           # find_python_for_whisperx via resolve_binary fallback,
+│                           # parse JSON output
 └── commands/               # thin wrappers
     ├── mod.rs
-    ├── library.rs          # scan_directory, list_tracks, backfill_covers, backfill_metadata
+    ├── library.rs          # scan_directory, list_tracks, backfill_covers,
+    │                       # backfill_metadata
     ├── downloader.rs       # download_track
-    ├── lyrics.rs           # lyrics_fetch (cache-first), lyrics_set_offset
-    └── system.rs           # check_dependencies
+    ├── lyrics.rs           # lyrics_fetch (cache-first), lyrics_set_offset,
+    │                       # lyrics_set_speed_ratio, lyrics_reset_sync
+    ├── identification.rs   # identification_identify_track, get_api_key, set_api_key,
+    │                       # identification_identify_all (bulk + cancelable),
+    │                       # identification_cancel_all
+    ├── karaoke.rs          # karaoke_auto_align (resuelve script vía Tauri resource API)
+    └── system.rs           # check_dependencies (yt-dlp, ffmpeg, fpcalc, whisperx);
+                            # resolve_binary helper con fallback PATH
+
+src-tauri/resources/scripts/
+└── karaoke_align.py        # Wrapper Python (~80 líneas) que usa whisperx.align()
+                            # Python API en modo align-only. Shippeado vía Tauri
+                            # bundle.resources. Spawn con el python del venv pipx.
 ```
 
 **Regla:** `commands/*` no contiene lógica. Reciben args, llaman al módulo de dominio, mapean errores a `AppError`. Los tests viven en los módulos.
 
-Diferencias con la propuesta original del PLAN: no hay `db/playlists.rs` ni `db/downloads.rs` ni `db/settings.rs` (las tablas existen pero no las usa código todavía). `downloader/ytdlp.rs` + `downloader/progress.rs` se colapsaron a `downloader/mod.rs` (cuando crezca, separar).
+**Resources:** `karaoke_align.py` se shippea como resource via `tauri.conf.json bundle.resources`. Resolución en runtime via `app.path().resolve("scripts/karaoke_align.py", BaseDirectory::Resource)`.
+
+Diferencias con la propuesta original del PLAN: no hay `db/playlists.rs` ni `db/downloads.rs` (las tablas existen pero no las usa código todavía). `downloader/ytdlp.rs` + `downloader/progress.rs` se colapsaron a `downloader/mod.rs` (cuando crezca, separar). `db/settings.rs` se agregó para AcoustID API key.
 
 ---
 

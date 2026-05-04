@@ -24,15 +24,16 @@ Mínimo viable para tachar lyrics de los criterios "done" de Fase 1 del PLAN ([�
 
 ### Fase 2 — Polish (post-MVP estable)
 
-Sub-fase 2.a (drift + intros) ✓ cerrada 2026-05-03. El resto sigue pendiente.
+Sub-fase 2.a (drift + intros) ✓ cerrada 2026-05-03. Sub-fase 2.b (forced alignment / A2) ✓ cerrada 2026-05-04. Sub-fase 2.c (alternative providers + manual edit) pendiente — **subió en prioridad** después de descubrir el límite del forced alignment (depende de calidad del LRC).
 
 - ✅ **Drift correction (`speedRatio`)** — multiplicador de tempo + auto-baseline por duration ratio + UI SLOWER/FASTER (±0.5% step). Migración `20260503000001_lyrics_speed_ratio.sql` agregó `lyrics.speed_ratio REAL DEFAULT 1.0`. Comando `lyrics_set_speed_ratio`. Fórmula al consumir: `audioMs = (lrcMs + lrcOffset) * speedRatio + userOffsetMs` — speedRatio se aplica DESPUÉS de sumar el offset del archivo LRC pero ANTES de sumar el offset del usuario, para que userOffset sea un shift externo absoluto (típicamente padding de YouTube) y no quede escalado.
 - ✅ **`ALIGN` mode** — toggle one-shot para resolver intros grandes (típico YouTube padding 5-30s). Click en el botón ALIGN, después click en cualquier línea durante reproducción → offset se ajusta para alinear ESA línea con el audio actual. Resuelve casos donde el offset manual ±100ms es demasiado fino. Escape sale del modo.
 - ✅ **`RESET` extendido** — un solo click resetea offset + speedRatio a sus valores neutros (0 y 1.0). Comando `lyrics_reset_sync`.
+- ✅ **Forced alignment / A2 (Sub-fase 2.b)** — ver [KARAOKE.md](./KARAOKE.md). Per-word timestamps reales vía WhisperX. Resolvió drift dentro de línea PARA tracks con LRC de buena calidad. Para LRC malo, no compensa el mismatch text↔audio (límite teórico de forced alignment).
+- **Manual edit modal (sub-fase 2.c, pendiente, ALTA prioridad)** — UI para que el usuario corrija el LRC cuando LRCLIB tiene letras imperfectas. Después re-alinear con WhisperX → resultados mucho mejores. **Es el path más alto-impacto para resolver casos como Substitution donde el alignment falla por calidad del LRC.** Ver [KARAOKE.md §13.9](./KARAOKE.md#139-l%C3%ADmite-te%C3%B3rico-de-forced-alignment-con-lrc-imperfecto).
+- **Botón "Search again"** que fuerza refetch ignorando el cache `not_found`.
 - **Refactor a trait `LyricsProvider` + resolver** — recién cuando se sume el 3er provider. Antes es ceremonia para 2 funciones.
 - **Genius** como último recurso (sólo plain — Genius no tiene letras synced).
-- **Manual paste / edit modal** para tracks no encontrados.
-- **Botón "Search again"** que fuerza refetch ignorando el cache `not_found`.
 - **Tabla `lyrics_search_attempts`** con TTL para evitar martillar providers ante búsquedas repetidas.
 
 ### Fase 3 — Avanzado
@@ -43,7 +44,7 @@ No comprometido. Se evalúa ítem por ítem según uso real.
 - **NetEase** para cobertura asiática (API reverseada, riesgo de ruptura).
 - **Identificación canónica vía AcoustID + Chromaprint** — ✓ shippeado 2026-05-02, ver [IDENTIFICATION.md](./IDENTIFICATION.md). Resuelve la mitad del problema: pisa la metadata sucia de yt-dlp con la canónica de MusicBrainz, lo cual feedea al cascade text-based de LRCLIB con mucho mejor hit rate ("AviciiOfficialVEVO" → "Avicii", `(Official Video)` strippeado). **Lo que NO resuelve** (corrección al plan original): LRCLIB no acepta lookup por MBID, así que no es el "santo grial" automático que pensábamos. Tracks identificados pero con LRC con drift residual por edición distinta siguen necesitando `speedRatio` (Fase 2 — drift correction sigue siendo trabajo separado).
 - **Background job semanal** de re-fetch para tracks `not_found`.
-- **Enhanced LRC (A2 / per-word) + forced alignment** — sub-sistema propio en [KARAOKE.md](./KARAOKE.md). El LRC estándar sólo da timestamps por línea, lo que asume tempo uniforme — falla en rap, screams, secciones rítmicas irregulares. La solución es generar A2 (timestamps por palabra) vía forced alignment con `aeneas` o `WhisperX`. El parser A2 + el karaoke fill por palabra son piezas compartidas con el karaoke mode fullscreen (también en KARAOKE.md), por eso quedó como sub-sistema separado.
+- ✅ **Enhanced LRC (A2 / per-word) + forced alignment** — shippeado 2026-05-04 vía sub-sistema [KARAOKE.md](./KARAOKE.md). Implementación con WhisperX en align-only mode (pivote desde aeneas que falló al instalar). Parser A2 detecta `<mm:ss.xx>word` markers + `lastWordEndMs` (trailing marker). Karaoke fill cambió de interpolación uniforme a per-palabra real. **Caveat honesto:** la calidad del alignment depende de la calidad del LRC — para tracks con LRC bien transcrito funciona excelente, para LRC con letras aproximadas (LRCLIB community-curated) hereda el mismatch. Ver [KARAOKE.md §13](./KARAOKE.md#13-lecciones-aprendidas-fase-a).
 - **Submit a LRCLIB** de letras editadas manualmente (contribución a la comunidad).
 
 ---
@@ -107,9 +108,19 @@ LRC es texto plano que asocia timestamps a líneas de letras. Existe desde los 9
 - CR / LF / CRLF: normalizar a `\n`.
 - BOM al inicio: strip.
 
-### Enhanced LRC (A2) — fuera de Fase 1
+### Enhanced LRC (A2) — soportado desde Fase 2.b (2026-05-04)
 
-Extensión con timestamps por palabra: `[00:25.43]<00:25.43>Come <00:25.85>as <00:26.10>you...`. La mayoría de letras en LRCLIB son LRC estándar; A2 queda para Fase 3.
+Extensión con timestamps por palabra: `[00:25.43]<00:25.43>Come <00:25.85>as <00:26.10>you...`. La mayoría de letras en LRCLIB son LRC estándar; A2 lo generamos via WhisperX forced alignment (ver [KARAOKE.md](./KARAOKE.md)).
+
+Nuestro formato extiende A2 con un trailing marker después de la última palabra de cada línea (= end timestamp de esa palabra), para que el karaoke fill sepa cuándo terminar de rellenar la última palabra y no la deje "subiendo" durante silencios entre líneas:
+
+```
+[00:25.43]<00:25.43>Come <00:25.85>as <00:26.10>you <00:26.45>are<00:26.90>
+                                                              ↑
+                                       trailing marker = end de "are"
+```
+
+Backward compatible: parsers que sólo leen `[mm:ss.xx]` line markers ignoran tanto `<...>word` como el trailing.
 
 ---
 

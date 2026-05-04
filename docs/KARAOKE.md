@@ -6,24 +6,26 @@
 
 ## Estado
 
-- **Fase A** — en progreso. Forced alignment via **WhisperX** (pivote desde aeneas — ver §3.0) + parser A2 + UI `AUTO-ALIGN`.
-- **Fase B–E** — futuro. Karaoke mode UI, vocal removal, mic input, pitch scoring.
+- **Fase A** ✓ shippeada (2026-05-04) con caveats. Forced alignment via **WhisperX** en modo align-only + parser A2 + botón `AUTO-ALIGN`. **Funciona bien para tracks con LRC de buena calidad; mediocre para LRC con letras imperfectas** (ver §13 "Lecciones aprendidas").
+- **Fase B–E** — futuro, sin compromiso. Karaoke mode UI, vocal removal, mic input, pitch scoring.
 
 ---
 
 ## 0. Plan por fases
 
-### Fase A — Forced alignment (per-word timing real)
+### Fase A ✓ — Forced alignment (per-word timing real)
 
-Resuelve la limitación documentada en [LYRICS.md Fase 3](./LYRICS.md#fase-3--avanzado): el LRC estándar sólo da timestamps por línea, lo cual asume tempo uniforme dentro de cada línea. Falla en rap, screams, secciones rítmicamente irregulares — el karaoke fill se desfasa visiblemente.
+Resuelve la limitación documentada en [LYRICS.md Fase 3](./LYRICS.md#fase-3--avanzado): el LRC estándar sólo da timestamps por línea, lo cual asume tempo uniforme dentro de cada línea. Falla en rap, screams, secciones rítmicamente irregulares.
 
-- **Tooling:** `whisperx` (Python + PyTorch + Whisper + wav2vec2) como dep del sistema. Mismo patrón conceptual que yt-dlp/ffmpeg/fpcalc, pero **más pesado** (~2GB en disco después del primer download de modelos).
-- **Modo de uso:** `align-only` — pasamos la letra que ya tenemos de LRCLIB a `whisperx.align()` Python API. **No** transcribimos el audio (whisperx blind transcription es flojo en canto). Sólo le pedimos "ubicame en tiempo cada palabra de este texto".
-- **Backend:** módulo `src-tauri/src/karaoke/whisperx.rs` que spawnea un wrapper Python (shipped con la app) y consume su JSON output. El wrapper script usa la Python API de whisperx (la CLI no tiene flag para "skip transcription").
-- **Persistencia:** sobreescribimos `lyrics.synced_lyrics` con la versión A2 (timestamps por palabra). A2 es backward-compatible: parsers que no lo soporten leen sólo los timestamps de línea.
-- **Parser:** extender `src/lib/lrcParser.ts` para detectar sintaxis A2 (`[mm:ss.xx]<mm:ss.xx>word <mm:ss.xx>word2...`) y agregar `wordTimestampsMs?: number[]` a `LrcLine`. Backward compatible — cuando A2 no está, parser comporta idéntico.
-- **UI:** botón `AUTO-ALIGN` en la barra de controles de `LyricsView`. Visible sólo si `whisperx` está en PATH **y** hay synced_lyrics actuales. Click → loading state ~30s-2min (según CPU/GPU) → letras quedan con per-word timing real.
-- **Karaoke fill:** cuando A2 está disponible, cada palabra usa su timestamp real para `--word-fill-pct`. Cuando no, fallback al comportamiento linear actual (interpolación dentro de la línea con `--char-offset`).
+- **Tooling shippeado:** `whisperx` (Python 3.11 + PyTorch + Whisper + wav2vec2) como dep del sistema vía `pipx install whisperx`. ~2GB total después del primer download de modelos. Mismo patrón conceptual que yt-dlp/ffmpeg/fpcalc.
+- **Modo de uso:** `align-only` — pasamos la letra del LRC + bounds de cada línea a `whisperx.align()` Python API. **No** transcribimos el audio. Sólo forced alignment de fonemas dentro de los bounds.
+- **Backend:** [`src-tauri/src/karaoke/whisperx.rs`](../src-tauri/src/karaoke/whisperx.rs) spawnea [`resources/scripts/karaoke_align.py`](../src-tauri/resources/scripts/karaoke_align.py) (~80 líneas) y consume su JSON output. El cascade en [`mod.rs`](../src-tauri/src/karaoke/mod.rs) parsea el LRC original, construye segmentos, y serializa el resultado a A2 LRC.
+- **Persistencia:** sobreescribimos `lyrics.synced_lyrics` con A2. **`lyrics.original_synced_lyrics` guarda el LRC raw** para que re-aligns no se basen en datos ya alineados (bug del round-trip — ver §13.4).
+- **Parser:** [`src/lib/lrcParser.ts`](../src/lib/lrcParser.ts) detecta sintaxis A2 y agrega `wordTimestampsMs?: number[]` + `lastWordEndMs?: number` a `LrcLine`. Backward compatible.
+- **UI:** botón `AUTO-ALIGN` / `RE-ALIGN` en la barra de controles de `LyricsView`. Visible sólo si `whisperx` está en PATH y hay synced_lyrics. Click → loading ~30s-2min → letras con per-word timing.
+- **Karaoke fill:** [`useSyncedLyrics`](../src/hooks/useSyncedLyrics.ts) escribe `--word-progress` per-palabra cada frame; CSS aplica gradient A→B per palabra. Cuando hay A2, usa `wordTimestampsMs[i]..wordTimestampsMs[i+1]` (o `lastWordEndMs` para la última); fallback a interpolación linear cuando no.
+
+**Caveat honesto:** la calidad del alignment depende de la calidad del LRC. Para tracks con LRC bien transcrito (mainstream occidental, releases populares), el resultado es excelente — palabras se iluminan con el canto. Para LRC con letras aproximadas/incorrectas (community-curated en LRCLIB con errores), forced alignment hereda el mismatch y los timestamps salen off. **No es un bug nuestro — es un límite teórico**: forced alignment requiere que el texto coincida con el audio. Ver §13 para opciones de recovery.
 
 ### Fase B — Karaoke mode UI (big-screen)
 
@@ -77,11 +79,15 @@ Forced alignment resuelve (1). Sub-fases B-E resuelven (2).
 
 ### 1.2 Objetivos por fase
 
-**Fase A:**
-- Per-word timing real para 95%+ de tracks vocal-driven con letra synced.
-- Costo de alignment ~10-30s por track (one-shot, cacheado).
-- Operación opt-in (botón AUTO-ALIGN, no automático).
-- Cero degradación cuando aeneas no está disponible — todo sigue funcionando como hoy.
+**Fase A (objetivos vs realidad):**
+
+| Objetivo original | Realidad |
+|---|---|
+| Per-word timing real para 95%+ de tracks vocal-driven | ✅ para LRC bueno; ❌ para LRC con letras imperfectas (LRCLIB community-curated tiene calidad variable) |
+| Costo de alignment ~10-30s por track | ❌ Más bien **30s-2min** sin GPU (CPU). Apple Silicon mejora pero no es como CUDA. |
+| Operación opt-in (botón AUTO-ALIGN) | ✅ |
+| Cero degradación cuando whisperx no instalado | ✅ |
+| Backwards-compat con A2 LRC | ✅ Parsers viejos leen sólo line markers, ignoran `<...>` |
 
 **Fase B:**
 - Modo de pantalla completa que se siente "para fiesta": grande, alto contraste, sin distracciones.
@@ -636,37 +642,129 @@ A cerrar al implementar Fase C:
 
 **Setup verificado (2026-05-03):**
 
+**Setup verificado (2026-05-04):**
+
 1. ✅ Doc creado.
-2. ✅ Intento de aeneas — falló (ver §2.2 y §3.0). Pivote a WhisperX.
-3. ✅ Install de WhisperX en Mac del autor:
+2. ✅ Intento de aeneas — falló a installar con Python 3.13 y 3.11 (setuptools APIs deprecadas). Pivote a WhisperX.
+3. ✅ Install de WhisperX:
    ```bash
    brew install pipx python@3.11
    pipx ensurepath  # restart shell
    pipx install --python /opt/homebrew/bin/python3.11 whisperx
    which whisperx   # → ~/.local/bin/whisperx ✓
    ```
-4. ✅ Test manual sobre Silversun Pickups - Substitution con modelo `base`. Output JSON con `segments[].words[].start/end/score` confirmada — shape ideal para nuestro pipeline.
 
-**Implementar Fase A:**
+**Fase A shippeada (2026-05-04):**
 
-5. Migración: `lyrics.aligned_at DATETIME`.
-6. `src-tauri/resources/scripts/karaoke_align.py` (~30 líneas, wrapper Python).
-7. `src-tauri/tauri.conf.json` — agregar el script a `bundle.resources`.
-8. `karaoke/whisperx.rs` — spawn subprocess + parse JSON output.
-9. `karaoke/mod.rs` — entrypoint + helper para construir segmentos desde LRC + helper para serializar a A2 LRC.
-10. Comando `karaoke_auto_align` + register en `lib.rs`.
-11. Variantes nuevas en `AppError` (§5.8).
-12. Detección de whisperx en `check_dependencies` + frontend `DependencyStatus`.
-13. Parser A2 en `lrcParser.ts` + tests unitarios.
-14. Karaoke fill por palabra con timestamps reales en `LyricsView` — cuando `wordTimestampsMs` está poblado, el cálculo de fill cambia (no más `--char-offset` linear, ahora un `--word-progress` real por palabra).
-15. Botón AUTO-ALIGN en `LyricsView` controls (visible si deps.whisperx + hay synced_lyrics).
-16. Validar end-to-end con 5-10 tracks de distintos idiomas + géneros + ediciones imperfectas.
+4. ✅ Migraciones: `lyrics.aligned_at DATETIME`, `lyrics.original_synced_lyrics TEXT`.
+5. ✅ [`resources/scripts/karaoke_align.py`](../src-tauri/resources/scripts/karaoke_align.py) (~80 líneas, wrapper Python align-only).
+6. ✅ [`tauri.conf.json`](../src-tauri/tauri.conf.json) — script en `bundle.resources`.
+7. ✅ [`karaoke/whisperx.rs`](../src-tauri/src/karaoke/whisperx.rs) — spawn + parse JSON. `find_python_for_whisperx()` usa `commands::system::resolve_binary` con fallback a `~/.local/bin/`, `/usr/local/bin/`, `/opt/homebrew/bin/` (PATH inheritance issue en macOS Tauri).
+8. ✅ [`karaoke/mod.rs`](../src-tauri/src/karaoke/mod.rs) — cascade + parse_lrc_lines + build_segments + build_a2_lrc + 11 unit tests.
+9. ✅ Comando `karaoke_auto_align` registrado en `lib.rs`.
+10. ✅ Variantes en `AppError`: `WhisperxMissing`, `WhisperxFailed`, `WhisperxParse`.
+11. ✅ Detección de whisperx en `check_dependencies` + `DependencyStatus.whisperx`.
+12. ✅ Parser A2 en [`src/lib/lrcParser.ts`](../src/lib/lrcParser.ts) — `wordTimestampsMs` + `lastWordEndMs` en `LrcLine`.
+13. ✅ Karaoke fill per-palabra en [`useSyncedLyrics`](../src/hooks/useSyncedLyrics.ts) — escribe `--word-progress` por span cada frame; CSS aplica gradient en cada `.karaoke-word` independiente.
+14. ✅ Botón AUTO-ALIGN/RE-ALIGN/ALIGNING en [`LyricsView`](../src/components/lyrics/LyricsView.tsx).
+15. ✅ Auto-reset de `offset_ms` y `speed_ratio` al alinear (los ajustes manuales eran para compensar drift que ahora resolvió whisperx).
+16. ✅ `effectiveOf` (cursor + click-to-seek + ALIGN button) usa `wordTimestampsMs[0]` como timestamp efectivo de línea cuando hay alignment, no `line.timestampMs` del LRC.
+17. ✅ Backup `original_synced_lyrics` para que re-aligns no se basen en datos ya A2.
 
 **Reevaluar antes de Fase B:**
 
-17. ¿Cuán bien funciona WhisperX align-only en práctica? Match rate, calidad subjetiva del karaoke fill, latencia.
-18. ¿El daily-use está pidiendo el karaoke mode fullscreen?
-19. ¿Qué tracks del autor quedan mal alineados aún con WhisperX? Investigar y categorizar.
+18. ¿La Fase A es "good enough" para tracks típicos? — Subjetivo. Para tracks con LRC de buena calidad (Avicii, KANA-BOON, David Guetta), excelente. Para tracks con LRC de mala calidad (Silversun Pickups Substitution con letra aproximada en LRCLIB), mediocre — ver §13.
+19. ¿El daily-use pide karaoke mode fullscreen?
+20. ¿Vale la pena explorar **fuentes alternativas de LRC** (Genius, Musixmatch — Fase 2.b/3 de lyrics) antes de Fase B-E? Probablemente sí, porque mejor LRC = mejor alignment automático.
+
+---
+
+## 13. Lecciones aprendidas (Fase A)
+
+Esta sección documenta el journey de implementación con sus dead-ends, para que el próximo (vos en 6 meses, o un recruiter leyendo) entienda **por qué** las decisiones quedaron como quedaron sin tener que reproducir los experimentos.
+
+### 13.1 Pivot aeneas → WhisperX
+
+Plan original era aeneas (~50MB, simple). Failed at install: su `setup.py` usa setuptools APIs deprecadas; rompe en Python 3.11 y 3.13. Pivote a WhisperX (~2GB, activamente mantenido). Trade-off explícito: peso por mantenibilidad. Para portfolio + uso personal, mantenibilidad gana.
+
+### 13.2 El journey de los segment bounds
+
+Problema central: ¿qué bounds le pasamos a whisperx para forced alignment? Probamos cuatro approaches:
+
+| Approach | Comportamiento | Por qué falla |
+|---|---|---|
+| **Whole-track `[0, audio_dur]`** | CTC alignment greedy desde t=0; "There's" se asignó a 0.08s en vez de 19.96s | Sin bounds, CTC matchea fonemas a cualquier sonido (instrumental incluido) |
+| **Bounds tight `[line.start, next.start]`** | Bueno para tracks con LRC bien alineado; falla cuando LRC tiene drift de varios segundos | Whisperx queda encerrado en ventanas equivocadas; no puede llegar al timestamp real |
+| **Bounds con buffer ±3s** | "There's" se asignó a 17.86 en vez de 20.00 | El buffer le da a whisperx libertad para asignar palabras a sonidos pre-vocales (breath, instrumento) |
+| **Blind transcribe + distribución proporcional** | Empeoró todo; "downfall" salió a 2:36 cuando audio canta a 3:19 | Distribuir palabras LRC por proporción de duración asume densidad de palabras uniforme — falso para canciones reales |
+
+**Decisión final: tight LRC bounds.** Es el más predecible. Si el LRC está bien, alignment perfecto. Si tiene drift, el error queda confinado a la línea afectada (no se propaga). Es la opción honesta de las cuatro.
+
+### 13.3 El bug del round-trip en re-align
+
+Bug que costó tiempo descubrir: cada `RE-ALIGN` se basaba en el `synced_lyrics` actual (que ya era A2 del align previo, posiblemente broken), no en el LRC original. Resultado: cada re-align partía de datos cada vez peores.
+
+**Fix:** columna nueva `lyrics.original_synced_lyrics` que guarda el LRC raw de LRCLIB la primera vez. Los re-aligns siempre operan contra el original. Mismo patrón que `tracks.original_title` / `original_artist` para identification.
+
+Migración: `20260504000001_lyrics_original_synced.sql`. Upsert con `COALESCE(lyrics.original_synced_lyrics, excluded.original_synced_lyrics)` — set on first insert, preserve on update.
+
+### 13.4 La última palabra avanza durante silencio
+
+Bug visual: en cada línea, la última palabra se rellenaba progresivamente desde 0% a 100% durante el silencio entre líneas. Cause: para la última palabra, no hay siguiente palabra como `endMs`; usábamos `nextLineEff` que está varios segundos después.
+
+**Fix:** trailing end marker `<endTs>` después de la última palabra de cada línea. WhisperX nos da el `end` por palabra; lo serializamos como marker. Parser lo lee como `lastWordEndMs`. Hook usa ese valor como bound right de la última palabra.
+
+Formato A2 extendido por nosotros:
+```
+[00:25.43]<00:25.43>Once <00:25.85>upon <00:26.10>year<00:26.78>
+                                                     ↑
+                                  trailing end de "year"
+```
+
+Backward compatible: parsers que no entienden A2 ignoran los `<...>` y leen sólo el line marker.
+
+### 13.5 Cursor usa wordTs[0], no line.timestampMs
+
+Originalmente `effectiveOf(line)` usaba `line.timestampMs` (el `[mm:ss.xx]` del LRC). Pero ese marker viene de LRCLIB y puede tener drift respecto a cuándo realmente arranca la primera palabra de la línea en el audio.
+
+**Fix:** cuando la línea tiene `wordTimestampsMs`, usamos `wordTimestampsMs[0]` como el timestamp efectivo. Esto se aplica a:
+- Cursor del rAF loop (qué línea es activa).
+- `click-to-seek` (saltar audio cuando el usuario clickea una línea).
+- ALIGN mode "set offset here" (`SET OFFSET HERE` del usuario).
+- `effectiveTimestampMs` helper en `lrcParser.ts`.
+
+Resultado: la línea se vuelve "activa" cuando arranca su primera palabra real, no cuando dice el LRC.
+
+### 13.6 Auto-reset de offset/speed al alinear
+
+Antes del alignment, el usuario podía haber ajustado offset (ej: +2553ms) y speed_ratio (ej: 1.032) para compensar drift del LRC. Después del alignment, esos ajustes ya no hacen falta — los timestamps están en tiempo de audio. Pero los seguíamos sumando, descalibrando la sincronización.
+
+**Fix:** `db::lyrics::save_aligned` también resetea `offset_ms = 0` y `speed_ratio = 1.0`. Si el alignment dejó residual misalignment (raro), el usuario puede re-ajustar manualmente.
+
+### 13.7 Color del "no cantado todavía"
+
+CSS gradient inicial: `accent → muted` (gris). Pero `muted` es el mismo color de las líneas pasadas, lo cual confundía visualmente — la mitad no cantada de la línea activa parecía "ya pasada".
+
+**Fix:** cambio a `accent → fg` (blanco). Distingue claramente: cantado = naranja, futuro inmediato = blanco brillante, ya pasado = gris.
+
+### 13.8 PATH no se hereda a Tauri en macOS
+
+`which::which("whisperx")` retornaba false aunque el binario estuviera en `~/.local/bin/`. Cause: el proceso Tauri lanzado vía `cargo run` no hereda el PATH completo del shell del usuario (issue conocido en macOS).
+
+**Fix:** `commands::system::resolve_binary()` con fallback que chequea ubicaciones comunes (`~/.local/bin/`, `/usr/local/bin/`, `/opt/homebrew/bin/`) cuando `which` falla. Detección + spawning ambos usan este resolver.
+
+### 13.9 Límite teórico de forced alignment con LRC imperfecto
+
+**Lo más importante que aprendimos**: forced alignment es **tan bueno como la calidad del input**. Si el LRC dice "There's a vulture perching right offscreen" pero el audio realmente canta "right out of me", whisperx busca los fonemas de "offscreen" en el audio y los ubica donde mejor matchean. Si la palabra real es distinta, los timestamps salen mal en proporción a cuánto difieren.
+
+LRCLIB tiene letras community-curated de calidad variable. Para tracks mainstream con buena cobertura, el LRC suele ser preciso. Para indie/nicho/menos popular, hay más probabilidad de letras aproximadas o transcripciones imperfectas.
+
+**Fixes posibles (futuros):**
+- **Editar lyrics manualmente** (UI feature) — dejar al usuario corregir el LRC, después re-alinear.
+- **Mostrar transcripción de WhisperX en lugar del LRC** — toggle "use whisperx text". Puede tener errores de transcripción propios pero matches al audio.
+- **Source alternativa de letras** — Genius / Musixmatch / NetEase. Diferente quality profile.
+
+Para Fase A actual, **lo aceptamos como límite** y documentamos las opciones para el usuario.
 
 ---
 

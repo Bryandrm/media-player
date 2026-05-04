@@ -1,6 +1,6 @@
 # Brutalist Player
 
-> Reproductor de música local desktop con visualizador estilo MilkDrop (Butterchurn) y downloader integrado vía yt-dlp. Proyecto personal + portfolio piece.
+> Reproductor de música local desktop con visualizador estilo MilkDrop (Butterchurn), downloader integrado vía yt-dlp, identificación canónica vía AcoustID, y karaoke con forced alignment vía WhisperX. Proyecto personal + portfolio piece.
 
 ## Stack
 
@@ -9,20 +9,31 @@
 - **Backend:** Rust async, SQLite vía `sqlx` 0.8 (runtime-tokio), `lofty` 0.22 para tags + cover art + USLT, `reqwest` (rustls-tls) para HTTP
 - **Audio:** dos singletons `<audio>` (canales A/B fuera del JSX) → channelGains → preMasterGain (vis tap) → masterGain (volume) → playPauseGain (fades) → destination. Butterchurn tapea preMasterGain.
 - **Visualizer:** Butterchurn 2.6 + butterchurn-presets 2.4 (~100 presets base, auto-cycle 5–10s, persistent mount)
-- **Lyrics:** LRCLIB API + USLT embebido en tags ID3, parser LRC en TS, panel sincronizado con rAF
-- **Externos:** `yt-dlp` y `ffmpeg` como child processes (deps del sistema, no bundled)
+- **Lyrics:** LRCLIB API + USLT embebido en tags ID3, parser LRC + A2 (per-word timestamps), panel sincronizado con rAF, drift correction (`speedRatio` + offset + ALIGN mode)
+- **Identification:** `fpcalc` (Chromaprint) + AcoustID API → MBID de MusicBrainz; pisa metadata sucia con canónica
+- **Karaoke:** WhisperX en align-only mode via wrapper Python para forced alignment per-palabra
+- **Externos:** `yt-dlp`, `ffmpeg`, `fpcalc`, `whisperx` como deps del sistema (no bundled, opt-in según feature)
 
 ## Prerequisitos
+
+**Required (player core):**
 
 | Herramienta | Versión | Notas |
 |---|---|---|
 | Node | 20+ | via nvm/fnm recomendado |
 | pnpm | 10+ | `npm i -g pnpm` |
 | Rust | stable | `rustup-init -y --default-toolchain stable` |
-| yt-dlp | cualquiera | sólo para descargas — `brew install yt-dlp` |
-| ffmpeg | cualquiera | requerido por yt-dlp para extract-audio — `brew install ffmpeg` |
 
-La app detecta yt-dlp + ffmpeg al boot y muestra un banner si faltan; el resto del player funciona igual.
+**Optional (cada uno desbloquea su feature):**
+
+| Herramienta | Para qué | Setup |
+|---|---|---|
+| yt-dlp | Downloads de URLs | `brew install yt-dlp` |
+| ffmpeg | Re-encoding usado por yt-dlp | `brew install ffmpeg` |
+| fpcalc (Chromaprint) | Identification AcoustID | `brew install chromaprint` + [registrar app en AcoustID](https://acoustid.org/new-application) |
+| WhisperX (~2GB) | Forced alignment de letras (karaoke) | `brew install pipx python@3.11`, `pipx ensurepath`, restart shell, `pipx install --python python3.11 whisperx` |
+
+La app detecta cada dep al boot y desactiva la feature correspondiente si falta. **Sin ninguna de las opcionales, el player core (reproducción + library + visualizer + lyrics text-only) funciona idéntico.**
 
 ## Desarrollo
 
@@ -73,26 +84,30 @@ cd src-tauri && cargo test --lib           # tests Rust (audio::cleanup, etc)
 Documentos fuente de verdad:
 - [docs/PLAN-reproductor-brutalist.md](docs/PLAN-reproductor-brutalist.md) — visión, scope, roadmap
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — arquitectura técnica, contratos Tauri, pipeline de audio, lyrics
-- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón)
+- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 22 ADRs al 2026-05-04
 - [docs/LYRICS.md](docs/LYRICS.md) — plan por fases del sub-sistema de letras
-- [CLAUDE.md](CLAUDE.md) — convenciones + gotchas (el archivo más útil para entender footguns ya pagados)
+- [docs/IDENTIFICATION.md](docs/IDENTIFICATION.md) — sub-sistema de identificación (AcoustID + Chromaprint)
+- [docs/KARAOKE.md](docs/KARAOKE.md) — sub-sistema de karaoke (forced alignment + futuras Fases B-E)
+- [CLAUDE.md](CLAUDE.md) — convenciones + gotchas (16 gotchas pagados, el archivo más útil para entender footguns)
 
 ## Estado actual
 
-**Fase 0 — Setup** ✓ · **Fase 1 — MVP funcional** ✓ (cerrada 2026-05-02 al 100%)
+**Fase 0 — Setup** ✓ · **Fase 1 — MVP funcional** ✓ (cerrada 2026-05-02 al 100%) · **AcoustID Fase 1+2** ✓ · **Lyrics 2.a** ✓ · **Karaoke Fase A** ✓ (al 2026-05-04)
 
 Funcionando hoy:
 - **Player**: play/pause con fade gradual, seek, volume (GainNode), mute, prev/next, shuffle con historial (cap 64), crossfade configurable (off/3/6/12s) entre tracks.
-- **Library**: scan recursivo de directorio (lofty), tabla con search por tokens (AND), cover art embebido + fallback a sibling `cover.jpg`. Cleanup heurístico de metadata yt-dlp + comando "CLEAN METADATA" para backfill.
+- **Library**: scan recursivo de directorio (lofty), tabla con search por tokens (AND), cover art embebido + fallback a sibling `cover.jpg`. Cleanup heurístico de metadata yt-dlp + comando "CLEAN METADATA" para backfill. Columnas L (lyrics) e ID (identification) con indicadores per row.
 - **Downloader**: paste URL → yt-dlp con progreso en tiempo real + fase CONVERTING, idempotente (`--no-overwrites`).
 - **Visualizer**: Butterchurn side-by-side con la library, split arrastrable, auto-cycle de presets random cada 5–10s, fullscreen vía `F`. Persistent mount — sin freeze al cambiar de tab.
-- **Lyrics**: LRCLIB + USLT embebido. Panel sincronizado (rAF), click-to-seek, offset adjustable. Indicador `[L]/·/♪/—` en cada row de la library, auto-fetch on track change.
+- **Lyrics**: LRCLIB + USLT embebido. Panel sincronizado (rAF) con karaoke fill per-palabra (gradient HARD entre accent y fg). Click-to-seek, offset/speed/RESET, ALIGN mode (set offset clickeando línea), AUTO-ALIGN (forced alignment via WhisperX). Indicador `[L]/·/♪/—` en cada row de la library, auto-fetch on track change.
+- **Identification AcoustID**: fpcalc fingerprint → MBID de MusicBrainz → pisa metadata sucia. Single-track + bulk IDENTIFY ALL con throttle 2.85 rps cancelable. Indicador ID per row (`[ID]`/`?`/`—`/`!`/`⌛`).
+- **Karaoke Fase A**: forced alignment via WhisperX en align-only mode. Genera A2 LRC con per-word timestamps + trailing markers. Carrera tarda ~30s-2min. Calidad depende de la calidad del LRC — para LRC bueno funciona excelente; para LRCLIB con letras imperfectas hereda el mismatch (límite teórico).
 - **Toggle visualizer ↔ lyrics** dentro del split, persistido.
 - **Persistencia**: último track + posición entre sesiones (sin auto-play). Volume/mute/shuffle/crossfade/preset/split/autoCycle/paneMode via Zustand `persist`.
 - **Media keys**: F7/F8/F9 + AirPods + lock screen + Now Playing widget (MediaSession API). Probado en macOS, pendiente Windows.
 - **Keyboard shortcuts**: Space, ←/→, ↑/↓, M, N, P, S, V, F.
 
-**Próximo (Fase 3):** AcoustID + Chromaprint para identificación canónica del audio — elimina los problemas de metadata sucia + drift por versiones distintas que combatimos con heurísticas. Big project; ver [LYRICS.md Fase 3](docs/LYRICS.md).
+**Próximo recomendado**: Lyrics Fase 2.c — UI manual edit de letras + alternative providers (Genius/Musixmatch). Justificación: el bottleneck del karaoke es la calidad del LRC; mejor LRC = mejor alignment automático.
 
 Ver [PLAN §6](docs/PLAN-reproductor-brutalist.md#6-roadmap-por-fases) para el plan completo.
 

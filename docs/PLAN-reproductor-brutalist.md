@@ -437,7 +437,8 @@ Post-descarga, usar `lofty-rs` en Rust para leer los tags embebidos y poblar la 
 - [x] **AcoustID + Chromaprint Fase 1** ✓ (2026-05-02) — single-track on-demand identification con `fpcalc` + AcoustID API. Match rate ~58% en library mixta. Pisa metadata sucia con la canónica de MusicBrainz, lo que feedea al cascade text-based de LRCLIB con mejor hit rate. Ver [IDENTIFICATION.md](IDENTIFICATION.md). **Corrección al plan original:** LRCLIB no acepta MBID lookup; el valor es la metadata canónica, no un match exacto vía MBID.
 - [x] **AcoustID Fase 2 — bulk backfill** ✓ (2026-05-02) — botón IDENTIFY ALL en LibraryToolbar con throttle 2.85 rps (debajo del cap free de 3 rps), cancelable, summary inline.
 - [ ] **AcoustID Fase 3** — auto-identify on import + ambiguity picker para matches con scores cercanos. Evaluar según uso real.
-- [ ] **Karaoke sub-sistema** — forced alignment (aeneas / WhisperX) para per-word timing real + karaoke mode fullscreen + vocal removal (Demucs/Spleeter) + mic input. Sub-sistema con doc propio: [KARAOKE.md](KARAOKE.md). Fase A (aeneas + parser A2) es el bloque base; B-E son features incrementales para el caso de uso "fiestas familiares".
+- [x] **Karaoke Fase A** ✓ (2026-05-04) — forced alignment via WhisperX (pivote desde aeneas que falló al instalar) + parser A2 + UI AUTO-ALIGN. Per-word timing real para tracks con LRC de buena calidad. **Caveat:** la calidad del alignment depende de la calidad del LRC; para LRC con letras imperfectas (LRCLIB community-curated con errores), forced alignment hereda el mismatch. Ver [KARAOKE.md §13](KARAOKE.md#13-lecciones-aprendidas-fase-a).
+- [ ] **Karaoke Fase B-E** — karaoke mode fullscreen + vocal removal (Demucs/Spleeter) + mic input + pitch scoring. Features incrementales para "fiestas familiares". Antes de empezar B, considerar **Fase 2.c de lyrics** (manual edit + alternative providers) — porque mejor LRC = mejor alignment automático en Fase A. Ver [KARAOKE.md](KARAOKE.md).
 - [ ] Grabación del visualizador como video (WebCodecs API).
 - [ ] Modo DJ: mezcla manual entre dos decks (BPM detection, sync).
 - [ ] Scrobbling local (historial propio, no last.fm).
@@ -576,7 +577,14 @@ brutalist-player/
 | 9 | Funciona al menos en macOS (daily del autor). Linux/Windows bonus. | ✓ macOS validado, Windows pendiente test |
 | 10 | Repo con README explicando setup + disclaimer legal. | ✓ |
 
-**Fase 1 cerrada al 100% el 2026-05-02.** Identificación AcoustID Fase 1 + Fase 2 cerradas el mismo día. Próximo: lyrics drift correction (Fase 2.a — `speedRatio` + SET OFFSET HERE).
+**Estado al 2026-05-04:**
+
+- Fase 1 (MVP) ✓ cerrada 2026-05-02.
+- AcoustID identification Fase 1 + Fase 2 ✓ cerradas 2026-05-02.
+- Lyrics Fase 2.a (drift correction `speedRatio` + ALIGN mode) ✓ cerrada 2026-05-03.
+- Karaoke Fase A (forced alignment + A2 parser) ✓ cerrada 2026-05-04.
+
+**Próximo recomendado:** Lyrics Fase 2.c — UI para editar lyrics manualmente + alternative providers (Genius / Musixmatch / NetEase). Justificación: el bottleneck actual del karaoke es la calidad del LRC; mejor LRC mejora todo aguas abajo (display + forced alignment + experiencia general).
 
 ---
 

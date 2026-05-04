@@ -34,11 +34,19 @@ Documentos fuente de verdad:
   Fade in/out al play/pause via `playPauseGain` con `cancelAndHoldAtTime`.
 - **Visualizer:** `butterchurn` 2.6 + `butterchurn-presets` 2.4 (~100 presets base).
   Mount **persistente** post-primer-visit (ver Gotcha #8).
-- **Lyrics:** `lofty` (USLT embebido) + `LRCLIB` API. Parser LRC en frontend.
-  Auto-fetch on track change para poblar el indicador `L` en la library.
-- **Externos:** `yt-dlp` y `ffmpeg` como child processes (deps del sistema,
-  no bundled). `lofty-rs` para tags + cover art + USLT. `reqwest` para HTTP
-  con `rustls-tls` (sin OpenSSL).
+- **Lyrics:** `lofty` (USLT embebido) + `LRCLIB` API. Parser LRC en frontend
+  con soporte A2 (per-word timestamps) + trailing markers. Auto-fetch on
+  track change para poblar el indicador `L` en la library. Drift correction
+  via `speedRatio` + `offset_ms` + ALIGN mode.
+- **Identification:** `fpcalc` (Chromaprint) + AcoustID API. Pisa metadata
+  sucia con canónica de MusicBrainz. API key del usuario en `settings`.
+- **Karaoke:** `whisperx` (Python + PyTorch + wav2vec2) en align-only mode
+  via wrapper Python shippeado como Tauri resource. Genera A2 LRC con
+  per-word timestamps. Forced alignment con bounds tight del LRC.
+- **Externos como deps del sistema** (no bundled): `yt-dlp` + `ffmpeg`
+  (downloader), `fpcalc` (identification), `whisperx` via pipx (karaoke).
+  Cada uno detect-and-banner si falta. `lofty-rs` para tags + cover art
+  + USLT. `reqwest` con `rustls-tls` (sin OpenSSL).
 
 ---
 
@@ -99,27 +107,35 @@ src-tauri/src/
 │                           lrclib.rs (get + search fallback)
 ├── identification/         fpcalc.rs (Chromaprint binary wrapper) +
 │                           acoustid.rs (HTTP client) + mod.rs (cascade)
+├── karaoke/                whisperx.rs (Python wrapper subprocess) +
+│                           mod.rs (cascade + LRC parser + A2 serializer)
 ├── contracts.rs            tipos serializados a TS
 └── errors.rs               AppError + AppResult
+
+src-tauri/resources/scripts/
+└── karaoke_align.py        whisperx Python API en align-only mode (~80 líneas);
+                            shippeado vía Tauri bundle.resources
 ```
 
 **Estado actual:**
 - Fase 0 (setup) ✓
 - Fase 1 (MVP) **100%** ✓ — los 10 criterios "done" cerrados.
-  - Letras (LRCLIB + USLT): ✓ con cleanup heurístico de metadata + search
-    fallback + indicador `L` en library + auto-fetch on track change.
-  - Crossfade: ✓ (off/3/6/12s, dual audio elements + channelGain ramps).
-  - Persistencia último track + posición: ✓ (localStorage, restore sin
-    auto-play).
-  - Media keys: ✓ (MediaSession API — testeado en macOS, pendiente Windows).
-- **Identification AcoustID Fase 1 + Fase 2** ✓ (2026-05-02) — single-track
-  IDENTIFY + bulk IDENTIFY ALL con throttle 2.85 rps. Pisa metadata sucia
-  con canónica de MusicBrainz, feedea al cascade text-based de LRCLIB.
-  **`[ID]` ⊥ `[L]`**: identificación y disponibilidad de letras son
-  independientes (DJ sets + indie nicho son `[ID]` + `—`, esperado).
-  Ver [docs/IDENTIFICATION.md](./docs/IDENTIFICATION.md).
-- Próximo: **Lyrics Fase 2.a** — drift correction (`speedRatio`) + SET
-  OFFSET HERE para YouTube intros grandes.
+- **AcoustID identification Fase 1 + Fase 2** ✓ (2026-05-02) — single-track
+  IDENTIFY + bulk IDENTIFY ALL. Pisa metadata sucia con canónica de
+  MusicBrainz. **`[ID]` ⊥ `[L]`**: identificación y disponibilidad de
+  letras son independientes. Ver [docs/IDENTIFICATION.md](./docs/IDENTIFICATION.md).
+- **Lyrics Fase 2.a** ✓ (2026-05-03) — drift correction (`speedRatio`) +
+  SET OFFSET HERE (botón ALIGN) + RESET extendido + auto-baseline por
+  duration ratio.
+- **Karaoke Fase A** ✓ (2026-05-04) — forced alignment via WhisperX en
+  align-only mode + parser A2 + botón AUTO-ALIGN. **Caveat:** la calidad
+  del alignment depende de la calidad del LRC; con LRCLIB community-curated
+  hay tracks donde funciona excelente y tracks donde el mismatch text↔audio
+  hereda errores. Ver [docs/KARAOKE.md §13](./docs/KARAOKE.md#13-lecciones-aprendidas-fase-a)
+  para el journey completo de implementación + límites honestos.
+- Próximo recomendado: **Lyrics Fase 2.c** — UI manual edit + alternative
+  providers (Genius/Musixmatch). Mejor LRC = mejor alignment automático
+  en Karaoke Fase A.
 
 ---
 
@@ -300,6 +316,51 @@ puede tener `[ID]` y no tener `[L]` — no es bug. MusicBrainz tiene cobertura
 indie nicho, y muchos idiomas (J-pop, K-pop indie, latino indie) caen en
 "`[ID]` + `—`" porque están en MB pero no tienen letra en LRCLIB. Ver
 [IDENTIFICATION.md §1.4](docs/IDENTIFICATION.md#14-id--l--son-independientes).
+
+### 14. PATH no se hereda al proceso Tauri en macOS
+El proceso Tauri lanzado vía `cargo run` (que es como `pnpm tauri dev`
+spawnea el binario) **no siempre hereda el PATH completo del shell** del
+usuario. Especialmente `~/.local/bin/` (donde pipx pone los binaries)
+suele faltar. Síntoma: `which::which("whisperx")` retorna false aunque
+en la terminal del usuario `which whisperx` funcione bien.
+
+**Fix:** [`commands::system::resolve_binary`](src-tauri/src/commands/system.rs)
+con fallback. Primero intenta `which`, después chequea `~/.local/bin/<name>`,
+`/usr/local/bin/<name>`, `/opt/homebrew/bin/<name>`. Detección + spawn
+ambos lo usan. Si pipx mueve sus binaries en el futuro, agregar el path
+al fallback.
+
+### 15. Forced alignment ≤ calidad del LRC
+WhisperX hace forced alignment de los fonemas del texto provisto contra
+el audio. Si el texto del LRC no coincide con el audio (LRCLIB tiene
+letras aproximadas o community-curated con errores), **el alignment
+hereda el mismatch** y los timestamps salen mal en proporción a cuánto
+difieren texto y audio.
+
+**Lo que NO se puede arreglar automático:** un LRC que dice "There's a
+vulture perching right offscreen" cuando el audio canta "right out of
+me". WhisperX busca los fonemas de "offscreen" y los ubica donde mejor
+matchea — pero si nunca aparecen, el resultado es ruido.
+
+**Lecciones del journey de bounds**: probamos cuatro approaches (whole-track,
+tight LRC, buffer ±3s, blind transcribe + proporcional). Los detalles vivos
+en [KARAOKE.md §13.2](docs/KARAOKE.md#132-el-journey-de-los-segment-bounds).
+Approach final: **tight LRC bounds**. Más predecible — confina errores a
+la línea afectada en vez de propagarlos.
+
+**Path forward para LRC malo**: UI manual edit (Lyrics Fase 2.c). Si el
+usuario corrige el LRC, el alignment automático mejora.
+
+### 16. Re-align idempotente requiere `original_synced_lyrics` backup
+Bug que costó tiempo: cada `RE-ALIGN` operaba sobre `synced_lyrics` actual.
+Pero después del primer alignment, `synced_lyrics` ya tenía A2 con
+timestamps de whisperx (posiblemente equivocados). El cascade extraía
+esos como bounds → resultados peores cada round.
+
+**Fix:** columna `lyrics.original_synced_lyrics TEXT` que guarda el LRC
+raw como vino de LRCLIB la primera vez. Cascade siempre lee de ahí.
+Mismo patrón que `tracks.original_title` para identification. Ver
+[ADR-020](docs/DECISIONS.md#adr-020--backup-original_synced_lyrics-para-re-aligns-idempotentes).
 
 ---
 

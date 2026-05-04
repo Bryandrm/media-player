@@ -446,3 +446,144 @@ Después del fetch, recargamos la library (`loadTracks`) para que el SQL JOIN co
 - `loadTracks` se llama después de cada fetch — incluye una query SQL al backend. Para libraries grandes (>1000 tracks) podría notarse; optimización con dirty-flag postergada hasta que sea necesario.
 - Tracks que el usuario nunca reproduce nunca tienen indicador. Aceptable — si no los escucha, probablemente no le interesa el estado de letras.
 - El `lyricsStatus` en SQL se computa via CASE en `list_all` — los 5 estados (synced/plain/instrumental/not_found/null) salen de un solo LEFT JOIN sin segunda query.
+
+---
+
+## ADR-018 — WhisperX (no aeneas) para forced alignment
+
+**Fecha:** 2026-05-04 · **Estado:** Accepted
+
+### Contexto
+Para resolver per-word timing real (Fase 2.b lyrics / Fase A karaoke) necesitábamos un tool de forced alignment. El plan original (KARAOKE.md draft inicial) era usar `aeneas` — proyecto OSS dedicado a forced alignment con eSpeak + DTW, ~50MB, Python.
+
+Al intentar instalar aeneas con `pipx install aeneas` con Python 3.13 y luego con 3.11, el build wheel falló con `ERROR: Failed to build 'aeneas' when getting requirements to build wheel`. El `setup.py` de aeneas usa setuptools APIs deprecadas que no existen en setuptools modernas. Aeneas no se mantiene desde 2018.
+
+### Decisión
+Pivotar a **WhisperX** (Python + PyTorch + Whisper + wav2vec2). Activamente mantenido. Modo `align-only` via Python API.
+
+### Razón
+- aeneas: liviano (~50MB) pero abandonado; la incompatibilidad va a empeorar.
+- whisper.cpp: blind transcription only — wrong tool para "ya tengo el texto, alíneamelo".
+- WhisperX: 1.5-2GB (PyTorch + modelos) pero forced alignment via wav2vec2 con calidad ~95%. Mantenibilidad gana al peso.
+
+Trade-off explícito: para portfolio + uso personal, mantenibilidad gana. Si en 1 año WhisperX rompe, podemos volver a evaluar.
+
+### Consecuencias
+- Setup más pesado: `pipx install --python python3.11 whisperx` + ~150MB-2GB de modelos descargados al primer run.
+- Doc de install explícito en README (parte de "OPTIONAL DEPENDENCIES").
+- Detección con fallback path (`~/.local/bin/`, etc.) porque PATH no se hereda al proceso Tauri en macOS — ver [`commands::system::resolve_binary`](../src-tauri/src/commands/system.rs).
+
+---
+
+## ADR-019 — Forced alignment con bounds tight del LRC (no whole-track ni buffered)
+
+**Fecha:** 2026-05-04 · **Estado:** Accepted
+
+### Contexto
+Al implementar karaoke alignment, probamos cuatro enfoques de bounds para el segmento que le pasamos a `whisperx.align()`:
+
+1. **Bounds tight per-line** = `[line[i].start, line[i+1].start]` directo del LRC.
+2. **Bounds whole-track** = `[0, audio_duration]` con todo el texto combinado.
+3. **Bounds con buffer ±3s** = expand cada line bound con tolerance.
+4. **Blind transcribe + distribución proporcional** = whisperx blind primero, después distribuir palabras LRC proporcional a duración de cada whisperx segment.
+
+Cada uno fallaba de manera distinta (ver [KARAOKE.md §13.2](./KARAOKE.md#132-el-journey-de-los-segment-bounds)):
+
+| Approach | Falla |
+|---|---|
+| Whole-track | CTC greedy desde t=0; "There's" salió a 0.08s |
+| Buffer ±3s | Whisperx aprovechó el buffer; "There's" a 17.86s en vez de 20.00s |
+| Blind transcribe + proporcional | "downfall" salió a 2:36 cuando audio canta a 3:19 — densidad de palabras no es uniforme |
+| Tight LRC | Bueno cuando LRC es accurate; falla cuando LRC tiene drift |
+
+### Decisión
+**Tight LRC bounds.** Approach más simple y predecible.
+
+### Razón
+- Predecibilidad > flexibilidad. Tight bounds dan resultados que dependen lineal de la calidad del LRC.
+- Cuando LRC está bien, el alignment es excelente. Cuando LRC tiene drift, el error queda **confinado a la línea afectada** — no se propaga al resto del track.
+- Las otras opciones tenían modos de falla peores: errores que se acumulan a lo largo del track.
+
+### Consecuencias
+- Aceptamos que para tracks con LRC malo (LRCLIB community-curated con errores), el alignment será limitado. **Honest disclaimer en KARAOKE.md §13.9.**
+- Path forward para esos casos: lyrics Fase 2.c — UI manual edit + alternative providers. Mejor LRC = mejor alignment automático.
+
+---
+
+## ADR-020 — Backup `original_synced_lyrics` para re-aligns idempotentes
+
+**Fecha:** 2026-05-04 · **Estado:** Accepted
+
+### Contexto
+Bug descubierto durante validación: `RE-ALIGN` siempre operaba sobre el `synced_lyrics` actual de la DB. Pero después del primer alignment, `synced_lyrics` ya tenía formato A2 con timestamps de whisperx. El parser extraía esos timestamps como bounds de línea para mandar al siguiente whisperx — perpetuando errores.
+
+Resultado: cada re-align generaba datos peores que el anterior. Vicious cycle.
+
+### Decisión
+Nueva columna `lyrics.original_synced_lyrics TEXT` que guarda el LRC raw como vino de LRCLIB la primera vez. `karaoke::align_track` siempre lee de ahí, no de `synced_lyrics`.
+
+### Razón
+- Mismo patrón que `tracks.original_title` / `original_artist` (ADR para identification).
+- Cleanest fix: mantener una fuente de verdad inmutable.
+- Alternative considerada (refetch desde LRCLIB cada vez): network IO + dependencia en LRCLIB no-flaky. Worse.
+
+### Consecuencias
+- Migración aditiva: `20260504000001_lyrics_original_synced.sql`.
+- Upsert con `COALESCE(lyrics.original_synced_lyrics, excluded.original_synced_lyrics)` — set on first insert, preserve on update.
+- Rows pre-fix tienen `original_synced_lyrics = NULL`. Cascade hace fallback a `synced_lyrics` con eprintln warning. El usuario puede recuperar con `DELETE FROM lyrics WHERE track_id = N` y dejar que el next play re-fetchee.
+
+---
+
+## ADR-021 — A2 LRC extendido con trailing end marker
+
+**Fecha:** 2026-05-04 · **Estado:** Accepted
+
+### Contexto
+A2 LRC estándar tiene markers de START por palabra: `[mm:ss.xx]<mm:ss.xx>word1 <mm:ss.xx>word2`. No hay marker de END por palabra; el end de cada palabra se infiere del start de la siguiente.
+
+Para la **última palabra de cada línea**, no hay siguiente palabra. Inicialmente fallback a `nextLineEff` (start de la próxima línea LRC). Resultado: la última palabra se rellenaba progresivamente durante el silencio entre líneas — visible al usuario como "letra avanza durante espacio vacío".
+
+### Decisión
+Extender A2 con un trailing marker `<endTs>` después de la última palabra de cada línea. Ejemplo:
+```
+[00:25.43]<00:25.43>Once <00:25.85>upon <00:26.10>year<00:26.78>
+                                                     ↑
+                                      trailing marker = end real de "year"
+```
+
+### Razón
+- WhisperX nos da `end` por palabra; era info que estábamos descartando.
+- Backward compat: parsers que no entienden A2 ignoran tanto los `<...>word` como el trailing.
+- A2 strict-spec parsers podrían parsear el trailing como un marker sin palabra después; aceptamos como nuestra extensión local.
+
+### Consecuencias
+- `LrcLine` tiene un campo nuevo `lastWordEndMs?: number` (frontend) / `wt.end` por palabra (backend).
+- `useSyncedLyrics` usa `lastWordEndMs` como bound right de la última palabra. Si no está (LRC pre-fix), fallback a `nextLineEff` (comportamiento viejo).
+- Migración no es necesaria — el formato A2 vive en `synced_lyrics` ya existente.
+
+---
+
+## ADR-022 — Cursor de lyrics usa `wordTimestampsMs[0]` cuando hay alignment
+
+**Fecha:** 2026-05-04 · **Estado:** Accepted
+
+### Contexto
+El cursor del rAF loop en `useSyncedLyrics` decide qué línea es activa basándose en `effectiveOf(line) <= currentMs`. Originalmente `effectiveOf` usaba `line.timestampMs` (el `[mm:ss.xx]` del LRC original).
+
+Para tracks sin alignment, eso es lo correcto. Para tracks con alignment, `line.timestampMs` viene del LRC original que puede tener drift respecto al audio del usuario; `wordTimestampsMs[0]` (el start de la primera palabra real, vía whisperx) es la verdad.
+
+### Decisión
+`effectiveOf(line) = (line.wordTimestampsMs?.[0] ?? line.timestampMs + lrcOffset) * speedRatio + userOffset`.
+
+Aplicado a todos los lugares donde la línea tiene un "tiempo de inicio efectivo":
+- Cursor del rAF.
+- `effectiveTimestampMs` helper (usado por click-to-seek).
+- ALIGN button "set offset here" handler.
+
+### Razón
+- Si confiamos en wordTimestampsMs para el fill (ya hacemos eso), también deberíamos confiarlo para el cursor. Consistencia.
+- El LRC line marker queda preservado en la string A2 para backward compat con otros players que no entienden A2.
+
+### Consecuencias
+- Para tracks con LRC drifty + alignment ejecutado, la línea se vuelve "active" cuando arranca su primera palabra real (no cuando dice el LRC). UX correcto.
+- Auto-reset de offset/speed al alinear (`save_aligned`) — los ajustes manuales eran para compensar drift que ahora resolvió whisperx.
