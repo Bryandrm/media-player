@@ -434,7 +434,10 @@ Post-descarga, usar `lofty-rs` en Rust para leer los tags embebidos y poblar la 
 - [x] ~~Media keys integration~~ — implementada en Fase 1 (MediaSession API).
 
 ### Fase 3 — Nice to haves / exploratorio
-- [ ] **AcoustID + Chromaprint** — identificación canónica del audio vía fingerprinting → MBID de MusicBrainz → match exacto contra LRCLIB. Elimina los problemas de metadata sucia + drift por versiones distintas que combatimos con heurísticas en Fase 1. Sub-sistema con su propio doc (`IDENTIFICATION.md` futuro). Ver [LYRICS.md Fase 3](LYRICS.md).
+- [x] **AcoustID + Chromaprint Fase 1** ✓ (2026-05-02) — single-track on-demand identification con `fpcalc` + AcoustID API. Match rate ~58% en library mixta. Pisa metadata sucia con la canónica de MusicBrainz, lo que feedea al cascade text-based de LRCLIB con mejor hit rate. Ver [IDENTIFICATION.md](IDENTIFICATION.md). **Corrección al plan original:** LRCLIB no acepta MBID lookup; el valor es la metadata canónica, no un match exacto vía MBID.
+- [x] **AcoustID Fase 2 — bulk backfill** ✓ (2026-05-02) — botón IDENTIFY ALL en LibraryToolbar con throttle 2.85 rps (debajo del cap free de 3 rps), cancelable, summary inline.
+- [ ] **AcoustID Fase 3** — auto-identify on import + ambiguity picker para matches con scores cercanos. Evaluar según uso real.
+- [ ] **Karaoke sub-sistema** — forced alignment (aeneas / WhisperX) para per-word timing real + karaoke mode fullscreen + vocal removal (Demucs/Spleeter) + mic input. Sub-sistema con doc propio: [KARAOKE.md](KARAOKE.md). Fase A (aeneas + parser A2) es el bloque base; B-E son features incrementales para el caso de uso "fiestas familiares".
 - [ ] Grabación del visualizador como video (WebCodecs API).
 - [ ] Modo DJ: mezcla manual entre dos decks (BPM detection, sync).
 - [ ] Scrobbling local (historial propio, no last.fm).
@@ -573,7 +576,7 @@ brutalist-player/
 | 9 | Funciona al menos en macOS (daily del autor). Linux/Windows bonus. | ✓ macOS validado, Windows pendiente test |
 | 10 | Repo con README explicando setup + disclaimer legal. | ✓ |
 
-**Fase 1 cerrada al 100% el 2026-05-02.** Próximo: AcoustID + Chromaprint (Fase 3) para identificación canónica del audio.
+**Fase 1 cerrada al 100% el 2026-05-02.** Identificación AcoustID Fase 1 + Fase 2 cerradas el mismo día. Próximo: lyrics drift correction (Fase 2.a — `speedRatio` + SET OFFSET HERE).
 
 ---
 

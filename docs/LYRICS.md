@@ -24,14 +24,16 @@ Mínimo viable para tachar lyrics de los criterios "done" de Fase 1 del PLAN ([�
 
 ### Fase 2 — Polish (post-MVP estable)
 
-Sólo cuando la app esté estable y el MVP de letras lleve un par de semanas en uso.
+Sub-fase 2.a (drift + intros) ✓ cerrada 2026-05-03. El resto sigue pendiente.
 
+- ✅ **Drift correction (`speedRatio`)** — multiplicador de tempo + auto-baseline por duration ratio + UI SLOWER/FASTER (±0.5% step). Migración `20260503000001_lyrics_speed_ratio.sql` agregó `lyrics.speed_ratio REAL DEFAULT 1.0`. Comando `lyrics_set_speed_ratio`. Fórmula al consumir: `audioMs = (lrcMs + lrcOffset) * speedRatio + userOffsetMs` — speedRatio se aplica DESPUÉS de sumar el offset del archivo LRC pero ANTES de sumar el offset del usuario, para que userOffset sea un shift externo absoluto (típicamente padding de YouTube) y no quede escalado.
+- ✅ **`ALIGN` mode** — toggle one-shot para resolver intros grandes (típico YouTube padding 5-30s). Click en el botón ALIGN, después click en cualquier línea durante reproducción → offset se ajusta para alinear ESA línea con el audio actual. Resuelve casos donde el offset manual ±100ms es demasiado fino. Escape sale del modo.
+- ✅ **`RESET` extendido** — un solo click resetea offset + speedRatio a sus valores neutros (0 y 1.0). Comando `lyrics_reset_sync`.
 - **Refactor a trait `LyricsProvider` + resolver** — recién cuando se sume el 3er provider. Antes es ceremonia para 2 funciones.
 - **Genius** como último recurso (sólo plain — Genius no tiene letras synced).
 - **Manual paste / edit modal** para tracks no encontrados.
 - **Botón "Search again"** que fuerza refetch ignorando el cache `not_found`.
 - **Tabla `lyrics_search_attempts`** con TTL para evitar martillar providers ante búsquedas repetidas.
-- **Drift correction (`speedRatio`)** — además del `offsetMs` actual, agregar un multiplicador para los timestamps. Cuando el LRC y el audio tienen tempos levemente distintos (típicamente porque LRCLIB devolvió una edición/master diferente), el offset constante no alcanza: el usuario alinea el inicio pero el final se desincroniza. Fórmula: `effectiveTimestamp = lrcTimestamp * speedRatio + offsetMs`. UI: dos botones nuevos junto al offset, `LYRICS SLOWER` / `LYRICS FASTER` (±0.5% o ±1% step). Persistir en `lyrics.speed_ratio REAL DEFAULT 1.0`. Causa raíz suele ser match imperfecto — Fase 3 (identificación) lo elimina.
 
 ### Fase 3 — Avanzado
 
@@ -39,9 +41,9 @@ No comprometido. Se evalúa ítem por ítem según uso real.
 
 - **Musixmatch** opcional con API key del usuario (en `settings`).
 - **NetEase** para cobertura asiática (API reverseada, riesgo de ruptura).
-- **Identificación canónica vía AcoustID + Chromaprint → MBID** — sub-sistema propio (eventual `IDENTIFICATION.md`). El "santo grial" del match rate: calculás el fingerprint acústico del audio (~30s de análisis con `chromaprint`/`fpcalc`), lo mandás a la AcoustID API, te devuelve un MBID de MusicBrainz. Con MBID el match contra LRCLIB es **exacto** y elimina por completo los casos de "metadata sucia de yt-dlp" + drift por versiones distintas. Es el deal-breaker para tracks como "Avicii - The Nights" donde la metadata viene como `artist=Avicii - Topic` y el match text-based falla aunque el track esté en LRCLIB. Implementación: lib `chromaprint` (C dep) o binario `fpcalc` (similar al patrón de yt-dlp/ffmpeg como deps del sistema). Big project — su propio doc.
+- **Identificación canónica vía AcoustID + Chromaprint** — ✓ shippeado 2026-05-02, ver [IDENTIFICATION.md](./IDENTIFICATION.md). Resuelve la mitad del problema: pisa la metadata sucia de yt-dlp con la canónica de MusicBrainz, lo cual feedea al cascade text-based de LRCLIB con mucho mejor hit rate ("AviciiOfficialVEVO" → "Avicii", `(Official Video)` strippeado). **Lo que NO resuelve** (corrección al plan original): LRCLIB no acepta lookup por MBID, así que no es el "santo grial" automático que pensábamos. Tracks identificados pero con LRC con drift residual por edición distinta siguen necesitando `speedRatio` (Fase 2 — drift correction sigue siendo trabajo separado).
 - **Background job semanal** de re-fetch para tracks `not_found`.
-- **Enhanced LRC (A2 / per-word)** — UI con highlight palabra por palabra.
+- **Enhanced LRC (A2 / per-word) + forced alignment** — sub-sistema propio en [KARAOKE.md](./KARAOKE.md). El LRC estándar sólo da timestamps por línea, lo que asume tempo uniforme — falla en rap, screams, secciones rítmicas irregulares. La solución es generar A2 (timestamps por palabra) vía forced alignment con `aeneas` o `WhisperX`. El parser A2 + el karaoke fill por palabra son piezas compartidas con el karaoke mode fullscreen (también en KARAOKE.md), por eso quedó como sub-sistema separado.
 - **Submit a LRCLIB** de letras editadas manualmente (contribución a la comunidad).
 
 ---
@@ -64,6 +66,10 @@ Mostrar las letras de la canción **sincronizadas con el audio**: a medida que l
 - Traducir letras.
 - Anotaciones tipo Genius.
 - Editor avanzado de timestamps en MVP — solo offset global.
+
+### Independencia con identification (`[ID]` ⊥ `[L]`)
+
+Importante para no confundir indicadores en la UI: la columna **`[L]`** (letra disponible) y la columna **`[ID]`** (identificación AcoustID) son **independientes**. Un track puede tener `[ID]` y aún así no tener letra (`—` en L), porque MusicBrainz tiene cobertura de ~50M+ recordings pero LRCLIB es comunitario y mucho más chico — DJ livesets, indie nicho, idiomas con poca cobertura LRCLIB caen en este caso. **Es esperado, no es bug.** Ver [IDENTIFICATION.md §1.4](./IDENTIFICATION.md#14-id--l--son-independientes) para tabla completa de combinaciones.
 
 ---
 

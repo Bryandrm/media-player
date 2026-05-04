@@ -1,7 +1,13 @@
 # IDENTIFICATION.md — Identificación canónica de audio (AcoustID + Chromaprint)
 
-> Sub-sistema para identificar tracks por **fingerprint acústico** y obtener un MBID canónico de MusicBrainz. Permite eliminar de raíz los problemas de "metadata sucia" + "match incorrecto por versión distinta" que en Fase 1 mitigamos con heurísticas.
+> Sub-sistema para identificar tracks por **fingerprint acústico** y obtener un MBID canónico de MusicBrainz. Permite eliminar de raíz los problemas de "metadata sucia" + "match incorrecto por versión distinta" que en Fase 1 (lyrics) mitigamos con heurísticas.
 > Cross-refs: [LYRICS.md Fase 3](./LYRICS.md#fase-3--avanzado), [PLAN-reproductor-brutalist.md §6](./PLAN-reproductor-brutalist.md#6-roadmap-por-fases), [ARCHITECTURE.md](./ARCHITECTURE.md), [CLAUDE.md](../CLAUDE.md).
+
+## Estado
+
+- **Fase 1** ✓ cerrada 2026-05-02 — single-track on-demand. Match rate observado ~58% en library mixta (mainstream + J-pop + indie + DJ sets); ~95%+ esperado para mainstream occidental puro.
+- **Fase 2** ✓ cerrada 2026-05-02 — bulk backfill con throttle 2.85 rps, cancelable, summary inline. Comando `identification_identify_all` + eventos `identification-progress` / `identification-completed`.
+- **Fase 3** — no iniciada. Se evalúa según uso real.
 
 ---
 
@@ -9,27 +15,25 @@
 
 Tres fases. Cada una se desbloquea sólo cuando la anterior lleva al menos una semana de uso real sin romper. Sin scope creep entre fases.
 
-### Fase 1 — MVP on-demand (single-track)
+### Fase 1 — MVP on-demand (single-track) ✓
 
-Caso minimal: el usuario hace click en **IDENTIFY** sobre un track de la library, la app calcula el fingerprint, lo manda a AcoustID, recibe un MBID, lo persiste, y lo usa para refetchear letras desde LRCLIB con match exacto por MBID.
+Caso minimal: el usuario hace click en la celda **ID** sobre un track de la library, la app calcula el fingerprint, lo manda a AcoustID, recibe un MBID + metadata canónica, lo persiste, y borra la cache de lyrics para que el siguiente fetch corra con la metadata limpia.
 
-- **Tooling:** `fpcalc` (Chromaprint) como dep del sistema, mismo patrón que yt-dlp/ffmpeg. Detect-and-banner si falta.
-- **Backend:** dos `async fn` libres en `src-tauri/src/identification/`. Sin trait, sin resolver pattern (mismo principio que Lyrics Fase 1).
-- **API key AcoustID:** en `settings` table (no env, no bundlear). UI para pegarla en SETTINGS view.
-- **Schema:** migración aditiva sobre `tracks` (5 columnas — fingerprint + acoustid_id + mbid + status + attempted_at).
-- **UI:** botón "IDENTIFY" en cada row de library (al lado del indicador `L`) + indicador de status (✓/—/⌛).
-- **Cascade lyrics:** después de identificar, re-fetch lyrics priorizando MBID (LRCLIB acepta `track_mbid` como query param exacto).
-- **Sin:** bulk backfill, auto-identify on import, ambigüedad picker (si AcoustID devuelve múltiples matches → tomar el de mayor score y persistir; el alternative picker es Fase 3).
+- **Tooling:** `fpcalc` (Chromaprint) como dep del sistema, mismo patrón que yt-dlp/ffmpeg.
+- **Backend:** dos `async fn` libres en `src-tauri/src/identification/` (`fpcalc.rs` + `acoustid.rs`) + cascade en `mod.rs`. Sin trait, sin resolver pattern (mismo principio que Lyrics Fase 1).
+- **API key AcoustID:** en `settings` table (no env, no bundlear). Modal one-shot al primer click si falta.
+- **Schema:** migración aditiva sobre `tracks` (7 columnas — fingerprint + acoustid_id + mbid + status + attempted_at + original_title + original_artist).
+- **UI:** click directo en la celda **ID** de la row dispara identify. Indicador per status (`[ID]` / `?` / `—` / `!` / `⌛`).
+- **Cascade lyrics:** después de identify aceptado, invalidamos la cache de lyrics para que el text-based cascade existente corra con la metadata canónica (LRCLIB no acepta MBID lookup — ver §2.4).
+- **Threshold:** score ≥ 0.80 acepta el match. Por debajo → `low_confidence` (no piso metadata). Subir a 0.85+ si vemos falsos positivos.
 
-### Fase 2 — Backfill bulk
+### Fase 2 — Backfill bulk ✓
 
-Sólo cuando Fase 1 lleve unos días en uso y haya validado el end-to-end con varios tracks reales.
-
-- **Botón "IDENTIFY ALL"** en `LibraryToolbar` (mismo patrón que "CLEAN METADATA"). Procesa todos los tracks con `identification_status IS NULL` o `'failed'`.
-- **Rate limiting:** AcoustID free tier es 3 req/seg. Throttle backend-side con un semaphore de tokio.
-- **Progress events:** stream `identification-progress` con `{ done, total, current_title }` para que la UI muestre una barra (mismo patrón que downloads).
-- **Cancelable:** botón "STOP" durante el run. Idempotente — si lo cortás a mitad, retomás desde donde quedó.
-- **Telemetry mínima en logs:** match rate, tracks con `failed`, tracks con score bajo. No analytics — stdout debug.
+- **Botón "IDENTIFY ALL"** en `LibraryToolbar` (mismo patrón que "CLEAN METADATA"). Procesa tracks con `identification_status IS NULL OR = 'api_error'` (los retriables).
+- **Rate limiting:** AcoustID free tier es 3 req/seg. Sequential con `tokio::time::sleep` mínima 350ms entre requests (~2.85 rps efectivo, margen contra el cap).
+- **Progress events:** stream `identification-progress { done, total, currentTrackId, lastStatus }` y `identification-completed { total, identified, lowConfidence, noMatch, fingerprintFailed, apiError, cancelled }`.
+- **Cancelable:** atomic flag (`BulkIdentifyState`); el bulk task chequea entre iteraciones. Click STOP marca el flag, la corrida termina al fin de la canción actual (no aborta in-flight).
+- **UI:** botón pasa por tres estados — `IDENTIFY ALL` (idle) → `STARTING...` (placeholder optimista entre click y primer event) → `STOP X/Y` (en curso). Summary inline al terminar (`DONE — N ID · M ? · K — · ...`) con `✕` para descartar.
 
 ### Fase 3 — Auto + ambigüedad
 
@@ -63,8 +67,8 @@ AcoustID resuelve los tres casos porque identifica el **audio**, no la metadata.
 ### 1.2 Objetivos
 
 - **Match rate ~95%+** para mainstream occidental (donde MusicBrainz tiene cobertura completa).
-- **Match exacto contra LRCLIB** vía MBID (campo `track_mbid` del endpoint `/api/get`), eliminando la fuzzy search.
-- **Cero falsos positivos** en metadata correction. Si AcoustID está dudoso (score <0.85 o múltiples matches con scores cercanos), no hacemos nada — preferimos quedarnos con la metadata sucia que pisarla con la equivocada.
+- **Metadata canónica limpia** que reemplaza la metadata noisy de yt-dlp (`AviciiOfficialVEVO` → `Avicii`, `(Official Video)` strippeado, etc.). Esa metadata después feedea al cascade text-based de LRCLIB con mucho mejor hit rate. Ver §2.4 para por qué LRCLIB-vía-MBID no funcionó.
+- **Cero falsos positivos** en metadata correction. Si AcoustID está dudoso (score < threshold o múltiples matches con scores cercanos), no hacemos nada — preferimos quedarnos con la metadata sucia que pisarla con la equivocada.
 - **Operación opt-in.** El usuario aprieta IDENTIFY (Fase 1) o IDENTIFY ALL (Fase 2). No hacemos llamadas de red en background sin pedir.
 
 ### 1.3 No-objetivos
@@ -72,6 +76,25 @@ AcoustID resuelve los tres casos porque identifica el **audio**, no la metadata.
 - **No re-encodear ni mover archivos.** AcoustID nos da metadata canónica, no toca el archivo. Las columnas `title`/`artist` de la DB sí se actualizan; los tags ID3 del archivo no (esa es responsabilidad de un tag editor, fuera de scope).
 - **No usar AcoustID para buscar covers.** Existe la opción vía MusicBrainz Cover Art Archive, pero ya tenemos cover via lofty + sibling fallback. Quedaría como mejora opcional Fase 3.
 - **No bundlear `fpcalc`** en el binario. Mismo razonamiento que yt-dlp/ffmpeg — el usuario instala con `brew install chromaprint` (macOS) / `apt install libchromaprint-tools` (Debian) / portable binary (Windows).
+
+### 1.4 `[ID]` ⊥ `[L]` — son independientes
+
+Una confusión natural al usar la app: "si el track está identificado, ¿por qué no tiene letra?". Importante dejarlo escrito:
+
+- **`[ID]`** = "sabemos qué track es" — pregunta sobre el **audio** (cobertura de MusicBrainz, ~50M+ recordings).
+- **`[L]`** = "LRCLIB tiene letras para este track" — pregunta sobre **datos textuales** (cobertura LRCLIB, mucho menor que MB y comunitario por naturaleza).
+
+Que un track esté en MusicBrainz **no implica** que esté en LRCLIB. Las dos columnas reportan dos verdades distintas y pueden estar en cualquier combinación:
+
+| `[ID]` | `[L]` | Caso típico |
+|---|---|---|
+| ✓ | `[L]` (synced) | Mainstream occidental con letra activa en LRCLIB. Caso ideal. |
+| ✓ | `·` (plain) | LRCLIB tiene la letra pero no sincronizada (raro). |
+| ✓ | `♪` (instrumental) | LRCLIB confirmó que es instrumental — no es bug, es señal. |
+| ✓ | `—` (no_match) | DJ liveset, indie nicho, idiomas con poca cobertura LRCLIB. **Esperado**, no bug. |
+| ✗ | `[L]` | Track muy popular pero no en MusicBrainz aún (raro pero pasa con releases muy nuevos). |
+
+El `[ID]` aporta valor incluso cuando `[L]` queda en `—`: la metadata `title`/`artist` en DB ahora es canónica + el MBID queda persistido (`tracks.mbid_recording`) para usos futuros (Fase 3 con otros providers de letras como Genius o NetEase).
 
 ---
 
@@ -124,7 +147,7 @@ Sitio: https://acoustid.org · Docs API: https://acoustid.org/webservice
 - Open source, comunitario (fork conceptual de MusicBrainz para la pieza acústica).
 - Free tier: **API key requerida** + **rate limit 3 req/seg**. Aplicación se registra en https://acoustid.org/applications/.
 - Endpoint principal: `GET https://api.acoustid.org/v2/lookup?client=<KEY>&duration=<sec>&fingerprint=<base64>&meta=recordings`.
-- Devuelve JSON con `results: [{ id, score, recordings: [{ id (MBID), title, artists, duration }] }]`. `id` del result es el **AcoustID ID** (UUID propio de AcoustID); el `id` de cada recording es el **MBID** de MusicBrainz (lo que queremos para LRCLIB).
+- Devuelve JSON con `results: [{ id, score, recordings: [{ id (MBID), title, artists, duration }] }]`. `id` del result es el **AcoustID ID** (UUID propio de AcoustID); el `id` de cada recording es el **MBID** de MusicBrainz (que persistimos en `tracks.mbid_recording` para usos futuros — ver §2.4 sobre por qué no participa en el cascade actual de LRCLIB).
 
 Ejemplo response (truncado):
 
@@ -148,7 +171,7 @@ Ejemplo response (truncado):
 }
 ```
 
-**`score`** es la confianza del match acústico (0..1). **Threshold conservador propuesto: 0.85**. Por debajo no aceptamos. AcoustID en práctica devuelve `score >= 0.95` cuando hay match real; valores entre 0.5 y 0.85 suelen ser ruido o samples superpuestos.
+**`score`** es la confianza del match acústico (0..1). **Threshold activo: 0.80** (decidido tras validación con library de prueba). Por debajo no aceptamos. AcoustID en práctica devuelve `score >= 0.95` cuando hay match real; valores entre 0.5 y 0.80 suelen ser ruido. El rango 0.80–0.95 captura matches legítimos limítrofes (encoding distinto al canónico, master ligeramente diferente).
 
 ### 2.4 LRCLIB con metadata canónica
 
@@ -206,7 +229,7 @@ Valores de `identification_status`:
 
 - `NULL` — nunca se intentó (default).
 - `'identified'` — AcoustID devolvió un match con score ≥ threshold; `acoustid_id` y `mbid_recording` están poblados.
-- `'low_confidence'` — AcoustID devolvió matches pero todos con score < 0.85. `acoustid_id` y `mbid_recording` quedan NULL (no aceptamos el match), pero registramos que ya intentamos.
+- `'low_confidence'` — AcoustID devolvió matches pero todos con score < 0.80. `acoustid_id` y `mbid_recording` quedan NULL (no aceptamos el match), pero registramos que ya intentamos.
 - `'no_match'` — AcoustID devolvió `results: []`. Track no está en la base.
 - `'fingerprint_failed'` — `fpcalc` falló sobre el archivo (corrupto, formato no soportado, etc).
 - `'api_error'` — error de red o quota excedida; **es retriable** (a diferencia de los anteriores).
@@ -215,7 +238,7 @@ Valores de `identification_status`:
 
 ### 3.2 Por qué `mbid_recording` y no `mbid`
 
-MusicBrainz tiene varias entidades con MBID: artist, release, recording, work. Lo que AcoustID nos devuelve es siempre **recording MBID** (la grabación específica, no el "song" abstracto). LRCLIB usa también recording MBID. Nombramos la columna explícito para no confundir si en el futuro queremos guardar también `mbid_release` (album) o `mbid_artist`.
+MusicBrainz tiene varias entidades con MBID: artist, release, recording, work. Lo que AcoustID nos devuelve es siempre **recording MBID** (la grabación específica, no el "song" abstracto). Nombramos la columna explícito para no confundir si en el futuro queremos guardar también `mbid_release` (album) o `mbid_artist`.
 
 ### 3.3 Settings: API key
 
@@ -263,7 +286,7 @@ pub struct IdentificationResult {
 
 #[derive(Debug, Clone, Copy)]
 pub enum IdentificationStatus {
-    Identified,        // score >= 0.85, MBID poblado
+    Identified,        // score >= 0.80, MBID poblado
     LowConfidence,     // hubo matches pero todos < threshold
     NoMatch,           // results: []
     FingerprintFailed, // fpcalc error
@@ -307,7 +330,7 @@ pub async fn identify_track(
 
     // 2. AcoustID lookup.
     match acoustid::lookup(http, api_key, &fingerprint, duration).await {
-        Ok(Some(best)) if best.score >= 0.85 => {
+        Ok(Some(best)) if best.score >= 0.80 => {
             db::tracks::save_identification(
                 pool, track_id, &best.acoustid_id, &best.mbid, &best.title, &best.artist,
             ).await?;
@@ -613,7 +636,7 @@ Patrón: el usuario instala fpcalc + se registra en AcoustID + pega su key. Mism
 |---|---|---|---|
 | Usuario olvida instalar `fpcalc` | Alta | DependencyBanner + IDENTIFY button disabled. | 1 |
 | AcoustID rate limit (3 req/seg) | Alta en Fase 2 | Throttle backend con `tokio::sync::Semaphore`. | 2 |
-| AcoustID devuelve match incorrecto con score alto | Baja | Threshold 0.85 + (Fase 3) ambiguity picker para casos cercanos. | 1 / 3 |
+| AcoustID devuelve match incorrecto con score alto | Baja | Threshold 0.80 (activo) + (Fase 3) ambiguity picker para casos cercanos. Si vemos falsos positivos, subir a 0.85. | 1 / 3 |
 | API key del usuario se filtra | Media | Plain text en SQLite local; no syncamos config. Disclaimer visible. | 1 |
 | `fpcalc` muere en formato exótico (opus, dsd, etc) | Media | Status `fingerprint_failed` registrado; tracks afectados no rompen el flujo. | 1 |
 | Track no está en MusicBrainz (release nuevo, indie obscure) | Alta | `no_match` registrado. Re-intentar en N días (Fase 3). | 1 |
@@ -627,7 +650,7 @@ Patrón: el usuario instala fpcalc + se registra en AcoustID + pega su key. Mism
 
 **Cerradas para Fase 1** (decididas 2026-05-02):
 
-1. ✅ **Score threshold = 0.85.** Confirmar con tests reales; si vemos falsos positivos, subir a 0.90.
+1. ✅ **Score threshold = 0.80** (bajado de 0.85 inicial tras validación — track 29 a 0.824 era match correcto). Si vemos falsos positivos, subir a 0.85+.
 2. ✅ **Pisar `tracks.title`/`tracks.artist` cuando `status = 'identified'`** (la metadata de yt-dlp es peor que la de MusicBrainz). Guardar las originales en `tracks.original_title`/`original_artist` para poder revertir.
 3. ✅ **Trigger UI = context menu (A)** sobre la row. Revisitar si nadie lo descubre.
 4. ✅ **API key prompt = modal one-shot (B).** SETTINGS view full queda para Fase 2 cuando haya más settings que justifiquen la vista; no es bloqueante.
@@ -664,32 +687,36 @@ Nada disruptivo. Todo se enchufa con los patrones existentes:
 
 ---
 
-## 11. Próximos pasos
+## 11. Implementación — qué se shippeó
 
-**Antes de implementar Fase 1:**
+**Fase 1 ✓ (2026-05-02):**
 
-1. ✅ Closure de Fase 1 lyrics + docs polish (cerrado 2026-05-02).
-2. ⏳ Verificar `fpcalc` corre en la mac del autor (`brew install chromaprint && fpcalc -version`).
-3. ⏳ Registrar applicaition en AcoustID + obtener API key (test personal).
+1. Migración `20260502000002_identification.sql` — 7 columnas + 2 índices.
+2. `fpcalc::compute` + 7 unit tests.
+3. `acoustid::lookup` + 10 unit tests.
+4. `identify_track` cascade en `identification/mod.rs`.
+5. Comandos `identification_identify_track` + `identification_get_api_key` + `identification_set_api_key`.
+6. `identificationStore` + `ApiKeyModal` montado en App.tsx.
+7. Columna **ID** en `LibraryTable` con click directo en celda como trigger.
+8. Cascade lyrics: invalidación de cache (no MBID lookup — ver §2.4 sobre la corrección de la asunción inicial).
 
-**Implementar Fase 1:**
+**Fase 2 ✓ (2026-05-02):**
 
-4. Migración 3.1 (aditiva, 5 columnas + 2 índices).
-5. `fpcalc::compute` + tests con un mp3 fixture.
-6. `acoustid::lookup` + tests con response mock (httpmock o wiremock-rs).
-7. `identify_track` cascade + tests del flujo completo (DB temp + reqwest mocked).
-8. Comandos Tauri (3) + register.
-9. Modal API key + `identificationStore`.
-10. Columna ID en LibraryTable + indicador.
-11. Context menu IDENTIFY en row.
-12. Update `lyrics/lrclib.rs::try_lrclib` para priorizar MBID.
-13. Validar end-to-end con 10-20 tracks reales: medir match rate, verificar que LRCLIB con MBID resuelve los casos que Fase 1 no cubría.
+9. Comandos `identification_identify_all` + `identification_cancel_all` con `BulkIdentifyState` (atomic flags).
+10. Eventos `identification-progress` / `identification-completed`.
+11. Hook `useIdentificationEvents` en App.tsx + extensión del store con `bulkProgress` / `bulkSummary`.
+12. Botón en `LibraryToolbar` con tres estados (`IDENTIFY ALL` / `STARTING...` / `STOP X/Y`) + summary inline.
 
-**Reevaluar antes de Fase 2:**
+**Match rate observado en library de prueba (24 tracks, mix mainstream + J-pop + indie + DJ sets):**
 
-14. ¿Cuántos tracks quedan `identified` vs `low_confidence` vs `no_match`?
-15. ¿Cuántas letras nuevas se desbloquearon por MBID match?
-16. ¿Hay cuellos de botella obvios (fpcalc lento, AcoustID con quota)?
+- 13 identified (54%).
+- 10 no_match (42%) — coincide con expectativa para tracks fuera de cobertura MB (DJ livesets, anime OST, indie nicho).
+- 1 low_confidence (4%) — track 29 con score 0.824 (justo abajo del threshold inicial 0.85; recuperable bajando a 0.80).
+
+**Próximos pasos discutidos (no comprometidos):**
+
+- Lyrics Fase 2.a (drift correction con `speedRatio` + SET OFFSET HERE) — tracks identificados con drift residual por edición distinta.
+- Sub-fase 3 ambiguity picker — si aparecen casos donde AcoustID devuelve múltiples matches con scores cercanos.
 
 ---
 

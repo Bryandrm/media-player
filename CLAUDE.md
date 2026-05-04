@@ -13,6 +13,9 @@ Documentos fuente de verdad:
 - [docs/PLAN-reproductor-brutalist.md](./docs/PLAN-reproductor-brutalist.md) — visión, scope, roadmap.
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — arquitectura técnica, contratos Tauri, pipeline de audio.
 - [docs/DECISIONS.md](./docs/DECISIONS.md) — ADRs. Leer antes de proponer cambios técnicos importantes.
+- [docs/LYRICS.md](./docs/LYRICS.md) — sub-sistema de letras (LRCLIB + USLT, drift correction, etc.).
+- [docs/IDENTIFICATION.md](./docs/IDENTIFICATION.md) — sub-sistema de identificación (AcoustID + Chromaprint).
+- [docs/KARAOKE.md](./docs/KARAOKE.md) — sub-sistema de karaoke (forced alignment + per-word timing + future fullscreen + vocal removal). No iniciado, doc-only.
 
 ---
 
@@ -74,21 +77,28 @@ src/
 │                           useSyncedLyrics (rAF active-line tracking),
 │                           useAutoCyclePresets, useDownloadEvents
 ├── stores/                 playerStore, libraryStore, uiStore, downloadStore,
-│                           lyricsStore
+│                           lyricsStore, identificationStore
+├── hooks/                  useAudioPlayer, useDownloadEvents,
+│                           useIdentificationEvents, …
 ├── lib/                    format.ts, search.ts, lrcParser.ts (puros)
 ├── styles/tokens.css       design tokens + range/marquee/progress CSS
-└── types.ts                Track (con lyricsStatus), Download, Lyrics, …
+└── types.ts                Track (con lyricsStatus + identificationStatus),
+                            Download, Lyrics, IdentificationResult, …
 
 src-tauri/src/
-├── lib.rs                  Tauri builder + invoke_handler + reqwest::Client
-├── commands/               thin wrappers — library, downloader, system, lyrics
-├── db/                     sqlx queries por tabla (tracks, lyrics)
+├── lib.rs                  Tauri builder + invoke_handler + reqwest::Client +
+│                           BulkIdentifyState manage()
+├── commands/               thin wrappers — library, downloader, system,
+│                           lyrics, identification
+├── db/                     sqlx queries por tabla (tracks, lyrics, settings)
 ├── audio/                  lofty: extract_metadata + extract_cover_art
 │   └── cleanup.rs          heurísticas para limpiar metadata yt-dlp
 │                           (Topic/VEVO/Official Video/Artist - Title prefix)
 ├── downloader/             yt-dlp child process + stdout/stderr fan-in
 ├── lyrics/                 fetch_lyrics cascade: embedded.rs (USLT) +
 │                           lrclib.rs (get + search fallback)
+├── identification/         fpcalc.rs (Chromaprint binary wrapper) +
+│                           acoustid.rs (HTTP client) + mod.rs (cascade)
 ├── contracts.rs            tipos serializados a TS
 └── errors.rs               AppError + AppResult
 ```
@@ -102,8 +112,14 @@ src-tauri/src/
   - Persistencia último track + posición: ✓ (localStorage, restore sin
     auto-play).
   - Media keys: ✓ (MediaSession API — testeado en macOS, pendiente Windows).
-- Próximo: AcoustID + Chromaprint para identificación canónica del audio
-  (Fase 3 de lyrics, sub-sistema propio).
+- **Identification AcoustID Fase 1 + Fase 2** ✓ (2026-05-02) — single-track
+  IDENTIFY + bulk IDENTIFY ALL con throttle 2.85 rps. Pisa metadata sucia
+  con canónica de MusicBrainz, feedea al cascade text-based de LRCLIB.
+  **`[ID]` ⊥ `[L]`**: identificación y disponibilidad de letras son
+  independientes (DJ sets + indie nicho son `[ID]` + `—`, esperado).
+  Ver [docs/IDENTIFICATION.md](./docs/IDENTIFICATION.md).
+- Próximo: **Lyrics Fase 2.a** — drift correction (`speedRatio`) + SET
+  OFFSET HERE para YouTube intros grandes.
 
 ---
 
@@ -260,8 +276,30 @@ conservadoras** — strip de patrones específicos (Topic, VEVO,
 OfficialVEVO, parens con Official Video/Lyric Video/etc, prefix
 `<artist> - ` en title). Trade-off explícito: preferir falsos negativos
 (no limpiar) sobre falsos positivos (borrar contenido legítimo). Para
-matchear tracks que las heurísticas no alcanzan, la solución correcta
-es AcoustID + Chromaprint (Fase 3 de lyrics) — no más heurísticas.
+matchear tracks que las heurísticas no alcanzan, ahora tenemos AcoustID
+([identification/](src-tauri/src/identification/)) que pisa la metadata
+con la canónica de MusicBrainz cuando hay match con score alto.
+
+### 12. LRCLIB **no** acepta lookup por MBID
+Asunción que se pagó: el plan original de identification proponía hacer
+`/api/get?track_mbid=<uuid>` para letras exactas vía MusicBrainz ID.
+Verificación contra la API real (curl) confirmó que LRCLIB sólo acepta
+`track_name`+`artist_name`+`album_name`+`duration`. No hay endpoint con
+MBID en `/api/get`, ni `/api/search?mbid=...`, ni `?recording_mbid=...`
+(devuelven `[]` o error). El valor real de AcoustID es entregar
+**metadata canónica limpia** que feedea al cascade text-based existente,
+no un lookup directo. Si en el futuro aparece otro provider de letras
+(Genius, NetEase) que sí acepte MBID, ahí sí servirá — el MBID está
+persistido en `tracks.mbid_recording`.
+
+### 13. `[ID]` ⊥ `[L]` — son independientes
+Confusión natural pero importante: la columna ID (identification AcoustID)
+y la columna L (lyrics LRCLIB) reportan dos verdades distintas. Un track
+puede tener `[ID]` y no tener `[L]` — no es bug. MusicBrainz tiene cobertura
+~50M+ recordings; LRCLIB es comunitario y mucho más chico. DJ livesets,
+indie nicho, y muchos idiomas (J-pop, K-pop indie, latino indie) caen en
+"`[ID]` + `—`" porque están en MB pero no tienen letra en LRCLIB. Ver
+[IDENTIFICATION.md §1.4](docs/IDENTIFICATION.md#14-id--l--son-independientes).
 
 ---
 
