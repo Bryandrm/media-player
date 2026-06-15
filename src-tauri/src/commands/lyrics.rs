@@ -98,3 +98,27 @@ pub async fn lyrics_reset_sync(
 ) -> AppResult<()> {
     db::lyrics::reset_sync(&pool, track_id).await
 }
+
+/// Persiste una edición manual de las letras (Lyrics Fase 2.c). El usuario
+/// abre el modal EDIT LYRICS, modifica el LRC y/o el plain, y al guardar el
+/// frontend invoca esto. Devolvemos la fila fresca para que el store la
+/// reemplace sin necesidad de un round-trip extra.
+#[tauri::command]
+pub async fn lyrics_save_manual_edit(
+    track_id: i64,
+    synced_lyrics: Option<String>,
+    plain_lyrics: Option<String>,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<Lyrics> {
+    db::lyrics::save_manual_edit(
+        &pool,
+        track_id,
+        synced_lyrics.as_deref(),
+        plain_lyrics.as_deref(),
+    )
+    .await?;
+
+    db::lyrics::get_for_track(&pool, track_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("lyrics row missing for track {}", track_id)))
+}

@@ -7,6 +7,7 @@ import { useSyncedLyrics } from "../../hooks/useSyncedLyrics";
 import { effectiveTimestampMs, parseLrc, type LrcLine } from "../../lib/lrcParser";
 import { getAudioElement } from "../../audio/element";
 import { Button } from "../ui/Button";
+import { LyricsEditModal } from "./LyricsEditModal";
 
 // Step de drift correction. ±0.5% por click — granularidad fina pero
 // perceptible. Si el usuario tiene drift muy grande, varios clicks llegan
@@ -59,6 +60,7 @@ export function LyricsView() {
   const setSpeedRatio = useLyricsStore((s) => s.setSpeedRatio);
   const resetSync = useLyricsStore((s) => s.resetSync);
   const alignTrack = useLyricsStore((s) => s.alignTrack);
+  const saveManualEdit = useLyricsStore((s) => s.saveManualEdit);
   const tracks = useLibraryStore((s) => s.tracks);
   const whisperxAvailable = useDownloadStore((s) => s.deps?.whisperx ?? false);
 
@@ -91,6 +93,14 @@ export function LyricsView() {
   // explícito con un botón en vez de usar modifier keys (Shift+click no es
   // discoverable, sobre todo en una app desktop sin tooltips ricos).
   const [alignMode, setAlignMode] = useState(false);
+
+  // Modal de edición manual (Lyrics Fase 2.c).
+  const [editOpen, setEditOpen] = useState(false);
+  const openEdit = () => setEditOpen(true);
+  const onSaveEdit = async (synced: string | null, plain: string | null) => {
+    if (trackId === null) return;
+    await saveManualEdit(trackId, synced, plain);
+  };
 
   useEffect(() => {
     if (activeIndex < 0) return;
@@ -175,40 +185,81 @@ export function LyricsView() {
     );
   }
 
+  // Modal de edición manual. Mismo JSX en cada return — los estados que
+  // exponen el botón EDIT necesitan tener el modal montado para abrirlo.
+  // (Las branches sin botón — loading/error/no-track — no lo renderizan.)
+  const editModal = (
+    <LyricsEditModal
+      open={editOpen}
+      initialSynced={lyrics?.syncedLyrics ?? null}
+      initialPlain={lyrics?.plainLyrics ?? null}
+      trackTitle={track.title}
+      trackArtist={track.artist}
+      onSave={onSaveEdit}
+      onClose={() => setEditOpen(false)}
+    />
+  );
+
   if (notFound) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-2 text-xs uppercase tracking-wider">
-        <div className="text-fg text-base">NO LYRICS AVAILABLE</div>
-        <div className="text-muted">TRIED: EMBEDDED · LRCLIB</div>
-      </div>
+      <>
+        <div className="h-full flex flex-col items-center justify-center gap-2 text-xs uppercase tracking-wider">
+          <div className="text-fg text-base">NO LYRICS AVAILABLE</div>
+          <div className="text-muted">TRIED: EMBEDDED · LRCLIB</div>
+          <div className="mt-4">
+            <Button size="sm" onClick={openEdit}>
+              ADD MANUALLY
+            </Button>
+          </div>
+        </div>
+        {editModal}
+      </>
     );
   }
 
   // Instrumental: source set pero ambos blobs null. LRCLIB lo confirmó como
-  // track sin letras (distinto a "no encontramos nada").
+  // track sin letras (distinto a "no encontramos nada"). El botón EDIT cubre
+  // el caso en que LRCLIB se equivocó al marcar instrumental.
   if (lyrics && !lyrics.syncedLyrics && !lyrics.plainLyrics) {
     return (
-      <div className="h-full flex items-center justify-center text-fg text-2xl uppercase tracking-widest">
-        ♪ INSTRUMENTAL ♪
-      </div>
+      <>
+        <div className="h-full flex flex-col items-center justify-center gap-4">
+          <div className="text-fg text-2xl uppercase tracking-widest">
+            ♪ INSTRUMENTAL ♪
+          </div>
+          <Button size="sm" onClick={openEdit}>
+            EDIT
+          </Button>
+        </div>
+        {editModal}
+      </>
     );
   }
 
   // Plain-only: sin synced, sólo texto. No hay highlight de línea actual.
   if (lyrics && !parsed && lyrics.plainLyrics) {
     return (
-      <div className="h-full flex flex-col">
-        <Header source={lyrics.source} mode="plain" confidence={lyrics.confidence} />
-        <div className="flex-1 overflow-y-auto px-8 py-6 whitespace-pre-wrap text-sm leading-relaxed text-center font-display">
-          {lyrics.plainLyrics}
+      <>
+        <div className="h-full flex flex-col">
+          <Header source={lyrics.source} mode="plain" confidence={lyrics.confidence} />
+          <div className="flex-1 overflow-y-auto px-8 py-6 whitespace-pre-wrap text-sm leading-relaxed text-center font-display">
+            {lyrics.plainLyrics}
+          </div>
+          <div className="shrink-0 px-6 py-2 border-t-2 border-fg flex items-center justify-end">
+            <Button size="sm" onClick={openEdit}>
+              EDIT
+            </Button>
+          </div>
         </div>
-      </div>
+        {editModal}
+      </>
     );
   }
 
   // Synced view.
   if (parsed && lines.length > 0) {
     return (
+      <>
       <div className="h-full flex flex-col">
         <Header source={lyrics?.source ?? null} mode="synced" confidence={lyrics?.confidence ?? null} />
 
@@ -314,6 +365,10 @@ export function LyricsView() {
               {alignMode ? "ALIGN: CLICK A LINE" : "ALIGN"}
             </Button>
             <Button size="sm" onClick={onReset}>RESET</Button>
+            {/* EDIT: abre modal de edición manual del LRC. Es el path
+                principal de Lyrics Fase 2.c para corregir mismatches de
+                LRCLIB que el alignment automático no compensa. */}
+            <Button size="sm" onClick={openEdit}>EDIT</Button>
             {/* AUTO-ALIGN: forced alignment via WhisperX. Visible sólo si
                 whisperx está instalado. Tarda ~30s-2min — UI no se bloquea
                 pero el botón muestra "ALIGNING..." mientras corre. Texto
@@ -339,6 +394,8 @@ export function LyricsView() {
           </div>
         </div>
       </div>
+      {editModal}
+      </>
     );
   }
 

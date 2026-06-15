@@ -174,6 +174,56 @@ pub async fn save_aligned(
     Ok(())
 }
 
+/// Persiste una edición manual del usuario. A diferencia de `upsert` (que
+/// recibe el blob de un provider externo), esto **sobreescribe**
+/// `original_synced_lyrics` con la versión editada — la decisión del usuario
+/// es la nueva fuente de verdad para futuros forced alignments. Sin esto,
+/// un RE-ALIGN posterior operaría sobre el LRC viejo de LRCLIB y descartaría
+/// el trabajo manual (ver Gotcha #16 de CLAUDE.md sobre re-aligns idempotentes).
+///
+/// Reset adicional: `offset_ms`, `speed_ratio` y `aligned_at` vuelven a
+/// valores neutros — si el texto cambió, los ajustes de sync compensaban
+/// drift contra timestamps que ya no aplican.
+///
+/// `confidence` y `source_id` se limpian: el manual edit no tiene ID en
+/// ningún provider externo y la confianza es por definición 100% (el
+/// usuario lo escribió).
+pub async fn save_manual_edit(
+    pool: &SqlitePool,
+    track_id: i64,
+    synced_lyrics: Option<&str>,
+    plain_lyrics: Option<&str>,
+) -> AppResult<()> {
+    sqlx::query(
+        "INSERT INTO lyrics ( \
+            track_id, synced_lyrics, plain_lyrics, source, source_id, confidence, \
+            status, original_synced_lyrics, offset_ms, speed_ratio, aligned_at, \
+            fetched_at, last_used_at \
+         ) VALUES (?, ?, ?, 'manual', NULL, NULL, 'found', ?, 0, 1.0, NULL, \
+                   CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) \
+         ON CONFLICT(track_id) DO UPDATE SET \
+             synced_lyrics = excluded.synced_lyrics, \
+             plain_lyrics = excluded.plain_lyrics, \
+             source = 'manual', \
+             source_id = NULL, \
+             confidence = NULL, \
+             status = 'found', \
+             original_synced_lyrics = excluded.synced_lyrics, \
+             offset_ms = 0, \
+             speed_ratio = 1.0, \
+             aligned_at = NULL, \
+             fetched_at = CURRENT_TIMESTAMP, \
+             last_used_at = CURRENT_TIMESTAMP",
+    )
+    .bind(track_id)
+    .bind(synced_lyrics)
+    .bind(plain_lyrics)
+    .bind(synced_lyrics)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Borra la fila de lyrics de un track. Usado por `library_backfill_metadata`
 /// cuando la metadata del track cambia (artist/title nuevos invalidan el
 /// match contra LRCLIB que cacheamos antes — el resultado anterior, sea

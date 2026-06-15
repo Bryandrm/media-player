@@ -38,6 +38,17 @@ type LyricsState = {
    *  la primera vez por download del modelo wav2vec2. Al terminar, refetcha
    *  el lyrics del backend para que el A2 nuevo entre al store. */
   alignTrack: (trackId: number) => Promise<void>;
+  /** Lyrics Fase 2.c — persiste edición manual del usuario. El backend
+   *  sobreescribe `originalSyncedLyrics` con el nuevo synced (así un
+   *  RE-ALIGN posterior parte de la versión corregida) y resetea offset,
+   *  speedRatio y alignedAt — el texto cambió, los ajustes viejos no
+   *  aplican. Devuelve la fila fresca para reemplazar el store sin
+   *  round-trip extra. */
+  saveManualEdit: (
+    trackId: number,
+    syncedLyrics: string | null,
+    plainLyrics: string | null,
+  ) => Promise<void>;
   /** Reset al cambiar de track o cerrar el panel — evita mostrar las
    *  letras del track viejo durante un cambio. */
   clear: () => void;
@@ -145,6 +156,31 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
       set({ error: msg });
     } finally {
       set({ aligning: false });
+    }
+  },
+
+  saveManualEdit: async (trackId, syncedLyrics, plainLyrics) => {
+    try {
+      const result = await invoke<Lyrics>("lyrics_save_manual_edit", {
+        trackId,
+        syncedLyrics,
+        plainLyrics,
+      });
+      // Race-check: si el usuario cambió de track durante el save, no
+      // pisamos lo que ya tiene el store.
+      if (get().forTrackId !== null && get().forTrackId !== trackId) return;
+      set({
+        current: result,
+        forTrackId: trackId,
+        notFound: false,
+        loading: false,
+        error: null,
+      });
+    } catch (e) {
+      const msg = String(e);
+      console.warn("lyrics_save_manual_edit failed:", msg);
+      set({ error: msg });
+      throw new Error(msg);
     }
   },
 
