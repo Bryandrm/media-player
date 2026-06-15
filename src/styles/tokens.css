@@ -102,6 +102,60 @@
 }
 
 /*
+ * Variante vertical del slider brutalist — para EQ bands. El input nativo
+ * con writing-mode:vertical-lr + direction:rtl pone el thumb arriba con
+ * value=max (que en EQ es +12dB), abajo con value=min (-12dB). Track 2px
+ * vertical en var(--color-fg), thumb 4×16 horizontal en accent.
+ *
+ * Compatibilidad: writing-mode rotates funcionan en Safari 14+/Chrome 89+.
+ * Fallback -webkit-appearance:slider-vertical para macOS WebView (Tauri).
+ */
+.range-brutal-vert {
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  background: transparent;
+  cursor: pointer;
+  width: 16px;
+  padding: 0;
+}
+
+.range-brutal-vert::-webkit-slider-runnable-track {
+  background: var(--color-fg);
+  width: 2px;
+  border: 0;
+}
+.range-brutal-vert::-moz-range-track {
+  background: var(--color-fg);
+  width: 2px;
+  border: 0;
+}
+
+.range-brutal-vert::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--color-accent);
+  border: 0;
+  border-radius: 0;
+  width: 16px;
+  height: 4px;
+  margin-left: -7px;
+}
+.range-brutal-vert::-moz-range-thumb {
+  background: var(--color-accent);
+  border: 0;
+  border-radius: 0;
+  width: 16px;
+  height: 4px;
+}
+
+.range-brutal-vert:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/*
  * Progress bar indeterminado: bloque accent de 1/3 que se barre de izquierda
  * a derecha en loop. Linear motion (no easing) para conservar el aesthetic
  * brutalist — la animación es la única "soft" cosa permitida.

@@ -5,6 +5,7 @@ const TABS: Array<{ id: View; label: string }> = [
   { id: "library", label: "LIBRARY" },
   { id: "downloads", label: "DOWNLOADS" },
   { id: "visualizer", label: "VISUALIZER" },
+  { id: "eq", label: "EQ" },
 ];
 
 const PRESS_FLASH_MS = 150;

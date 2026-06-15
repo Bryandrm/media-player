@@ -36,6 +36,18 @@ Sub-fase 2.a (drift + intros) ✓ cerrada 2026-05-03. Sub-fase 2.b (forced align
 - **Genius** como último recurso (sólo plain — Genius no tiene letras synced).
 - **Tabla `lyrics_search_attempts`** con TTL para evitar martillar providers ante búsquedas repetidas.
 
+#### Bandera de UX — hacia un flujo seamless (post-2.c.1)
+
+El manual edit modal (2.c.1) cubre el caso edge donde un usuario *técnico* corrige un LRC malo. El usuario común no va a pegar `[mm:ss.xx]text` en una textarea. Para que la corrección de drift / mismatch sea **automática** y no requiera intervención, queda este backlog priorizado por ROI:
+
+1. **Musixmatch como provider primario synced** (alta prioridad). Cobertura superior a LRCLIB en pop / rock comercial, donde más sufre la calidad actual. Requiere API key del usuario (Fase 3 lo mencionaba como "Musixmatch opcional"). Subir prioridad a **Fase 2.c.3**.
+2. **Auto-fallback por confidence baja**. Si el cascade actual devuelve algo con `confidence < 0.7`, intentar el siguiente provider en vez de quedarnos con el match débil. Hoy nos quedamos con el primer hit.
+3. **Genius como fallback plain** (media prioridad). No cubre synced, pero al menos da letras para tracks que LRCLIB no tiene. Útil para indie / nicho.
+4. **Auto-detect de mismatch via WhisperX score**. Cuando corramos AUTO-ALIGN, si whisperx devuelve un score muy bajo (alignment de mala calidad → señal de que el texto no matchea el audio), automáticamente intentar refetchear de un provider distinto antes de mostrarle al usuario el resultado roto.
+5. **Submit edits a LRCLIB**. Cuando un usuario *sí* edita manualmente y la edición resulta bien (post-AUTO-ALIGN exitoso), ofrecer botón "Contribute to LRCLIB" para que ese fix beneficie a la comunidad. Cero esfuerzo extra para el usuario, beneficio compuesto a largo plazo.
+
+**Conclusión:** el modal de 2.c.1 es escalera de emergencia, no la solución de UX. El path completo es 2.c.3 (Musixmatch) + auto-fallback + auto-detect — solo después del cual podemos decir que el sub-sistema es "automático" desde la perspectiva del usuario común.
+
 ### Fase 3 — Avanzado
 
 No comprometido. Se evalúa ítem por ítem según uso real.

@@ -16,6 +16,7 @@ import { LibraryTable } from "./components/library/LibraryTable";
 import { PlayerBar } from "./components/player/PlayerBar";
 import { VisualizerView } from "./components/visualizer/VisualizerView";
 import { DownloadsView } from "./components/downloads/DownloadsView";
+import { EqualizerView } from "./components/eq/EqualizerView";
 import { ApiKeyModal } from "./components/identification/ApiKeyModal";
 
 function App() {
@@ -70,6 +71,7 @@ function App() {
       <div className="flex-1 min-h-0 overflow-hidden relative">
         {view === "library" && <LibraryTable />}
         {view === "downloads" && <DownloadsView />}
+        {view === "eq" && <EqualizerView />}
         {/* Visualizer persistente: una vez visitado, queda montado siempre
             con `absolute inset-0` (mismo tamaño que el contenedor padre,
             sin afectar el flow). Cuando la vista no es 'visualizer', lo

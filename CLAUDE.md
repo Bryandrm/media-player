@@ -132,10 +132,21 @@ src-tauri/resources/scripts/
   del alignment depende de la calidad del LRC; con LRCLIB community-curated
   hay tracks donde funciona excelente y tracks donde el mismatch text↔audio
   hereda errores. Ver [docs/KARAOKE.md §13](./docs/KARAOKE.md#13-lecciones-aprendidas-fase-a)
-  para el journey completo de implementación + límites honestos.
-- Próximo recomendado: **Lyrics Fase 2.c** — UI manual edit + alternative
-  providers (Genius/Musixmatch). Mejor LRC = mejor alignment automático
-  en Karaoke Fase A.
+  para el journey completo de implementación + límites honestos. Actualmente
+  revertido a **fake karaoke** (interpolación uniforme dentro de línea)
+  porque whisperx hereda los mismatches del LRC. Volverá cuando 2.c.3
+  (Musixmatch) suba la calidad del LRC base.
+- **Lyrics Fase 2.c.1 — manual edit modal** ✓ (2026-06-14) — botón EDIT en
+  LyricsView abre modal con textareas synced + plain. Save vía
+  `lyrics_save_manual_edit` sobreescribe `original_synced_lyrics` (preserva
+  edición a través de RE-ALIGNs) y resetea offset/speedRatio/aligned_at.
+  **Caveat de UX honesto**: es escalera de emergencia para usuario técnico,
+  no flujo seamless. Ver [docs/LYRICS.md "Bandera de UX"](./docs/LYRICS.md)
+  para el path hacia automatización (Musixmatch + auto-fallback por
+  confidence + auto-detect de mismatch via whisperx score).
+- Próximo recomendado: **abrir Fase 2 del PLAN general** (playlists, EQ,
+  drag&drop, etc.) o **Lyrics 2.c.3 (Musixmatch)** si querés cerrar la
+  brecha de UX seamless antes. Decisión abierta del autor.
 
 ---
 

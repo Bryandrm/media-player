@@ -14,6 +14,8 @@ import {
   getMasterGain,
   fadeInPlayPause,
   fadeOutPlayPause,
+  setEqBandGain,
+  EQ_BAND_FREQS,
 } from "../audio/context";
 import { filterTracks } from "../lib/search";
 import { useLibraryStore } from "./libraryStore";
@@ -22,6 +24,12 @@ import type { Track } from "../types";
 // Pasos del crossfade. 0=off, 3/6/12s. El botón XFADE en PlayerBar cicla
 // entre estos valores.
 export const CROSSFADE_STEPS_MS = [0, 3000, 6000, 12000] as const;
+
+// Límites de gain por banda del EQ, en decibeles. ±12dB es el estándar de
+// facto (Foobar2000, Winamp, Apple Music). Más allá distorsiona.
+export const EQ_GAIN_RANGE_DB = 12;
+const EQ_BAND_COUNT = EQ_BAND_FREQS.length;
+const EQ_NEUTRAL_GAINS = Array.from({ length: EQ_BAND_COUNT }, () => 0);
 
 type PlayerState = {
   currentTrackId: number | null;
@@ -33,6 +41,13 @@ type PlayerState = {
   shuffle: boolean;
   /** Duración del crossfade en ms. 0 = off. Se persiste. */
   crossfadeMs: number;
+  /** EQ 10 bandas — array de gains en dB (-12..+12). Persistido. Aunque
+   *  `eqEnabled=false`, los valores se preservan para que el usuario pueda
+   *  toggle on/off sin perder su preset. */
+  eqGains: number[];
+  /** Toggle de bypass del EQ. False = chain procesando pero a 0dB en todas
+   *  las bandas (transparente). Persistido. */
+  eqEnabled: boolean;
   /** True mientras corre un crossfade — dos audios en simultáneo, gain ramps
    *  activos, hasta que `setTimeout(finishCrossfade)` cierre. Ephemeral. */
   _isCrossfading: boolean;
@@ -55,6 +70,13 @@ type PlayerState = {
   cycleCrossfade: () => void;
   next: () => void;
   prev: () => void;
+  /** Setea el gain de una banda específica del EQ (dB, -12..+12). */
+  setEqGain: (band: number, gainDb: number) => void;
+  /** Toggle del EQ — preserva los valores del usuario, sólo bypassea. */
+  setEqEnabled: (enabled: boolean) => void;
+  /** Resetea todas las bandas a 0dB. No toca `eqEnabled` — si está on,
+   *  queda on pero flat. */
+  resetEq: () => void;
 
   // Internal sync — wired by useAudioPlayer. Prefijo `_` para indicar
   // que no son acciones de UI: las llama el adaptador de eventos.
@@ -269,6 +291,8 @@ export const usePlayerStore = create<PlayerState>()(
         muted: false,
         shuffle: false,
         crossfadeMs: 0,
+        eqGains: [...EQ_NEUTRAL_GAINS],
+        eqEnabled: false,
         _isCrossfading: false,
         playHistory: [],
 
@@ -397,6 +421,38 @@ export const usePlayerStore = create<PlayerState>()(
           set({ crossfadeMs: CROSSFADE_STEPS_MS[nextIdx] });
         },
 
+        setEqGain: (band, gainDb) => {
+          if (band < 0 || band >= EQ_BAND_COUNT) return;
+          const clamped = Math.max(
+            -EQ_GAIN_RANGE_DB,
+            Math.min(EQ_GAIN_RANGE_DB, gainDb),
+          );
+          const next = [...get().eqGains];
+          next[band] = clamped;
+          set({ eqGains: next });
+          setEqBandGain(band, clamped, get().eqEnabled);
+        },
+
+        setEqEnabled: (enabled) => {
+          set({ eqEnabled: enabled });
+          // Re-aplicar TODAS las bandas con el nuevo flag — habilitar pone
+          // los gains del usuario, deshabilitar las pone a 0 (bypass).
+          const gains = get().eqGains;
+          for (let i = 0; i < EQ_BAND_COUNT; i++) {
+            setEqBandGain(i, gains[i], enabled);
+          }
+        },
+
+        resetEq: () => {
+          set({ eqGains: [...EQ_NEUTRAL_GAINS] });
+          // Aplicar 0 a todas las bandas, respetando el flag de enabled.
+          // (Si está disabled ya están en 0; este loop es no-op pero seguro.)
+          const enabled = get().eqEnabled;
+          for (let i = 0; i < EQ_BAND_COUNT; i++) {
+            setEqBandGain(i, 0, enabled);
+          }
+        },
+
         next: () => {
           const id = get().currentTrackId;
           if (id === null) return;
@@ -473,7 +529,23 @@ export const usePlayerStore = create<PlayerState>()(
         muted: state.muted,
         shuffle: state.shuffle,
         crossfadeMs: state.crossfadeMs,
+        eqGains: state.eqGains,
+        eqEnabled: state.eqEnabled,
       }),
+      onRehydrateStorage: () => (state) => {
+        // Al rehidratar el persist, los gains del usuario quedan en
+        // `state.eqGains` pero los nodos del AudioContext nacen flat. Hay
+        // que sincronizar — sin esto el primer play no respeta el preset
+        // hasta que el usuario toque un slider.
+        // El AudioContext se crea lazy en el primer play, así que esto
+        // sólo importa si el AudioContext YA existe al rehidratar; en la
+        // práctica, useAudioPlayer al boot llama getAudioContext() y los
+        // nodos están listos cuando entra este callback.
+        if (!state) return;
+        for (let i = 0; i < EQ_BAND_COUNT; i++) {
+          setEqBandGain(i, state.eqGains[i] ?? 0, state.eqEnabled);
+        }
+      },
     },
   ),
 );

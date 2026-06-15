@@ -51,6 +51,19 @@ let channelB: Channel | null = null;
 let preMasterGain: GainNode | null = null;
 let masterGain: GainNode | null = null;
 let playPauseGain: GainNode | null = null;
+let eqBands: BiquadFilterNode[] = [];
+
+// EQ de 10 bandas estándar ISO. Lowshelf en la primera banda, highshelf en
+// la última, peaking en las del medio — topología clásica de Foobar/Winamp.
+// Insertado entre preMasterGain y masterGain → el visualizer (tap en
+// preMasterGain) NO ve la EQ del usuario; reacciona al audio original.
+// Decisión consciente: si el usuario sube +12dB en 60Hz, no queremos que
+// el visualizer explote en bass como artefacto del slider — sería confuso.
+// El EQ es ajuste de listening, el visualizer es lectura objetiva.
+export const EQ_BAND_FREQS: readonly number[] = [
+  32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000,
+];
+const EQ_PEAKING_Q = 1.0;
 // Timer del audio.pause() pendiente al final de un fade-out. Se cancela si el
 // usuario hace click play antes de que el fade termine — sin esto, el pause
 // programado correría igual y nos dejaría con audio pausado tras un click play.
@@ -85,7 +98,31 @@ export function getAudioContext(): AudioContext {
     // 0→1 y se siente como "el reproductor cobra vida". Sin esto, el primer
     // play arrancaría a volumen full instantáneo.
     playPauseGain.gain.value = 0;
-    preMasterGain.connect(masterGain);
+
+    // EQ chain: preMasterGain → eqBands[0..9] → masterGain.
+    // Cada banda nace con gain=0 (neutro). El playerStore aplica los gains
+    // del usuario via setEqBandGain una vez que el AudioContext existe.
+    eqBands = EQ_BAND_FREQS.map((freq, i) => {
+      const filter = ctx!.createBiquadFilter();
+      if (i === 0) {
+        filter.type = "lowshelf";
+      } else if (i === EQ_BAND_FREQS.length - 1) {
+        filter.type = "highshelf";
+      } else {
+        filter.type = "peaking";
+        filter.Q.value = EQ_PEAKING_Q;
+      }
+      filter.frequency.value = freq;
+      filter.gain.value = 0;
+      return filter;
+    });
+
+    preMasterGain.connect(eqBands[0]);
+    for (let i = 0; i < eqBands.length - 1; i++) {
+      eqBands[i].connect(eqBands[i + 1]);
+    }
+    eqBands[eqBands.length - 1].connect(masterGain);
+
     masterGain.connect(playPauseGain);
     playPauseGain.connect(ctx.destination);
 
@@ -93,6 +130,33 @@ export function getAudioContext(): AudioContext {
     channelB = buildChannel("b", getAudioElementB());
   }
   return ctx;
+}
+
+/**
+ * Aplica un gain (en dB, -12..+12) a una banda específica del EQ.
+ *
+ * `enabled=false` fuerza 0dB sin tocar el valor "intencionado" del usuario
+ * — el playerStore lo llama con `enabled=false` para bypassear sin perder
+ * el preset que el usuario armó. Los nodos siguen procesando (overhead
+ * insignificante: 10 BiquadFilters a 0dB es transparente), pero es
+ * efectivamente flat.
+ */
+export function setEqBandGain(
+  band: number,
+  gainDb: number,
+  enabled: boolean,
+): void {
+  if (band < 0 || band >= eqBands.length) return;
+  getAudioContext();
+  const effectiveGain = enabled ? gainDb : 0;
+  // setTargetAtTime con time-constant chico (5ms) para evitar zipper noise
+  // cuando el usuario arrastra el slider rápido. Si seteamos `.value =` raw
+  // y el cambio es grande, Chrome inserta un step audible.
+  eqBands[band].gain.setTargetAtTime(
+    effectiveGain,
+    ctx!.currentTime,
+    0.005,
+  );
 }
 
 export function getChannel(id: ChannelId): Channel {

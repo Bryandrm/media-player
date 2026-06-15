@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-export type View = "library" | "visualizer" | "downloads";
+export type View = "library" | "visualizer" | "downloads" | "eq";
 
 /** Modo del panel izquierdo del VisualizerView. El visualizer y las letras
  *  son views alternativas del track actual — la library queda en el panel
