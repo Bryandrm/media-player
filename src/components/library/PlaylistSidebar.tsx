@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { usePlaylistStore } from "../../stores/playlistStore";
 import { Button } from "../ui/Button";
 
@@ -6,6 +6,7 @@ import { Button } from "../ui/Button";
 //   - ALL TRACKS (default, selectedId=null) — muestra la library completa.
 //   - Una fila por playlist con name + track_count.
 //   - + NEW PLAYLIST → inline input para crear sin abrir modal.
+//   - Doble-click en una playlist → editar el nombre inline.
 //
 // Brutalist: borde a la derecha (separa del table), filas con hover invert,
 // item activo con bg-fg como las tabs. Sin iconos — todo texto.
@@ -16,9 +17,39 @@ export function PlaylistSidebar() {
   const select = usePlaylistStore((s) => s.select);
   const create = usePlaylistStore((s) => s.create);
   const remove = usePlaylistStore((s) => s.remove);
+  const rename = usePlaylistStore((s) => s.rename);
 
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+
+  // Rename inline: qué playlist se está editando + el valor en vuelo. Un solo
+  // rename a la vez. `skipBlur` evita que el commit-on-blur se dispare cuando
+  // el blur lo causó Enter (ya commiteó) o Escape (canceló) — sin esto, Escape
+  // terminaría guardando igual.
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const skipBlur = useRef(false);
+
+  const startRename = (id: number, current: string) => {
+    setEditingId(id);
+    setEditName(current);
+  };
+
+  const submitRename = async () => {
+    const id = editingId;
+    if (id === null) return;
+    const trimmed = editName.trim();
+    setEditingId(null);
+    setEditName("");
+    // Vacío o sin cambios → no tocamos el backend.
+    if (trimmed === "") return;
+    await rename(id, trimmed);
+  };
+
+  const cancelRename = () => {
+    setEditingId(null);
+    setEditName("");
+  };
 
   const onCreate = async () => {
     if (name.trim() === "") {
@@ -65,16 +96,48 @@ export function PlaylistSidebar() {
           </div>
         )}
 
-        {playlists.map((p) => (
-          <SidebarRow
-            key={p.id}
-            label={p.name}
-            count={p.trackCount}
-            active={selectedId === p.id}
-            onClick={() => select(p.id)}
-            onDelete={() => onDelete(p.id, p.name)}
-          />
-        ))}
+        {playlists.map((p) =>
+          editingId === p.id ? (
+            <div key={p.id} className="px-3 py-1.5 border-b border-muted/30">
+              <input
+                autoFocus
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    skipBlur.current = true;
+                    submitRename();
+                  }
+                  if (e.key === "Escape") {
+                    skipBlur.current = true;
+                    cancelRename();
+                  }
+                }}
+                onBlur={() => {
+                  // Commit-on-blur, salvo que Enter/Escape ya lo hayan resuelto.
+                  if (skipBlur.current) {
+                    skipBlur.current = false;
+                    return;
+                  }
+                  submitRename();
+                }}
+                className="w-full bg-bg text-fg border-2 border-fg px-2 py-1 text-xs font-mono uppercase tracking-wider focus:outline-none focus:border-accent placeholder:text-muted"
+                maxLength={64}
+              />
+            </div>
+          ) : (
+            <SidebarRow
+              key={p.id}
+              label={p.name}
+              count={p.trackCount}
+              active={selectedId === p.id}
+              onClick={() => select(p.id)}
+              onRename={() => startRename(p.id, p.name)}
+              onDelete={() => onDelete(p.id, p.name)}
+            />
+          ),
+        )}
       </div>
 
       <div className="shrink-0 border-t-2 border-fg p-3">
@@ -128,12 +191,14 @@ function SidebarRow({
   count,
   active,
   onClick,
+  onRename,
   onDelete,
 }: {
   label: string;
   count: number | null;
   active: boolean;
   onClick: () => void;
+  onRename?: () => void;
   onDelete?: () => void;
 }) {
   const [hover, setHover] = useState(false);
@@ -142,8 +207,10 @@ function SidebarRow({
   return (
     <button
       onClick={onClick}
+      onDoubleClick={onRename}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
+      title={onRename ? "Double-click to rename" : undefined}
       className={`w-full text-left px-4 py-2 text-xs uppercase tracking-wider border-b border-muted/30 flex items-center gap-2 ${
         active ? "bg-fg text-bg font-bold" : "hover:bg-fg hover:text-bg"
       }`}

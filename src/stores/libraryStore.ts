@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { usePlaylistStore } from "./playlistStore";
 import type { Track, ScanReport } from "../types";
 
 type LibraryState = {
@@ -23,7 +24,7 @@ type LibraryState = {
   scanDirectory: () => Promise<void>;
 };
 
-export const useLibraryStore = create<LibraryState>((set) => ({
+export const useLibraryStore = create<LibraryState>((set, get) => ({
   tracks: [],
   scanning: false,
   lastReport: null,
@@ -39,6 +40,14 @@ export const useLibraryStore = create<LibraryState>((set) => ({
     try {
       const list = await invoke<Track[]>("library_list_tracks");
       set({ tracks: list });
+      // Mantener en sync el cache de la playlist seleccionada. La vista de
+      // playlist (PlaylistSidebar → tracksOfSelected) es un cache aparte que
+      // viene de un JOIN con los mismos campos derivados (lyrics_status, ID).
+      // Si no lo refrescamos acá, identificar/limpiar/escanear/fetchear letras
+      // actualiza la library pero deja la playlist con datos viejos. Como TODOS
+      // esos flujos pasan por loadTracks(), este es el único punto de sync.
+      const { selectedId, reloadSelectedTracks } = usePlaylistStore.getState();
+      if (selectedId !== null) await reloadSelectedTracks();
     } catch (e) {
       set({ error: String(e) });
     }
@@ -49,10 +58,7 @@ export const useLibraryStore = create<LibraryState>((set) => ({
     // para que la UI refleje los thumbnails recién populados.
     try {
       const updated = await invoke<number>("library_backfill_covers");
-      if (updated > 0) {
-        const list = await invoke<Track[]>("library_list_tracks");
-        set({ tracks: list });
-      }
+      if (updated > 0) await get().loadTracks();
     } catch (e) {
       // Silent fail — el backfill es polish, no crítico.
       console.warn("backfill covers failed:", e);
@@ -67,11 +73,7 @@ export const useLibraryStore = create<LibraryState>((set) => ({
     set({ cleaning: true, error: null });
     try {
       const updated = await invoke<number>("library_backfill_metadata");
-      // Re-leer tracks aunque updated sea 0 — el contador en UI reflejará.
-      if (updated > 0) {
-        const list = await invoke<Track[]>("library_list_tracks");
-        set({ tracks: list });
-      }
+      if (updated > 0) await get().loadTracks();
       set({ lastCleanedCount: updated });
     } catch (e) {
       set({ error: String(e) });
@@ -89,8 +91,8 @@ export const useLibraryStore = create<LibraryState>((set) => ({
       const report = await invoke<ScanReport>("library_scan_directory", {
         path: picked,
       });
-      const list = await invoke<Track[]>("library_list_tracks");
-      set({ lastReport: report, tracks: list });
+      set({ lastReport: report });
+      await get().loadTracks();
     } catch (e) {
       set({ error: String(e) });
     } finally {

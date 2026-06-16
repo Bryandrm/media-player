@@ -153,10 +153,14 @@ src-tauri/resources/scripts/
   sliders verticales, BYPASS preserva preset, double-click resetea banda
   individual. Insertado entre `preMasterGain` y `masterGain` → visualizer
   (tap pre-EQ) independiente. Ver [ADR-023](./docs/DECISIONS.md#adr-023).
-- **Playlists** ✓ (2026-06-14) — CRUD + add/remove tracks + sidebar UI +
+- **Playlists** ✓ (2026-06-14, cerrado 2026-06-16) — CRUD + add/remove
+  tracks + sidebar UI + **rename inline (doble-click)** +
   `getQueue()` lee de playlist seleccionada → NEXT/PREV/shuffle navegan
   dentro de la playlist. Schema desde Fase 0 (no migración nueva).
-  Reorder de tracks + rename UI + smart playlists quedan para polish.
+  **Cache de la playlist seleccionada se sincroniza vía
+  `libraryStore.loadTracks()`** (único punto): identify/clean/scan/fetch de
+  letras refrescan también `tracksOfSelected`. Reorder de tracks + smart
+  playlists quedan para polish.
 - Próximo recomendado: **Lyrics 2.c.3 (Musixmatch)** para cerrar la brecha
   de UX seamless que Bryan levantó después de 2.c.1, o **drag & drop a la
   library** como quick win, o **smart playlists / export M3U** para
