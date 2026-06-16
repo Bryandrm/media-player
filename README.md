@@ -21,7 +21,7 @@
 | Herramienta | Versión | Notas |
 |---|---|---|
 | Node | 20+ | via nvm/fnm recomendado |
-| pnpm | 10+ | `npm i -g pnpm` |
+| pnpm | 10+ | `corepack enable pnpm` (viene con Node) o `npm i -g pnpm` |
 | Rust | stable | `rustup-init -y --default-toolchain stable` |
 
 **Optional (cada uno desbloquea su feature):**
@@ -42,6 +42,13 @@ pnpm install
 pnpm tauri dev
 ```
 
+> **pnpm 10+ pide aprobar build scripts.** En el primer `pnpm install`, pnpm
+> deja en _ignored builds_ a `esbuild` y `core-js`. `esbuild` necesita su
+> postinstall para bajar el binario nativo, así que hay que aprobarlo o
+> `pnpm tauri dev` falla en el pre-check de deps. El repo ya incluye un
+> `pnpm-workspace.yaml` con `allowBuilds` resuelto (`esbuild: true`,
+> `core-js: false`); si lo borrás, corré `pnpm approve-builds` y aprobá `esbuild`.
+
 La primera corrida compila ~300 crates de Tauri y tarda 5–10 minutos. Las siguientes son incrementales (segundos).
 
 ```bash
@@ -59,18 +66,20 @@ cd src-tauri && cargo test --lib           # tests Rust (audio::cleanup, etc)
 .
 ├── src/           # Frontend React + TS
 │   ├── audio/         singletons audio A/B + AudioContext + 4 GainNodes
-│   ├── components/    ui/ library/ player/ visualizer/ lyrics/ downloads/
+│   ├── components/    ui/ library/ (+ playlists) player/ visualizer/ lyrics/ eq/ downloads/
 │   ├── hooks/         useAudioPlayer, useLyricsSync, useSyncedLyrics,
 │   │                  usePlaybackPersist, useMediaSession, …
-│   ├── stores/        playerStore, libraryStore, uiStore, lyricsStore, downloadStore
+│   ├── stores/        playerStore (+ eqGains/eqEnabled), libraryStore, uiStore,
+│   │                  lyricsStore, downloadStore, identificationStore, playlistStore
 │   ├── lib/           format, search, lrcParser (puros)
 │   └── styles/        tokens.css (design tokens brutalist)
 ├── src-tauri/     # Backend Rust
 │   ├── src/
 │   │   ├── audio/         lofty: extract_metadata + extract_cover_art
 │   │   │   └── cleanup.rs heurísticas para metadata yt-dlp (+ tests)
-│   │   ├── commands/      thin wrappers: library, downloader, lyrics, system
-│   │   ├── db/            sqlx queries: tracks, lyrics
+│   │   ├── commands/      thin wrappers: library, downloader, lyrics, system,
+│   │   │                  identification, karaoke, playlists
+│   │   ├── db/            sqlx queries: tracks, lyrics, settings, playlists
 │   │   ├── downloader/    yt-dlp child + stdout/stderr fan-in
 │   │   ├── lyrics/        cascade: embedded.rs (USLT) + lrclib.rs (get + search)
 │   │   ├── contracts.rs   tipos serializados a TS
@@ -84,7 +93,7 @@ cd src-tauri && cargo test --lib           # tests Rust (audio::cleanup, etc)
 Documentos fuente de verdad:
 - [docs/PLAN-reproductor-brutalist.md](docs/PLAN-reproductor-brutalist.md) — visión, scope, roadmap
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — arquitectura técnica, contratos Tauri, pipeline de audio, lyrics
-- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 22 ADRs al 2026-05-04
+- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 23 ADRs al 2026-06-14
 - [docs/LYRICS.md](docs/LYRICS.md) — plan por fases del sub-sistema de letras
 - [docs/IDENTIFICATION.md](docs/IDENTIFICATION.md) — sub-sistema de identificación (AcoustID + Chromaprint)
 - [docs/KARAOKE.md](docs/KARAOKE.md) — sub-sistema de karaoke (forced alignment + futuras Fases B-E)
@@ -92,7 +101,7 @@ Documentos fuente de verdad:
 
 ## Estado actual
 
-**Fase 0 — Setup** ✓ · **Fase 1 — MVP funcional** ✓ (cerrada 2026-05-02 al 100%) · **AcoustID Fase 1+2** ✓ · **Lyrics 2.a** ✓ · **Karaoke Fase A** ✓ (al 2026-05-04)
+**Fase 0 — Setup** ✓ · **Fase 1 — MVP funcional** ✓ (cerrada 2026-05-02 al 100%) · **AcoustID Fase 1+2** ✓ · **Lyrics 2.a** ✓ · **Karaoke Fase A** ✓ (revertido a fake, ver abajo) · **Lyrics 2.c.1 — manual edit** ✓ · **EQ 10 bandas** ✓ · **Playlists** ✓ (al 2026-06-14)
 
 Funcionando hoy:
 - **Player**: play/pause con fade gradual, seek, volume (GainNode), mute, prev/next, shuffle con historial (cap 64), crossfade configurable (off/3/6/12s) entre tracks.
@@ -101,13 +110,16 @@ Funcionando hoy:
 - **Visualizer**: Butterchurn side-by-side con la library, split arrastrable, auto-cycle de presets random cada 5–10s, fullscreen vía `F`. Persistent mount — sin freeze al cambiar de tab.
 - **Lyrics**: LRCLIB + USLT embebido. Panel sincronizado (rAF) con karaoke fill per-palabra (gradient HARD entre accent y fg). Click-to-seek, offset/speed/RESET, ALIGN mode (set offset clickeando línea), AUTO-ALIGN (forced alignment via WhisperX). Indicador `[L]/·/♪/—` en cada row de la library, auto-fetch on track change.
 - **Identification AcoustID**: fpcalc fingerprint → MBID de MusicBrainz → pisa metadata sucia. Single-track + bulk IDENTIFY ALL con throttle 2.85 rps cancelable. Indicador ID per row (`[ID]`/`?`/`—`/`!`/`⌛`).
-- **Karaoke Fase A**: forced alignment via WhisperX en align-only mode. Genera A2 LRC con per-word timestamps + trailing markers. Carrera tarda ~30s-2min. Calidad depende de la calidad del LRC — para LRC bueno funciona excelente; para LRCLIB con letras imperfectas hereda el mismatch (límite teórico).
+- **Karaoke Fase A** (infraestructura): forced alignment via WhisperX en align-only mode + parser A2 + botón AUTO-ALIGN. **Actualmente revertido a fake karaoke** (interpolación uniforme dentro de línea) porque WhisperX hereda los mismatches del LRC de LRCLIB. Volverá cuando Lyrics 2.c.3 (Musixmatch) suba la calidad del LRC base. Ver [docs/KARAOKE.md §13](docs/KARAOKE.md#13-lecciones-aprendidas-fase-a).
+- **Lyrics manual edit (2.c.1)**: botón EDIT en LyricsView → modal con textareas synced + plain. Guarda vía `lyrics_save_manual_edit`, sobreescribe `original_synced_lyrics` (preserva la edición a través de RE-ALIGNs) y resetea offset/speedRatio. Escalera de emergencia para usuario técnico, no flujo seamless aún.
+- **Equalizer 10 bandas**: `BiquadFilterNode` chain ISO estándar (lowshelf + 8 peaking + highshelf), ±12dB, tab EQ con sliders verticales, BYPASS preserva preset, double-click resetea banda. Insertado entre `preMasterGain` y `masterGain` → el visualizer tapea pre-EQ (independiente). Ver [ADR-023](docs/DECISIONS.md#adr-023).
+- **Playlists**: CRUD + add/remove tracks + sidebar UI. `getQueue()` lee de la playlist seleccionada → NEXT/PREV/shuffle navegan dentro de ella. Reorder + rename UI + smart playlists quedan para polish.
 - **Toggle visualizer ↔ lyrics** dentro del split, persistido.
 - **Persistencia**: último track + posición entre sesiones (sin auto-play). Volume/mute/shuffle/crossfade/preset/split/autoCycle/paneMode via Zustand `persist`.
 - **Media keys**: F7/F8/F9 + AirPods + lock screen + Now Playing widget (MediaSession API). Probado en macOS, pendiente Windows.
 - **Keyboard shortcuts**: Space, ←/→, ↑/↓, M, N, P, S, V, F.
 
-**Próximo recomendado**: Lyrics Fase 2.c — UI manual edit de letras + alternative providers (Genius/Musixmatch). Justificación: el bottleneck del karaoke es la calidad del LRC; mejor LRC = mejor alignment automático.
+**Próximo recomendado**: Lyrics Fase 2.c.3 — provider Musixmatch para cerrar la brecha de UX seamless (mejor LRC base = mejor alignment automático = vuelve el karaoke real). Alternativas: drag & drop a la library (quick win) o smart playlists / export M3U (apalanca lo recién hecho). Justificación: el bottleneck del karaoke es la calidad del LRC.
 
 Ver [PLAN §6](docs/PLAN-reproductor-brutalist.md#6-roadmap-por-fases) para el plan completo.
 
