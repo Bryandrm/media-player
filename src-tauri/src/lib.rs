@@ -59,6 +59,13 @@ pub fn run() {
             commands::identification::identification_identify_all,
             commands::identification::identification_cancel_all,
             commands::karaoke::karaoke_auto_align,
+            commands::playlists::playlist_create,
+            commands::playlists::playlist_list,
+            commands::playlists::playlist_delete,
+            commands::playlists::playlist_rename,
+            commands::playlists::playlist_add_track,
+            commands::playlists::playlist_remove_track,
+            commands::playlists::playlist_get_tracks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

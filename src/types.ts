@@ -68,6 +68,14 @@ export type ScanReport = {
   errors: number;
 };
 
+export type Playlist = {
+  id: number;
+  name: string;
+  description: string | null;
+  /** Calculado en SQL via LEFT JOIN. Se refresca cada vez que load() corre. */
+  trackCount: number;
+};
+
 export type DependencyStatus = {
   ytDlp: boolean;
   ffmpeg: boolean;

@@ -3,6 +3,7 @@ import { useLibraryStore } from "./stores/libraryStore";
 import { useDownloadStore } from "./stores/downloadStore";
 import { useUiStore } from "./stores/uiStore";
 import { useIdentificationStore } from "./stores/identificationStore";
+import { usePlaylistStore } from "./stores/playlistStore";
 import { useAudioPlayer } from "./hooks/useAudioPlayer";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useDownloadEvents } from "./hooks/useDownloadEvents";
@@ -13,6 +14,7 @@ import { useLyricsSync } from "./hooks/useLyricsSync";
 import { Tabs } from "./components/ui/Tabs";
 import { LibraryToolbar } from "./components/library/LibraryToolbar";
 import { LibraryTable } from "./components/library/LibraryTable";
+import { PlaylistSidebar } from "./components/library/PlaylistSidebar";
 import { PlayerBar } from "./components/player/PlayerBar";
 import { VisualizerView } from "./components/visualizer/VisualizerView";
 import { DownloadsView } from "./components/downloads/DownloadsView";
@@ -25,6 +27,7 @@ function App() {
   const error = useLibraryStore((s) => s.error);
   const checkDependencies = useDownloadStore((s) => s.checkDependencies);
   const loadApiKey = useIdentificationStore((s) => s.loadApiKey);
+  const loadPlaylists = usePlaylistStore((s) => s.load);
   const view = useUiStore((s) => s.view);
 
   // VisualizerView se monta lazy en el primer visit a la tab y queda
@@ -47,7 +50,8 @@ function App() {
     loadTracks().then(() => backfillCovers());
     checkDependencies();
     loadApiKey();
-  }, [loadTracks, backfillCovers, checkDependencies, loadApiKey]);
+    loadPlaylists();
+  }, [loadTracks, backfillCovers, checkDependencies, loadApiKey, loadPlaylists]);
 
   useEffect(() => {
     if (view === "visualizer") setVisualizerVisited(true);
@@ -69,7 +73,16 @@ function App() {
       )}
 
       <div className="flex-1 min-h-0 overflow-hidden relative">
-        {view === "library" && <LibraryTable />}
+        {view === "library" && (
+          // Library = sidebar de playlists + tabla. Flex horizontal para
+          // que el sidebar quede sticky y la tabla scrollee independiente.
+          <div className="flex h-full w-full">
+            <PlaylistSidebar />
+            <div className="flex-1 min-w-0">
+              <LibraryTable />
+            </div>
+          </div>
+        )}
         {view === "downloads" && <DownloadsView />}
         {view === "eq" && <EqualizerView />}
         {/* Visualizer persistente: una vez visitado, queda montado siempre

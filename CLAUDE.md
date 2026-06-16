@@ -28,7 +28,7 @@ Documentos fuente de verdad:
 - **Backend:** Rust. SQLite vía `sqlx` 0.8 (runtime tokio).
 - **Audio:** **dos** singletons `<audio>` (channel A y B, fuera de JSX, en
   `audio/element.ts`) para soportar crossfade. Pipeline:
-  `audioA/B → sourceA/B → channelGainA/B → preMasterGain → masterGain → playPauseGain → destination`.
+  `audioA/B → sourceA/B → channelGainA/B → preMasterGain → eqBands[0..9] → masterGain → playPauseGain → destination`.
   Butterchurn tapea `preMasterGain` (mezcla de los dos canales). **El volumen
   real se controla con `masterGain`**, no con `audio.volume` (ver Gotcha #2).
   Fade in/out al play/pause via `playPauseGain` con `cancelAndHoldAtTime`.
@@ -71,34 +71,38 @@ src/
 │   └── context.ts          AudioContext + channelGains + preMasterGain
 │                           + masterGain + playPauseGain + fade helpers
 ├── components/
-│   ├── ui/                 Button, Tabs, MarqueeText (genéricos)
-│   ├── library/            LibraryTable (con indicador L), LibrarySearchBar,
-│   │                       LibraryToolbar (SCAN + CLEAN METADATA)
+│   ├── ui/                 Button, Tabs (con tab EQ), MarqueeText (genéricos)
+│   ├── library/            LibraryTable (con indicador L + columna +/−),
+│   │                       LibrarySearchBar, LibraryToolbar (SCAN + CLEAN),
+│   │                       PlaylistSidebar, AddToPlaylistPopover
 │   ├── player/             PlayerBar, Controls (con XFADE button), SeekBar,
 │   │                       VolumeSlider, CoverArt
 │   ├── visualizer/         VisualizerView (con toggle vis/lyrics + persistent
 │   │                       mount), VisualizerCanvas, PresetSelector
-│   ├── lyrics/             LyricsView (panel sincronizado)
+│   ├── lyrics/             LyricsView (panel sincronizado), LyricsEditModal
+│   ├── eq/                 EqualizerView (10 sliders verticales + bypass)
 │   └── downloads/          DownloadsView, DownloadForm, DownloadQueue, …
 ├── hooks/                  useAudioPlayer, useKeyboardShortcuts, usePressFlash,
 │                           usePlaybackPersist, useMediaSession, useLyricsSync,
 │                           useSyncedLyrics (rAF active-line tracking),
-│                           useAutoCyclePresets, useDownloadEvents
-├── stores/                 playerStore, libraryStore, uiStore, downloadStore,
-│                           lyricsStore, identificationStore
-├── hooks/                  useAudioPlayer, useDownloadEvents,
-│                           useIdentificationEvents, …
+│                           useAutoCyclePresets, useDownloadEvents,
+│                           useIdentificationEvents
+├── stores/                 playerStore (con eqGains + eqEnabled), libraryStore,
+│                           uiStore (view incluye 'eq'), downloadStore,
+│                           lyricsStore, identificationStore, playlistStore
 ├── lib/                    format.ts, search.ts, lrcParser.ts (puros)
-├── styles/tokens.css       design tokens + range/marquee/progress CSS
-└── types.ts                Track (con lyricsStatus + identificationStatus),
-                            Download, Lyrics, IdentificationResult, …
+├── styles/tokens.css       design tokens + range/marquee/progress CSS +
+│                           range-brutal-vert (EQ vertical slider)
+└── types.ts                Track, Download, Lyrics, IdentificationResult,
+                            Playlist, …
 
 src-tauri/src/
 ├── lib.rs                  Tauri builder + invoke_handler + reqwest::Client +
 │                           BulkIdentifyState manage()
 ├── commands/               thin wrappers — library, downloader, system,
-│                           lyrics, identification
-├── db/                     sqlx queries por tabla (tracks, lyrics, settings)
+│                           lyrics, identification, karaoke, playlists
+├── db/                     sqlx queries por tabla (tracks, lyrics, settings,
+│                           playlists)
 ├── audio/                  lofty: extract_metadata + extract_cover_art
 │   └── cleanup.rs          heurísticas para limpiar metadata yt-dlp
 │                           (Topic/VEVO/Official Video/Artist - Title prefix)
@@ -144,9 +148,20 @@ src-tauri/resources/scripts/
   no flujo seamless. Ver [docs/LYRICS.md "Bandera de UX"](./docs/LYRICS.md)
   para el path hacia automatización (Musixmatch + auto-fallback por
   confidence + auto-detect de mismatch via whisperx score).
-- Próximo recomendado: **abrir Fase 2 del PLAN general** (playlists, EQ,
-  drag&drop, etc.) o **Lyrics 2.c.3 (Musixmatch)** si querés cerrar la
-  brecha de UX seamless antes. Decisión abierta del autor.
+- **Equalizer 10 bandas** ✓ (2026-06-14) — `BiquadFilterNode` chain ISO
+  estándar (lowshelf + 8 peaking + highshelf), ±12dB, tab EQ dedicada con
+  sliders verticales, BYPASS preserva preset, double-click resetea banda
+  individual. Insertado entre `preMasterGain` y `masterGain` → visualizer
+  (tap pre-EQ) independiente. Ver [ADR-023](./docs/DECISIONS.md#adr-023).
+- **Playlists** ✓ (2026-06-14) — CRUD + add/remove tracks + sidebar UI +
+  `getQueue()` lee de playlist seleccionada → NEXT/PREV/shuffle navegan
+  dentro de la playlist. Schema desde Fase 0 (no migración nueva).
+  Reorder de tracks + rename UI + smart playlists quedan para polish.
+- Próximo recomendado: **Lyrics 2.c.3 (Musixmatch)** para cerrar la brecha
+  de UX seamless que Bryan levantó después de 2.c.1, o **drag & drop a la
+  library** como quick win, o **smart playlists / export M3U** para
+  apalancar lo recién hecho. Lyrics/karaoke siempre tiene prioridad
+  paralela (ver feedback de memoria correspondiente).
 
 ---
 

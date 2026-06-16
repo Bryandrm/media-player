@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useLibraryStore } from "../../stores/libraryStore";
 import { usePlayerStore } from "../../stores/playerStore";
 import { useIdentificationStore } from "../../stores/identificationStore";
 import { useDownloadStore } from "../../stores/downloadStore";
+import { usePlaylistStore } from "../../stores/playlistStore";
 import { formatDuration } from "../../lib/format";
 import { filterTracks } from "../../lib/search";
 import type {
@@ -12,6 +13,7 @@ import type {
 } from "../../types";
 import { MarqueeText } from "../ui/MarqueeText";
 import { LibrarySearchBar } from "./LibrarySearchBar";
+import { AddToPlaylistPopover } from "./AddToPlaylistPopover";
 
 // Indicador de letras en la columna L de la library.
 //   synced       → "[L]" en accent (la mejor experiencia, llamativo)
@@ -152,10 +154,46 @@ export function LibraryTable() {
   const openApiKeyModal = useIdentificationStore((s) => s.openApiKeyModal);
   const deps = useDownloadStore((s) => s.deps);
 
+  // Source switch: cuando el usuario seleccionó una playlist en el sidebar,
+  // mostramos sus tracks; cuando es null, la library entera. El search
+  // funciona igual en ambos casos.
+  const selectedPlaylistId = usePlaylistStore((s) => s.selectedId);
+  const playlistTracks = usePlaylistStore((s) => s.tracksOfSelected);
+  const removeTrackFromPlaylist = usePlaylistStore((s) => s.removeTrack);
+  const sourceTracks = selectedPlaylistId === null ? tracks : playlistTracks;
+
   const filtered = useMemo(
-    () => filterTracks(tracks, searchQuery),
-    [tracks, searchQuery],
+    () => filterTracks(sourceTracks, searchQuery),
+    [sourceTracks, searchQuery],
   );
+
+  // Popover de "add to playlist" — un popover global al table; el state
+  // mantiene cuál track lo abrió y dónde está anclado.
+  const [popoverState, setPopoverState] = useState<{
+    trackId: number;
+    trackTitle: string;
+    anchorRect: DOMRect;
+  } | null>(null);
+
+  const onPlusClick = (e: React.MouseEvent, track: Track) => {
+    e.stopPropagation(); // que no dispare playTrack del row.
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setPopoverState({
+      trackId: track.id,
+      trackTitle: track.title,
+      anchorRect: rect,
+    });
+  };
+
+  const onRemoveFromPlaylistClick = async (
+    e: React.MouseEvent,
+    trackId: number,
+  ) => {
+    e.stopPropagation();
+    if (selectedPlaylistId !== null) {
+      await removeTrackFromPlaylist(selectedPlaylistId, trackId);
+    }
+  };
 
   // Click en la celda ID → cascade fpcalc → AcoustID. Tres guards antes:
   //   1. fpcalc instalado (sin él, fingerprint imposible).
@@ -223,6 +261,9 @@ export function LibraryTable() {
               <col className="w-3/5" />
               <col className="w-2/5" />
               <col className="w-24" />
+              {/* Columna del botón + (add to playlist) o − (remove from
+                  selected playlist). Mismo width que L/ID. */}
+              <col className="w-10" />
             </colgroup>
             <thead className="sticky top-0 bg-bg">
               <tr className="border-b-2 border-fg text-muted">
@@ -239,6 +280,9 @@ export function LibraryTable() {
                 <th className="text-left px-3 py-2">TITLE</th>
                 <th className="text-left px-3 py-2">ARTIST</th>
                 <th className="text-right px-3 py-2">DURATION</th>
+                <th className="text-center px-3 py-2" title="Add to / remove from playlist">
+                  {selectedPlaylistId === null ? "+" : "−"}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -291,6 +335,21 @@ export function LibraryTable() {
                     <td className="px-3 py-2 text-right tabular-nums">
                       {formatDuration(t.durationMs)}
                     </td>
+                    <td
+                      className="px-3 py-2 text-center font-bold cursor-pointer hover:text-accent"
+                      onClick={(e) =>
+                        selectedPlaylistId === null
+                          ? onPlusClick(e, t)
+                          : onRemoveFromPlaylistClick(e, t.id)
+                      }
+                      title={
+                        selectedPlaylistId === null
+                          ? "Add to playlist"
+                          : "Remove from playlist"
+                      }
+                    >
+                      {selectedPlaylistId === null ? "+" : "−"}
+                    </td>
                   </tr>
                 );
               })}
@@ -298,6 +357,14 @@ export function LibraryTable() {
           </table>
         )}
       </div>
+
+      <AddToPlaylistPopover
+        open={popoverState !== null}
+        trackId={popoverState?.trackId ?? -1}
+        trackTitle={popoverState?.trackTitle ?? ""}
+        anchorRect={popoverState?.anchorRect ?? null}
+        onClose={() => setPopoverState(null)}
+      />
     </div>
   );
 }

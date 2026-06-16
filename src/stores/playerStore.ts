@@ -19,6 +19,7 @@ import {
 } from "../audio/context";
 import { filterTracks } from "../lib/search";
 import { useLibraryStore } from "./libraryStore";
+import { usePlaylistStore } from "./playlistStore";
 import type { Track } from "../types";
 
 // Pasos del crossfade. 0=off, 3/6/12s. El botón XFADE en PlayerBar cicla
@@ -198,7 +199,13 @@ export const usePlayerStore = create<PlayerState>()(
 
       const getQueue = (): Track[] => {
         const { tracks, searchQuery } = useLibraryStore.getState();
-        return filterTracks(tracks, searchQuery);
+        // Si el usuario tiene una playlist seleccionada, el "queue" para
+        // next/prev/shuffle es esa playlist, no la library entera. El
+        // search aplica encima — si filtrás dentro de una playlist, NEXT
+        // navega los matches dentro de la playlist.
+        const { selectedId, tracksOfSelected } = usePlaylistStore.getState();
+        const source = selectedId === null ? tracks : tracksOfSelected;
+        return filterTracks(source, searchQuery);
       };
 
       // Mismo cálculo de "próximo" que `next()`, pero como función pura: no

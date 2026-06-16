@@ -422,13 +422,14 @@ Post-descarga, usar `lofty-rs` en Rust para leer los tags embebidos y poblar la 
 - [x] **Letras** (LRCLIB + USLT embebido) con panel sincronizado, click-to-seek, offset adjustable. Cleanup heurístico de metadata + LRCLIB search fallback. Indicador `L` en library. Auto-fetch on track change ([ADR-015](DECISIONS.md#adr-015), [ADR-017](DECISIONS.md#adr-017)).
 
 ### Fase 2 — Refinamiento
-- [ ] Playlists (crear, editar, reordenar, eliminar).
-- [ ] Equalizer básico (BiquadFilterNode chain — 10 bandas).
+- [x] **Playlists** ✓ (2026-06-14) — CRUD básico (create / rename / delete) + add/remove de tracks + sidebar en la library + queue integration (NEXT/PREV/shuffle navegan dentro de la playlist seleccionada). Schema desde Fase 0. Reorder de tracks, descripción editable, y rename UI quedan para sub-fase polish.
+- [x] **Equalizer básico** ✓ (2026-06-14) — 10 bandas ISO (32, 64, 125, 250, 500, 1k, 2k, 4k, 8k, 16k Hz) con `BiquadFilterNode` (lowshelf + 8 peaking + highshelf), ±12dB, BYPASS toggle, RESET, double-click reset por banda. Insertado entre `preMasterGain` y `masterGain` para que el visualizer (tap pre-EQ) sea independiente de la EQ del usuario. Persistido. Ver [ADR-023](DECISIONS.md#adr-023).
 - [ ] Smart playlists / auto-queue basado en género, año, o recientemente agregado.
 - [ ] Drag & drop de archivos para agregar a biblioteca.
 - [ ] MPRIS en Linux para integración con panel del sistema.
 - [ ] Exportar playlists a M3U.
-- [ ] **Lyrics Fase 2**: Genius (último recurso plain), manual paste, refetch botón, drift correction (`speedRatio`), tabla `lyrics_search_attempts` con TTL — ver [LYRICS.md](LYRICS.md).
+- [x] **Lyrics Fase 2.a + 2.b + 2.c.1** ✓ (2026-05-03 / 2026-05-04 / 2026-06-14) — drift correction (`speedRatio`), forced alignment via WhisperX, manual edit modal. Ver [LYRICS.md](LYRICS.md).
+- [ ] **Lyrics Fase 2.c.2+ (UX seamless)** — Musixmatch como provider primario, Genius como fallback plain, auto-fallback por confidence baja, auto-detect de mismatch via whisperx score. Ver [LYRICS.md "Bandera de UX"](LYRICS.md).
 - [ ] History persistente de descargas (chunk 2 — ADR-011).
 - [x] ~~Búsqueda rápida en biblioteca~~ — implementada en Fase 1 (token AND match).
 - [x] ~~Media keys integration~~ — implementada en Fase 1 (MediaSession API).

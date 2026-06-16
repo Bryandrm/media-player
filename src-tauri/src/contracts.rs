@@ -65,6 +65,18 @@ pub struct ScanReport {
     pub errors: usize,
 }
 
+/// Playlist del usuario. `track_count` viene de un agregado en SQL (vs traer
+/// la lista entera de track_ids en cada list) — el frontend lo muestra al lado
+/// del nombre en el sidebar.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Playlist {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub track_count: i64,
+}
+
 /// Estado de las dependencias externas. Detectadas al boot. Cada una
 /// desbloquea features distintas — el frontend muestra un banner por cada
 /// faltante con qué feature se queda inactiva.

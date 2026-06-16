@@ -28,6 +28,12 @@
 | ADR-015 | Lyrics Fase 1 sin trait abstraction | Accepted |
 | ADR-016 | Cleanup heurístico de metadata post-yt-dlp | Accepted |
 | ADR-017 | Auto-fetch de lyrics on track change para indicador library | Accepted |
+| ADR-018 | WhisperX (no aeneas) para forced alignment | Accepted |
+| ADR-019 | Forced alignment con bounds tight del LRC | Accepted |
+| ADR-020 | Backup `original_synced_lyrics` para re-aligns idempotentes | Accepted |
+| ADR-021 | A2 LRC extendido con trailing end marker | Accepted |
+| ADR-022 | Cursor de lyrics usa `wordTimestampsMs[0]` con alignment | Accepted |
+| ADR-023 | EQ insertado post-tap del visualizer | Accepted |
 
 ---
 
@@ -587,3 +593,40 @@ Aplicado a todos los lugares donde la línea tiene un "tiempo de inicio efectivo
 ### Consecuencias
 - Para tracks con LRC drifty + alignment ejecutado, la línea se vuelve "active" cuando arranca su primera palabra real (no cuando dice el LRC). UX correcto.
 - Auto-reset de offset/speed al alinear (`save_aligned`) — los ajustes manuales eran para compensar drift que ahora resolvió whisperx.
+
+---
+
+## ADR-023 — EQ insertado post-tap del visualizer
+
+**Fecha:** 2026-06-14 · **Estado:** Accepted
+
+### Contexto
+El EQ de 10 bandas (Fase 2 PLAN §6.2 #3) necesita un punto de inserción en el grafo Web Audio. Las dos opciones razonables:
+
+1. **Pre-tap** — entre `channelGain` y `preMasterGain`. El visualizer (que tapea `preMasterGain`) vería el audio post-EQ.
+2. **Post-tap** — entre `preMasterGain` y `masterGain`. El visualizer ve el audio pre-EQ.
+
+### Decisión
+**Post-tap.** Pipeline final:
+```
+audioA/B → sourceA/B → channelGainA/B → preMasterGain → eqBands[0..9] → masterGain → playPauseGain → destination
+                                              ↓
+                                   Butterchurn tap (independiente del EQ)
+```
+
+### Razón
+- El visualizer es **lectura objetiva del track**, no del listening del usuario. Si subís +12dB en 60Hz, querés escuchar más bass — pero el visualizer explotando en bass como artefacto del slider es confuso: el usuario lo lee como "el track tiene más bass" cuando es la EQ.
+- Mantiene la semántica establecida en ADR-013 (Butterchurn tapea `preMasterGain` para reaccionar al audio "real", aún con mute o pause-fade activo). El EQ es el siguiente layer de "ajuste personal" después de mute, en la misma categoría.
+- Si en algún momento queremos "el visualizer reacciona a lo que estoy oyendo", se puede agregar como toggle en `settings` ("tie visualizer to EQ"). No es la default.
+
+### Consecuencias
+- **Pro:** comportamiento del visualizer es determinista y predecible — depende del audio source, no de los sliders del usuario.
+- **Pro:** el usuario puede experimentar con EQ extremas sin "romper" el visualizer.
+- **Contra:** no hay way de hacer un demo de "mirá cómo cambia el visualizer cuando muevo el EQ" sin re-wirear el grafo. Aceptable — no es un use case real.
+- **Contra:** bypassear el EQ con `gain=0` en todas las bandas (vs disconnect/reconnect) deja los nodos procesando flat. Overhead despreciable (10 BiquadFilters a 0dB es transparente; CPU < 0.1%). Trade-off explícito por simplicidad de implementación.
+
+### Detalles de implementación
+- 10 bandas ISO: 32, 64, 125, 250, 500, 1k, 2k, 4k, 8k, 16k Hz.
+- Band 0 = lowshelf, band 9 = highshelf, bands 1-8 = peaking con Q=1.0.
+- Setter usa `setTargetAtTime(target, t, 0.005)` (5ms time-constant) para evitar zipper noise al arrastrar sliders rápido.
+- `eqEnabled=false` no desconecta el chain — todas las bandas se ponen a 0dB. Preserva el preset del usuario sin perder el flag.

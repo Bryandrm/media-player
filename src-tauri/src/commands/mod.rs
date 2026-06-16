@@ -11,4 +11,5 @@ pub mod identification;
 pub mod karaoke;
 pub mod library;
 pub mod lyrics;
+pub mod playlists;
 pub mod system;
