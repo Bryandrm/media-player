@@ -154,13 +154,36 @@ src-tauri/resources/scripts/
   individual. Insertado entre `preMasterGain` y `masterGain` → visualizer
   (tap pre-EQ) independiente. Ver [ADR-023](./docs/DECISIONS.md#adr-023).
 - **Playlists** ✓ (2026-06-14, cerrado 2026-06-16) — CRUD + add/remove
-  tracks + sidebar UI + **rename inline (doble-click)** +
-  `getQueue()` lee de playlist seleccionada → NEXT/PREV/shuffle navegan
-  dentro de la playlist. Schema desde Fase 0 (no migración nueva).
-  **Cache de la playlist seleccionada se sincroniza vía
+  tracks + sidebar UI + **rename inline (doble-click)** + **reorder por
+  drag & drop** (`playlist_reorder` reescribe `position`; sólo en vista de
+  playlist sin search activo) + `getQueue()` lee de playlist seleccionada →
+  NEXT/PREV/shuffle navegan dentro de la playlist. Schema desde Fase 0 (no
+  migración nueva). **Cache de la playlist seleccionada se sincroniza vía
   `libraryStore.loadTracks()`** (único punto): identify/clean/scan/fetch de
-  letras refrescan también `tracksOfSelected`. Reorder de tracks + smart
-  playlists quedan para polish.
+  letras refrescan también `tracksOfSelected`. Smart playlists quedan para
+  polish.
+- **Descarga de listas** ✓ (2026-06-16) — toggle **FULL PLAYLIST** en el
+  DownloadForm (default OFF = `--no-playlist`, un solo video; ON =
+  `--yes-playlist`). `run_yt_dlp` devuelve `Vec<DownloadedEntry>` (multi-file)
+  con `playlist_title`/`playlist_index` parseados del `--print` tab-delimited.
+  Si fue lista, los tracks van a "all tracks" **y** a una playlist
+  (`get_or_create_id` por nombre → idempotente al re-bajar). Progreso por item
+  vía evento `download-item` (N/M). Para listas ya bajadas, recupera el path de
+  la línea `has already been downloaded` (por si yt-dlp saltea `done`).
+  **Cookies**: select de navegador en el DownloadForm (`cookiesBrowser`
+  persistido en downloadStore) → `--cookies-from-browser <b>`. Necesario para
+  **playlists privadas** (yt-dlp anónimo devuelve "playlist does not exist") +
+  videos age-restricted / members-only. "" = sin cookies (default).
+- **Dedup de descargas** ✓ (2026-06-16) — en `persist_downloaded_file`, dos
+  niveles: (1) **por path** (`file_path UNIQUE` + `--no-overwrites`) para el
+  mismo video; (2) **por contenido** vía fingerprint Chromaprint exacto
+  (`find_id_by_fingerprint`) para la misma grabación traída de otro upload →
+  borra el archivo nuevo y reusa el track. Match **exacto** a propósito (cero
+  falsos positivos; re-encodes con master distinto NO matchean — mismo
+  principio que Gotcha #11). Sólo dedupea contra tracks con fingerprint
+  cacheado (download nuevo guarda el suyo, o identify previo). Requiere
+  `fpcalc`; sin él cae a dedup por-path solamente. **No aplica al SCAN** (no
+  borramos archivos del usuario).
 - Próximo recomendado: **Lyrics 2.c.3 (Musixmatch)** para cerrar la brecha
   de UX seamless que Bryan levantó después de 2.c.1, o **drag & drop a la
   library** como quick win, o **smart playlists / export M3U** para

@@ -60,6 +60,28 @@ pub async fn find_id_by_path(pool: &SqlitePool, file_path: &Path) -> AppResult<O
     Ok(id)
 }
 
+/// Devuelve el id de un track cuyo fingerprint Chromaprint coincide EXACTO con
+/// `fingerprint`, si existe. Usado por el downloader para dedup por contenido:
+/// dos archivos con el mismo fingerprint son la misma grabación (mismo master),
+/// aunque vengan de uploads distintos con distinto file_path. Match exacto =
+/// alta precisión, cero falsos positivos — preferimos dejar un duplicado antes
+/// que borrar un track legítimamente distinto (mismo principio que el cleanup,
+/// ver Gotcha #11). Un re-encode con master distinto produce otro fingerprint
+/// y NO matchea, intencionalmente. Sólo matchea tracks que ya tienen
+/// fingerprint cacheado (download nuevo o identify previo); los pre-feature
+/// con `acoustid_fingerprint = NULL` no participan.
+pub async fn find_id_by_fingerprint(
+    pool: &SqlitePool,
+    fingerprint: &str,
+) -> AppResult<Option<i64>> {
+    let id: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM tracks WHERE acoustid_fingerprint = ? LIMIT 1")
+            .bind(fingerprint)
+            .fetch_optional(pool)
+            .await?;
+    Ok(id)
+}
+
 /// Setea (o limpia) la ruta de cover art para un track existente.
 pub async fn set_cover_art(
     pool: &SqlitePool,

@@ -31,6 +31,20 @@ pub enum DownloadEvent {
     Progress(f32),
     /// Empezó alguno de los postprocessors ([ExtractAudio], [Metadata], etc).
     PostprocessStarted,
+    /// Sólo en descargas de playlist: yt-dlp empezó el item `current` de
+    /// `total`. Lo usamos para mostrar "3/12" en la UI.
+    ItemProgress { current: u32, total: u32 },
+}
+
+/// Un archivo final materializado por yt-dlp. En descargas de un solo video
+/// la lista tiene un elemento con `playlist_title`/`playlist_index` en None.
+/// En descargas de playlist, uno por entry, con el título de la lista y el
+/// índice 1-based (orden original de la playlist).
+#[derive(Debug, Clone)]
+pub struct DownloadedEntry {
+    pub path: PathBuf,
+    pub playlist_title: Option<String>,
+    pub playlist_index: Option<i64>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -48,13 +62,17 @@ pub enum DownloadError {
 const RECENT_LINES_CAP: usize = 64;
 
 /// Corre yt-dlp para una URL. `library_dir` es la raíz donde se materializa
-/// el árbol `<uploader>/<title>.mp3`. Devuelve la ruta absoluta del archivo
-/// final (post-conversión + post-move).
+/// el árbol `<uploader>/<title>.mp3`. Si `playlist` es false, fuerza
+/// `--no-playlist` (un solo video aunque la URL traiga `list=`); si es true,
+/// `--yes-playlist` baja la lista completa. Devuelve un entry por archivo
+/// final materializado (post-conversión + post-move).
 pub async fn run_yt_dlp<F>(
     url: &str,
     library_dir: &Path,
+    playlist: bool,
+    cookies_browser: Option<&str>,
     mut on_event: F,
-) -> Result<PathBuf, DownloadError>
+) -> Result<Vec<DownloadedEntry>, DownloadError>
 where
     F: FnMut(DownloadEvent) + Send + 'static,
 {
@@ -65,7 +83,22 @@ where
     let library_str = library_dir.to_string_lossy().into_owned();
     let temp_arg = format!("temp:{}", pending_dir.display());
 
+    // El template de `--print` emite los campos separados por TAB para que el
+    // parser los split-ee sin ambigüedad (los títulos pueden tener espacios,
+    // guiones, etc, pero no tabs). `playlist_title`/`playlist_index` salen
+    // "NA" en un video suelto → el parser los mapea a None.
+    let playlist_flag = if playlist { "--yes-playlist" } else { "--no-playlist" };
+
+    // Cookies del navegador: necesarias para playlists privadas, videos con
+    // restricción de edad, members-only, etc. Si no hay browser seteado, no
+    // pasamos el flag (descargas anónimas, como antes).
+    let cookie_args: Vec<&str> = match cookies_browser {
+        Some(b) if !b.is_empty() => vec!["--cookies-from-browser", b],
+        _ => vec![],
+    };
+
     let mut child = Command::new("yt-dlp")
+        .args(&cookie_args)
         .args([
             // Ignorar configs globales/usuario. Si el usuario tiene un
             // ~/.config/yt-dlp/config con `--quiet`, nuestro parsing de
@@ -80,7 +113,7 @@ where
             "0",
             "--embed-metadata",
             "--embed-thumbnail",
-            "--no-playlist",
+            playlist_flag,
             "--no-overwrites",
             // `--newline` hace que cada update de progreso vaya en su propia
             // línea (default es overwriting con `\r`). Parseamos el formato
@@ -96,7 +129,7 @@ where
             "-P",
             &temp_arg,
             "--print",
-            "after_move:done %(filepath)s",
+            "after_move:done\t%(filepath)s\t%(playlist_title)s\t%(playlist_index)s",
             url,
         ])
         // yt-dlp es Python; sin esto su stdout/stderr quedan block-buffered
@@ -118,7 +151,11 @@ where
     let stdout_task = tokio::spawn(spawn_line_reader(stdout, tx.clone()));
     let stderr_task = tokio::spawn(spawn_line_reader_stderr(stderr, tx));
 
-    let mut final_path: Option<PathBuf> = None;
+    let mut entries: Vec<DownloadedEntry> = Vec::new();
+    // Título de la playlist capturado de la línea "Downloading playlist:" —
+    // fallback para nombrar la lista cuando TODOS los items ya estaban bajados
+    // (y por ende ningún `done` trae el `playlist_title`).
+    let mut playlist_title_hint: Option<String> = None;
     let mut recent_lines: Vec<String> = Vec::with_capacity(RECENT_LINES_CAP);
 
     while let Some(line) = rx.recv().await {
@@ -127,14 +164,48 @@ where
         }
         recent_lines.push(line.clone());
 
-        if let Some(path) = line.strip_prefix("done ") {
-            final_path = Some(PathBuf::from(path.trim()));
+        if let Some(rest) = line.strip_prefix("done\t") {
+            if let Some(entry) = parse_done_line(rest) {
+                entries.push(entry);
+            }
         } else if let Some(fraction) = parse_default_progress(&line) {
             on_event(DownloadEvent::Progress(fraction));
+        } else if let Some((current, total)) = parse_item_progress(&line) {
+            on_event(DownloadEvent::ItemProgress { current, total });
+        } else if let Some(title) = parse_downloading_playlist(&line) {
+            playlist_title_hint = Some(title);
+        } else if let Some(path) = parse_already_downloaded(&line) {
+            // `--no-overwrites` salteó el download → no corre el hook after_move
+            // que imprime `done`. Recuperamos el path para que el track ya
+            // existente igual se agregue a la playlist. Best-effort: si el path
+            // no matchea un track, el caller lo ignora.
+            entries.push(DownloadedEntry {
+                path,
+                playlist_title: None,
+                playlist_index: None,
+            });
         } else if is_postprocess_line(&line) {
             on_event(DownloadEvent::PostprocessStarted);
         }
     }
+
+    // Backfill del título de playlist en los entries que no lo traen (los
+    // recuperados de "already downloaded").
+    if let Some(title) = &playlist_title_hint {
+        for e in entries.iter_mut() {
+            if e.playlist_title.is_none() {
+                e.playlist_title = Some(title.clone());
+            }
+        }
+    }
+
+    // Dedup por path: si un mismo archivo apareció por `done` Y por "already
+    // downloaded", nos quedamos con el que trae playlist_index (más rico). El
+    // sort estable pone los que tienen índice primero; retain conserva el
+    // primero de cada path.
+    entries.sort_by_key(|e| e.playlist_index.is_none());
+    let mut seen = std::collections::HashSet::new();
+    entries.retain(|e| seen.insert(e.path.clone()));
 
     // Los readers ya terminaron (rx devolvió None), pero esperamos sus tasks
     // para que no queden colgando.
@@ -155,7 +226,75 @@ where
         return Err(DownloadError::NonZeroExit(msg));
     }
 
-    final_path.ok_or(DownloadError::NoFilepath)
+    if entries.is_empty() {
+        return Err(DownloadError::NoFilepath);
+    }
+    Ok(entries)
+}
+
+/// Parsea una línea `done\t<filepath>\t<playlist_title>\t<playlist_index>`
+/// (sin el prefijo "done\t", ya strip-eado por el caller). `playlist_title`
+/// y `playlist_index` valen "NA" cuando no es una playlist → los mapeamos a
+/// None. Devuelve None si no hay filepath (línea corrupta).
+fn parse_done_line(rest: &str) -> Option<DownloadedEntry> {
+    let mut parts = rest.split('\t');
+    let path = parts.next()?.trim();
+    if path.is_empty() {
+        return None;
+    }
+    let na_to_none = |s: Option<&str>| -> Option<String> {
+        let v = s?.trim();
+        if v.is_empty() || v == "NA" {
+            None
+        } else {
+            Some(v.to_string())
+        }
+    };
+    let playlist_title = na_to_none(parts.next());
+    let playlist_index = parts.next().and_then(|s| s.trim().parse::<i64>().ok());
+    Some(DownloadedEntry {
+        path: PathBuf::from(path),
+        playlist_title,
+        playlist_index,
+    })
+}
+
+/// Parsea `[download] Downloading item N of M` (yt-dlp lo imprime al empezar
+/// cada entry de una playlist). Versiones viejas decían "video" en vez de
+/// "item" — cubrimos ambas. Devuelve (current, total).
+fn parse_item_progress(line: &str) -> Option<(u32, u32)> {
+    let rest = line.strip_prefix("[download]")?.trim_start();
+    let rest = rest
+        .strip_prefix("Downloading item ")
+        .or_else(|| rest.strip_prefix("Downloading video "))?;
+    let (cur, total) = rest.split_once(" of ")?;
+    Some((cur.trim().parse().ok()?, total.trim().parse().ok()?))
+}
+
+/// Parsea `[download] Downloading playlist: <title>` — yt-dlp lo imprime al
+/// arrancar una playlist, aun si todos los items ya estaban descargados.
+/// Fallback para nombrar la lista cuando ningún `done` trae el título.
+fn parse_downloading_playlist(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("[download]")?.trim_start();
+    let title = rest.strip_prefix("Downloading playlist:")?.trim();
+    if title.is_empty() {
+        None
+    } else {
+        Some(title.to_string())
+    }
+}
+
+/// Parsea `[download] <path> has already been downloaded` — yt-dlp lo imprime
+/// cuando `--no-overwrites` saltea un archivo ya presente. Recuperamos el path
+/// para agregar el track existente a la playlist aunque no haya `done`.
+fn parse_already_downloaded(line: &str) -> Option<PathBuf> {
+    let rest = line.strip_prefix("[download]")?.trim_start();
+    let path = rest.strip_suffix("has already been downloaded")?.trim();
+    if path.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(path))
+    }
 }
 
 /// Lector genérico: lee del pipe hasta `\n`, después dentro de cada chunk
@@ -240,4 +379,70 @@ fn is_postprocess_line(line: &str) -> bool {
         || line.starts_with("[ffmpeg]")
         || line.starts_with("[Fixup") // FixupM4a, FixupTimestamp, FixupOggOpus, etc.
         || line.starts_with("[VideoConvertor]")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn done_line_single_video_has_no_playlist_fields() {
+        // Video suelto: playlist_title/index salen "NA" → None.
+        let entry = parse_done_line("/lib/Artist/Song.mp3\tNA\tNA").expect("parse");
+        assert_eq!(entry.path, PathBuf::from("/lib/Artist/Song.mp3"));
+        assert_eq!(entry.playlist_title, None);
+        assert_eq!(entry.playlist_index, None);
+    }
+
+    #[test]
+    fn done_line_playlist_parses_title_and_index() {
+        let entry = parse_done_line("/lib/Artist/Song.mp3\tMy Mix\t3").expect("parse");
+        assert_eq!(entry.playlist_title.as_deref(), Some("My Mix"));
+        assert_eq!(entry.playlist_index, Some(3));
+    }
+
+    #[test]
+    fn done_line_empty_path_is_rejected() {
+        assert!(parse_done_line("\tMy Mix\t3").is_none());
+    }
+
+    #[test]
+    fn item_progress_parses_item_and_video_wording() {
+        assert_eq!(
+            parse_item_progress("[download] Downloading item 3 of 12"),
+            Some((3, 12))
+        );
+        assert_eq!(
+            parse_item_progress("[download] Downloading video 1 of 5"),
+            Some((1, 5))
+        );
+        assert_eq!(parse_item_progress("[download]  50.0% of 4.00MiB"), None);
+    }
+
+    #[test]
+    fn downloading_playlist_captures_title() {
+        assert_eq!(
+            parse_downloading_playlist("[download] Downloading playlist: Summer 2026"),
+            Some("Summer 2026".to_string())
+        );
+        assert_eq!(parse_downloading_playlist("[download] 50.0% of 4MiB"), None);
+    }
+
+    #[test]
+    fn already_downloaded_recovers_path() {
+        assert_eq!(
+            parse_already_downloaded("[download] /lib/Artist/Song.mp3 has already been downloaded"),
+            Some(PathBuf::from("/lib/Artist/Song.mp3"))
+        );
+        assert_eq!(
+            parse_already_downloaded("[download] Destination: /lib/x.mp3"),
+            None
+        );
+    }
+
+    #[test]
+    fn default_progress_parses_percent() {
+        assert_eq!(parse_default_progress("[download]  50.0% of 4.00MiB"), Some(0.5));
+        assert_eq!(parse_default_progress("[download] Destination: x"), None);
+    }
 }

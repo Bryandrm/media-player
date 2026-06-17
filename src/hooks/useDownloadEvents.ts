@@ -2,11 +2,18 @@ import { useEffect } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useDownloadStore } from "../stores/downloadStore";
 import { useLibraryStore } from "../stores/libraryStore";
+import { usePlaylistStore } from "../stores/playlistStore";
 import type { Download } from "../types";
 
 type ProgressPayload = {
   downloadId: number;
   progress: number;
+};
+
+type ItemPayload = {
+  downloadId: number;
+  current: number;
+  total: number;
 };
 
 // Conecta los eventos `download-*` del backend al downloadStore. Se monta una
@@ -25,12 +32,20 @@ export function useDownloadEvents() {
       listen<ProgressPayload>("download-progress", (e) => {
         store.getState().updateProgress(e.payload.downloadId, e.payload.progress);
       }),
+      listen<ItemPayload>("download-item", (e) => {
+        store
+          .getState()
+          .setItemProgress(e.payload.downloadId, e.payload.current, e.payload.total);
+      }),
       listen<Download>("download-postprocessing", (e) => {
         store.getState().upsertDownload(e.payload);
       }),
       listen<Download>("download-completed", (e) => {
         store.getState().upsertDownload(e.payload);
         library.getState().loadTracks();
+        // Una descarga de playlist crea/actualiza una playlist — refrescamos
+        // el sidebar para que aparezca sin reload manual.
+        usePlaylistStore.getState().load();
       }),
       listen<Download>("download-failed", (e) => {
         store.getState().upsertDownload(e.payload);
