@@ -415,6 +415,19 @@ raw como vino de LRCLIB la primera vez. Cascade siempre lee de ahí.
 Mismo patrón que `tracks.original_title` para identification. Ver
 [ADR-020](docs/DECISIONS.md#adr-020--backup-original_synced_lyrics-para-re-aligns-idempotentes).
 
+### 17. HTML5 drag-and-drop nativo no funciona en WKWebView (macOS)
+El evento `drop` **no dispara** en el webview de macOS aunque hagas todo
+"bien": `dataTransfer.setData()` en `dragstart` + `preventDefault()` en
+`dragover` **y** `dragenter`. El drag se ve (la fila se arrastra) pero soltar
+no hace nada. Es una limitación conocida de WKWebView, no del código.
+
+**Fix:** implementar el drag a mano con **pointer events** — `pointerdown` en
+un handle inicia, listeners de `pointermove`/`pointerup` en `window`, y
+`document.elementFromPoint()` resuelve el target (vía un `data-*` attr). Sin la
+API nativa de DnD. Así está el reorder de playlists en
+[LibraryTable](src/components/library/LibraryTable.tsx). Ver
+[ADR-027](docs/DECISIONS.md#adr-027--reorder-de-playlist-via-pointer-events-no-html5-dnd).
+
 ---
 
 ## Disclaimer legal (recordatorio)

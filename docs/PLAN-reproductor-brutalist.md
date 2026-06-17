@@ -422,8 +422,10 @@ Post-descarga, usar `lofty-rs` en Rust para leer los tags embebidos y poblar la 
 - [x] **Letras** (LRCLIB + USLT embebido) con panel sincronizado, click-to-seek, offset adjustable. Cleanup heurístico de metadata + LRCLIB search fallback. Indicador `L` en library. Auto-fetch on track change ([ADR-015](DECISIONS.md#adr-015), [ADR-017](DECISIONS.md#adr-017)).
 
 ### Fase 2 — Refinamiento
-- [x] **Playlists** ✓ (2026-06-14) — CRUD básico (create / rename / delete) + add/remove de tracks + sidebar en la library + queue integration (NEXT/PREV/shuffle navegan dentro de la playlist seleccionada). Schema desde Fase 0. Reorder de tracks, descripción editable, y rename UI quedan para sub-fase polish.
+- [x] **Playlists** ✓ (2026-06-14 / 2026-06-16) — CRUD + add/remove de tracks + sidebar en la library + queue integration (NEXT/PREV/shuffle navegan dentro de la playlist seleccionada) + **rename inline** (doble-click) + **reorder por drag & drop** (pointer events, [ADR-027](DECISIONS.md#adr-027)). Schema desde Fase 0. Smart playlists y descripción editable quedan para polish.
 - [x] **Equalizer básico** ✓ (2026-06-14) — 10 bandas ISO (32, 64, 125, 250, 500, 1k, 2k, 4k, 8k, 16k Hz) con `BiquadFilterNode` (lowshelf + 8 peaking + highshelf), ±12dB, BYPASS toggle, RESET, double-click reset por banda. Insertado entre `preMasterGain` y `masterGain` para que el visualizer (tap pre-EQ) sea independiente de la EQ del usuario. Persistido. Ver [ADR-023](DECISIONS.md#adr-023).
+- [x] **Descarga de listas + dedup + cookies** ✓ (2026-06-16) — toggle FULL PLAYLIST baja una lista completa y la guarda como playlist (idempotente, además de "all tracks"); dedup por path + fingerprint Chromaprint exacto evita re-descargas duplicadas; cookies del navegador (`--cookies-from-browser`) para listas privadas / age-restricted. Ver [ADR-024](DECISIONS.md#adr-024), [ADR-025](DECISIONS.md#adr-025).
+- [x] **Switch gapless en selección manual** ✓ (2026-06-16) — clickear un track (o NEXT/PREV) con algo sonando carga en el canal inactivo y swappea cuando está listo, enmascarando el delay de carga (sin gap de silencio). Ver [ADR-026](DECISIONS.md#adr-026).
 - [ ] Smart playlists / auto-queue basado en género, año, o recientemente agregado.
 - [ ] Drag & drop de archivos para agregar a biblioteca.
 - [ ] MPRIS en Linux para integración con panel del sistema.
@@ -578,14 +580,19 @@ brutalist-player/
 | 9 | Funciona al menos en macOS (daily del autor). Linux/Windows bonus. | ✓ macOS validado, Windows pendiente test |
 | 10 | Repo con README explicando setup + disclaimer legal. | ✓ |
 
-**Estado al 2026-05-04:**
+**Estado al 2026-06-16:**
 
 - Fase 1 (MVP) ✓ cerrada 2026-05-02.
 - AcoustID identification Fase 1 + Fase 2 ✓ cerradas 2026-05-02.
 - Lyrics Fase 2.a (drift correction `speedRatio` + ALIGN mode) ✓ cerrada 2026-05-03.
-- Karaoke Fase A (forced alignment + A2 parser) ✓ cerrada 2026-05-04.
+- Karaoke Fase A (forced alignment + A2 parser) ✓ cerrada 2026-05-04 — **revertido a fake karaoke** (whisperx hereda mismatches del LRC); vuelve con 2.c.3.
+- Lyrics Fase 2.c.1 (manual edit modal) ✓ 2026-06-14.
+- EQ 10 bandas ✓ 2026-06-14 ([ADR-023](DECISIONS.md#adr-023)).
+- Playlists (CRUD + rename inline + reorder drag&drop) ✓ 2026-06-14 / 2026-06-16.
+- Descarga de listas + dedup + cookies ✓ 2026-06-16 ([ADR-024](DECISIONS.md#adr-024), [ADR-025](DECISIONS.md#adr-025)).
+- Switch gapless en selección manual ✓ 2026-06-16 ([ADR-026](DECISIONS.md#adr-026)).
 
-**Próximo recomendado:** Lyrics Fase 2.c — UI para editar lyrics manualmente + alternative providers (Genius / Musixmatch / NetEase). Justificación: el bottleneck actual del karaoke es la calidad del LRC; mejor LRC mejora todo aguas abajo (display + forced alignment + experiencia general).
+**Próximo recomendado:** Lyrics Fase 2.c.3 — Musixmatch como provider primario (2.c.1 manual edit ya está). Justificación: el bottleneck del karaoke es la calidad del LRC; mejor LRC base destraba el karaoke real y mejora display + forced alignment aguas abajo.
 
 ---
 

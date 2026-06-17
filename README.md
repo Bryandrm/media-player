@@ -93,11 +93,11 @@ cd src-tauri && cargo test --lib           # tests Rust (audio::cleanup, etc)
 Documentos fuente de verdad:
 - [docs/PLAN-reproductor-brutalist.md](docs/PLAN-reproductor-brutalist.md) — visión, scope, roadmap
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — arquitectura técnica, contratos Tauri, pipeline de audio, lyrics
-- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 23 ADRs al 2026-06-14
+- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 27 ADRs al 2026-06-16
 - [docs/LYRICS.md](docs/LYRICS.md) — plan por fases del sub-sistema de letras
 - [docs/IDENTIFICATION.md](docs/IDENTIFICATION.md) — sub-sistema de identificación (AcoustID + Chromaprint)
 - [docs/KARAOKE.md](docs/KARAOKE.md) — sub-sistema de karaoke (forced alignment + futuras Fases B-E)
-- [CLAUDE.md](CLAUDE.md) — convenciones + gotchas (16 gotchas pagados, el archivo más útil para entender footguns)
+- [CLAUDE.md](CLAUDE.md) — convenciones + gotchas (17 gotchas pagados, el archivo más útil para entender footguns)
 
 ## Estado actual
 

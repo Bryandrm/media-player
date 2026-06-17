@@ -630,3 +630,86 @@ audioA/B → sourceA/B → channelGainA/B → preMasterGain → eqBands[0..9] �
 - Band 0 = lowshelf, band 9 = highshelf, bands 1-8 = peaking con Q=1.0.
 - Setter usa `setTargetAtTime(target, t, 0.005)` (5ms time-constant) para evitar zipper noise al arrastrar sliders rápido.
 - `eqEnabled=false` no desconecta el chain — todas las bandas se ponen a 0dB. Preserva el preset del usuario sin perder el flag.
+
+## ADR-024 — Descarga de listas (FULL PLAYLIST) + cookies del navegador
+
+**Fecha:** 2026-06-16 · **Estado:** Accepted
+
+### Contexto
+El downloader bajaba un video por vez (`--no-playlist`). Pedido: bajar listas completas. Además, listas privadas y videos age-restricted/members-only requieren autenticación — yt-dlp anónimo devuelve `"The playlist does not exist"` en una lista privada.
+
+### Decisión
+- Toggle **FULL PLAYLIST** en el DownloadForm. Default **OFF** = `--no-playlist` (un solo video aunque la URL traiga `list=`); ON = `--yes-playlist`.
+- `run_yt_dlp` devuelve `Vec<DownloadedEntry>` (multi-file) con `playlist_title`/`playlist_index` parseados de un `--print` tab-delimited. Si fue lista, los tracks van a "all tracks" **y** a una playlist creada/reusada por nombre (`get_or_create_id`).
+- **Cookies**: select de navegador (`cookiesBrowser` persistido) → `--cookies-from-browser <b>`.
+
+### Razón
+- Toggle explícito (no auto-detect por `list=`) evita el footgun de que una URL `watch?v=X&list=Y` baje 200 videos sin querer.
+- `get_or_create_id` por nombre + `add_track` idempotente → re-bajar la misma lista no duplica ni la playlist ni sus tracks.
+- Cookies del navegador es la vía estándar de yt-dlp para contenido privado; reutiliza la sesión del usuario sin pedirle credenciales.
+
+### Consecuencias
+- **Pro:** una lista entera entra de un click y queda como playlist navegable.
+- **Contra:** progreso es agregado (`item N/M` + barra del archivo actual), no una fila por track. Aceptable para uso personal.
+- **Contra:** si yt-dlp no expone título de lista, la playlist se llama `"Imported playlist"`.
+- **Contra:** `--cookies-from-browser` en macOS puede disparar prompt de Keychain (Chrome cifra las cookies). Documentado.
+
+## ADR-025 — Dedup de descargas: por path + fingerprint exacto (conservador)
+
+**Fecha:** 2026-06-16 · **Estado:** Accepted
+
+### Contexto
+La misma canción puede estar en varias playlists. Al bajarlas, no queremos archivos ni filas duplicadas.
+
+### Decisión
+Dos niveles, sólo en el path de descarga (`persist_downloaded_file`):
+1. **Por path** — `tracks.file_path UNIQUE` + `--no-overwrites`. Cubre el mismo video (mismo `<uploader>/<title>.mp3`).
+2. **Por contenido** — fingerprint Chromaprint con match **EXACTO** (`find_id_by_fingerprint`). Si ya existe un track con ese fingerprint, se borra la copia recién bajada y se reusa el track existente (que igual se suma a la playlist).
+
+### Razón
+- Match exacto = **alta precisión, cero falsos positivos**. Un re-encode con master distinto produce otro fingerprint y NO matchea — y eso es **intencional**: preferimos dejar un duplicado antes que borrar por error una versión/remaster legítimamente distinta (mismo principio que el cleanup heurístico, Gotcha #11).
+- No hacemos comparación *fuzzy* de fingerprints (bit-error-rate) porque es compleja de implementar bien y arriesga falsos positivos destructivos.
+
+### Consecuencias
+- **Pro:** misma grabación traída de otro upload se detecta y no duplica.
+- **Contra:** sólo dedupea contra tracks con `acoustid_fingerprint` cacheado (download nuevo lo guarda, o un IDENTIFY previo). Los tracks pre-feature con fingerprint NULL no son candidatos hasta identificarlos.
+- **Contra:** requiere `fpcalc`; sin él degrada a dedup por-path solamente (sin error).
+- **No aplica al SCAN** — ahí no borramos archivos del usuario.
+
+## ADR-026 — Switch gapless en selección manual de track
+
+**Fecha:** 2026-06-16 · **Estado:** Accepted
+
+### Contexto
+Al clickear un track con algo sonando, `loadAndPlay` hacía `audio.src = nuevo; audio.play()` sobre el canal activo — cortaba el actual al instante y el nuevo recién sonaba tras cargar/decodificar (latencia del asset protocol) → gap de silencio audible. El crossfade automático **no** tiene este gap porque precarga el próximo track ~6s antes.
+
+### Decisión
+Al clickear (o NEXT/PREV) **con algo sonando**, cargar el track nuevo en el **canal inactivo** y mantener el actual sonando hasta que el nuevo dispare `playing`; recién ahí hacer el swap (gains instantáneos + cambio de canal activo + `currentTrackId`). Carga directa (`loadAndPlay`) cuando está pausado o es el primer play (no hay nada que enmascarar).
+
+### Razón
+- Lleva la idea del crossfade (precargar en el canal inactivo) al click manual, pero con **swap instantáneo gateado por readiness** en vez de un ramp temporal.
+- Reusa el modelo dual-channel existente sin tocar el crossfade.
+
+### Consecuencias
+- **Pro:** el cambio manual se siente inmediato, sin gap.
+- **Contra:** el highlight de la fila + el seekbar cambian recién en el swap (lag = tiempo de carga, chico para archivos locales). Consistente con cómo el crossfade actualiza `currentTrackId`.
+- Cancela el swap pendiente en play/pause, crossfade automático, clicks rápidos y resume al boot — para que su `onReady` no corra tarde y pise el estado.
+
+## ADR-027 — Reorder de playlist via pointer events (no HTML5 DnD)
+
+**Fecha:** 2026-06-16 · **Estado:** Accepted
+
+### Contexto
+El reorder de tracks pide drag & drop. El primer intento usó la API nativa HTML5 (`draggable` + `onDragStart/Over/Drop`). En el webview de macOS (WKWebView) el evento `drop` **no dispara** — aun seteando `dataTransfer.setData()` en dragstart y `preventDefault()` en dragover **y** dragenter. El drag se ve, pero soltar no hace nada.
+
+### Decisión
+Implementar el drag **a mano con pointer events**: `pointerdown` en un handle `≡` → listeners de `pointermove`/`pointerup` en `window` → `document.elementFromPoint()` resuelve la fila destino (vía `data-row-index`). Sin la API nativa de DnD.
+
+### Razón
+- HTML5 DnD es inconfiable en WKWebView (ver Gotcha #17). Pointer events funcionan siempre en webviews.
+- Iniciar el drag sólo desde el handle evita reorders accidentales al clickear una fila para reproducir.
+
+### Consecuencias
+- **Pro:** reorder confiable en el webview.
+- **Contra:** sin auto-scroll cuando arrastrás al borde de una lista larga (pendiente de polish).
+- Sólo activo en vista de playlist sin search (reordenar una vista filtrada es ambiguo).
