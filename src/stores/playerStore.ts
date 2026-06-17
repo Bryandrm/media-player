@@ -109,6 +109,20 @@ export const usePlayerStore = create<PlayerState>()(
         }
       };
 
+      // Cleanup de un switch gapless en vuelo (listeners 'playing'/'error' del
+      // canal inactivo que esperan a que el track clickeado esté listo para
+      // swappear). Vive en closure como crossfadeTimerId. Se cancela si el
+      // usuario hace otra acción (otro click, play/pause, crossfade) antes de
+      // que el nuevo track esté listo.
+      let pendingSwapCleanup: (() => void) | null = null;
+
+      const cancelPendingSwap = () => {
+        if (pendingSwapCleanup) {
+          pendingSwapCleanup();
+          pendingSwapCleanup = null;
+        }
+      };
+
       // Cancela un crossfade en vuelo: snap hard a (active=1, inactive=0),
       // pausa el inactivo, limpia su src. Llamado desde acciones manuales
       // (playTrack/prev/loadTrackForResume) — el usuario está cambiando de
@@ -171,6 +185,7 @@ export const usePlayerStore = create<PlayerState>()(
       // playTrack (que primero pushea al historial) como prev (que pop-ea).
       const loadAndPlay = (track: Track) => {
         cancelCrossfade();
+        cancelPendingSwap();
         const audio = getAudioElement();
         audio.src = convertFileSrc(track.filePath);
         set({ currentTrackId: track.id, currentTime: 0, duration: 0 });
@@ -180,6 +195,70 @@ export const usePlayerStore = create<PlayerState>()(
         // medio camino). En el caso normal de auto-advance entre tracks
         // (gain ya en 1), es no-op porque ramp 1→1 no hace nada.
         fadeInPlayPause();
+      };
+
+      // Switch gapless para selección manual con algo ya sonando: carga el
+      // track clickeado en el canal INACTIVO y mantiene el actual sonando
+      // hasta que el nuevo esté listo (`playing`), recién ahí swappea. Así el
+      // delay de carga/decode del archivo (que en `loadAndPlay` se escucha como
+      // un gap de silencio) queda enmascarado por el track que sigue sonando.
+      // Mismo principio que el crossfade automático, pero swap instantáneo
+      // gateado por readiness en vez de un ramp temporal.
+      const gaplessSwitchTo = (track: Track) => {
+        cancelCrossfade();
+        cancelPendingSwap();
+        const ctx = getAudioContext();
+        const oldChannel = getChannel(getActiveChannelId());
+        const newChannelId = getInactiveChannelId();
+        const newChannel = getChannel(newChannelId);
+
+        // Cargar el nuevo en el canal inactivo (gain en 0 → inaudible mientras
+        // bufferea). El viejo sigue sonando en el activo.
+        const t0 = ctx.currentTime;
+        newChannel.gain.gain.cancelScheduledValues(t0);
+        newChannel.gain.gain.setValueAtTime(0, t0);
+        newChannel.audio.src = convertFileSrc(track.filePath);
+        newChannel.audio.play().catch(ignoreAbort);
+        ensureGraphRunning();
+
+        const cleanup = () => {
+          newChannel.audio.removeEventListener("playing", onReady);
+          newChannel.audio.removeEventListener("error", onError);
+          pendingSwapCleanup = null;
+        };
+
+        const onReady = () => {
+          cleanup();
+          // Swap de gains instantáneo: nuevo→1, viejo→0.
+          const t = ctx.currentTime;
+          newChannel.gain.gain.cancelScheduledValues(t);
+          newChannel.gain.gain.setValueAtTime(1, t);
+          oldChannel.gain.gain.cancelScheduledValues(t);
+          oldChannel.gain.gain.setValueAtTime(0, t);
+          setActiveChannelId(newChannelId);
+          set({
+            currentTrackId: track.id,
+            currentTime: 0,
+            duration: newChannel.audio.duration || 0,
+          });
+          // Pausar + limpiar el viejo para dejarlo listo para el próximo uso.
+          oldChannel.audio.pause();
+          oldChannel.audio.removeAttribute("src");
+          oldChannel.audio.load();
+          // Asegura playPauseGain en 1 (no-op si ya estaba sonando).
+          fadeInPlayPause();
+        };
+
+        const onError = () => {
+          // El nuevo no cargó — abortamos el swap, el viejo sigue sonando.
+          cleanup();
+          newChannel.audio.removeAttribute("src");
+          newChannel.audio.load();
+        };
+
+        newChannel.audio.addEventListener("playing", onReady);
+        newChannel.audio.addEventListener("error", onError);
+        pendingSwapCleanup = cleanup;
       };
 
       // Devuelve un track random distinto al actual. Usado por next() en
@@ -235,6 +314,9 @@ export const usePlayerStore = create<PlayerState>()(
 
         const nextTrack = computeNextTrack();
         if (!nextTrack) return; // fin de queue → no fadeamos
+
+        // Un crossfade automático supersede cualquier swap manual pendiente.
+        cancelPendingSwap();
 
         const ctx = getAudioContext();
         const t = ctx.currentTime;
@@ -314,12 +396,20 @@ export const usePlayerStore = create<PlayerState>()(
                 next.length > HISTORY_CAP ? next.slice(-HISTORY_CAP) : next,
             });
           }
-          loadAndPlay(track);
+          // Si ya hay otro track sonando, switch gapless (el actual enmascara
+          // la carga del nuevo → sin gap de silencio). Si no (pausado, primer
+          // play, o re-click del mismo track), carga directa.
+          if (get().isPlaying && currentId !== null && currentId !== track.id) {
+            gaplessSwitchTo(track);
+          } else {
+            loadAndPlay(track);
+          }
         },
 
         loadTrackForResume: (track, positionMs) => {
-          // Defensivo: en boot no debería haber crossfade, pero por si acaso.
+          // Defensivo: en boot no debería haber crossfade ni swap, pero por si acaso.
           cancelCrossfade();
+          cancelPendingSwap();
           const audio = getAudioElement();
           audio.src = convertFileSrc(track.filePath);
           const seconds = Math.max(0, positionMs / 1000);
@@ -346,6 +436,10 @@ export const usePlayerStore = create<PlayerState>()(
         },
 
         togglePlay: async () => {
+          // Un play/pause manual cancela cualquier swap gapless pendiente —
+          // sino su `onReady` correría después y pisaría el estado (ej: el
+          // fadeIn del swap des-pausaría justo tras un pause).
+          cancelPendingSwap();
           if (get().currentTrackId === null) {
             // Si hay search activo, arranca con el primer match — más
             // consistente con lo que el usuario está viendo.
