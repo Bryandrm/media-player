@@ -105,6 +105,49 @@ pub async fn remove_track(
     Ok(())
 }
 
+/// Reordena los tracks de una playlist. `ordered_track_ids` es la lista
+/// completa de track_ids en el orden deseado — asignamos `position = índice`.
+/// Transacción para que un fallo a media reescritura no deje posiciones
+/// inconsistentes. Sólo afecta tracks que ya están en la playlist (UPDATE no
+/// inserta); ids ausentes se ignoran silenciosamente.
+pub async fn reorder(
+    pool: &SqlitePool,
+    playlist_id: i64,
+    ordered_track_ids: &[i64],
+) -> AppResult<()> {
+    let mut tx = pool.begin().await?;
+    for (idx, track_id) in ordered_track_ids.iter().enumerate() {
+        sqlx::query(
+            "UPDATE playlist_tracks SET position = ? \
+             WHERE playlist_id = ? AND track_id = ?",
+        )
+        .bind(idx as i64)
+        .bind(playlist_id)
+        .bind(track_id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Devuelve el id de la playlist con ese nombre (case-insensitive), creándola
+/// si no existe. Usado por el downloader cuando baja una lista: re-bajar la
+/// misma lista reusa la playlist en vez de duplicarla (y `add_track` es
+/// idempotente, así que no duplica tracks tampoco).
+pub async fn get_or_create_id(pool: &SqlitePool, name: &str) -> AppResult<i64> {
+    let existing = sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM playlists WHERE name = ? COLLATE NOCASE LIMIT 1",
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await?;
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+    Ok(create(pool, name).await?.id)
+}
+
 /// Lista los tracks de una playlist en orden de inserción (`position`).
 /// JOIN contra `tracks` para devolver el mismo shape que `tracks::list_all`
 /// — el frontend reusa la `LibraryTable` con la misma data. El `lyrics_status`

@@ -76,3 +76,14 @@ pub async fn playlist_get_tracks(
 ) -> AppResult<Vec<Track>> {
     db::playlists::list_tracks(&pool, playlist_id).await
 }
+
+/// Reordena los tracks de una playlist. `track_ids` es la lista completa en el
+/// nuevo orden — el frontend la arma tras el drag & drop.
+#[tauri::command]
+pub async fn playlist_reorder(
+    playlist_id: i64,
+    track_ids: Vec<i64>,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<()> {
+    db::playlists::reorder(&pool, playlist_id, &track_ids).await
+}

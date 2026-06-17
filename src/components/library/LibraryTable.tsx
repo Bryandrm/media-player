@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useLibraryStore } from "../../stores/libraryStore";
 import { usePlayerStore } from "../../stores/playerStore";
 import { useIdentificationStore } from "../../stores/identificationStore";
@@ -160,12 +160,74 @@ export function LibraryTable() {
   const selectedPlaylistId = usePlaylistStore((s) => s.selectedId);
   const playlistTracks = usePlaylistStore((s) => s.tracksOfSelected);
   const removeTrackFromPlaylist = usePlaylistStore((s) => s.removeTrack);
+  const reorder = usePlaylistStore((s) => s.reorder);
   const sourceTracks = selectedPlaylistId === null ? tracks : playlistTracks;
 
   const filtered = useMemo(
     () => filterTracks(sourceTracks, searchQuery),
     [sourceTracks, searchQuery],
   );
+
+  // Reorder por drag & drop: sólo dentro de una playlist y sin search activo
+  // (reordenar una vista filtrada es ambiguo — qué position le tocaría a lo
+  // que está oculto por el filtro). `dragIndex` = fila agarrada; `dragOverIndex`
+  // = fila sobre la que se está soltando (para el indicador visual).
+  const canReorder = selectedPlaylistId !== null && searchQuery.trim() === "";
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const dragFromRef = useRef<number | null>(null);
+
+  const applyReorder = (from: number, to: number) => {
+    if (
+      from === to ||
+      Number.isNaN(from) ||
+      Number.isNaN(to) ||
+      selectedPlaylistId === null
+    )
+      return;
+    const ids = filtered.map((t) => t.id);
+    const [moved] = ids.splice(from, 1);
+    ids.splice(to, 0, moved);
+    reorder(selectedPlaylistId, ids);
+  };
+
+  // Reorder con pointer events (drag manual). El HTML5 drag-and-drop nativo no
+  // funciona en el webview de macOS (WKWebView), así que lo hacemos a mano:
+  // pointerdown en el handle ≡ → listeners en window para move/up → resolvemos
+  // la fila bajo el cursor con elementFromPoint (data-row-index).
+  const rowIndexUnderPointer = (x: number, y: number): number | null => {
+    const row = document
+      .elementFromPoint(x, y)
+      ?.closest("tr[data-row-index]") as HTMLElement | null;
+    if (!row) return null;
+    const idx = Number(row.dataset.rowIndex);
+    return Number.isNaN(idx) ? null : idx;
+  };
+
+  const onHandlePointerDown = (e: React.PointerEvent, i: number) => {
+    e.preventDefault();
+    e.stopPropagation(); // no disparar playTrack del row
+    dragFromRef.current = i;
+    setDragIndex(i);
+    setDragOverIndex(i);
+
+    const onMove = (ev: PointerEvent) => {
+      const idx = rowIndexUnderPointer(ev.clientX, ev.clientY);
+      if (idx !== null) setDragOverIndex(idx);
+    };
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      const from = dragFromRef.current;
+      dragFromRef.current = null;
+      const to = rowIndexUnderPointer(ev.clientX, ev.clientY);
+      setDragIndex(null);
+      setDragOverIndex(null);
+      if (from !== null && to !== null) applyReorder(from, to);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
 
   // Popover de "add to playlist" — un popover global al table; el state
   // mantiene cuál track lo abrió y dónde está anclado.
@@ -251,6 +313,8 @@ export function LibraryTable() {
           // la pena, la metemos de vuelta como columna opcional.
           <table className="w-full border-collapse text-xs table-fixed">
             <colgroup>
+              {/* Handle de drag para reordenar — sólo en vista de playlist. */}
+              {canReorder && <col className="w-8" />}
               <col className="w-12" />
               {/* Columna L: indicador de letras. Width pequeño porque sólo
                   contiene 1-3 chars. */}
@@ -267,6 +331,7 @@ export function LibraryTable() {
             </colgroup>
             <thead className="sticky top-0 bg-bg">
               <tr className="border-b-2 border-fg text-muted">
+                {canReorder && <th className="px-2 py-2" aria-label="Reorder" />}
                 <th className="text-left px-3 py-2">#</th>
                 <th className="text-left px-3 py-2" title="Lyrics status">
                   L
@@ -295,13 +360,30 @@ export function LibraryTable() {
                 return (
                   <tr
                     key={t.id}
+                    data-row-index={i}
                     onClick={() => playTrack(t)}
                     className={`cursor-pointer border-b border-muted/40 ${
                       isCurrent
                         ? "bg-accent text-bg"
                         : "hover:bg-fg hover:text-bg"
-                    }`}
+                    } ${
+                      canReorder && dragOverIndex === i && dragIndex !== i
+                        ? "border-t-2 border-t-accent"
+                        : ""
+                    } ${canReorder && dragIndex === i ? "opacity-40" : ""}`}
                   >
+                    {canReorder && (
+                      // Handle de drag. onPointerDown arranca el arrastre
+                      // manual; onClick stopPropaga para no disparar playTrack.
+                      <td
+                        className="px-2 py-2 text-center text-muted cursor-grab select-none touch-none"
+                        onPointerDown={(e) => onHandlePointerDown(e, i)}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Drag to reorder"
+                      >
+                        ≡
+                      </td>
+                    )}
                     <td className="px-3 py-2 tabular-nums font-bold">
                       {isCurrent ? "►" : String(i + 1).padStart(2, "0")}
                     </td>

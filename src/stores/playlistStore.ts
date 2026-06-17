@@ -29,6 +29,9 @@ type PlaylistState = {
   select: (id: number | null) => Promise<void>;
   addTrack: (playlistId: number, trackId: number) => Promise<void>;
   removeTrack: (playlistId: number, trackId: number) => Promise<void>;
+  /** Reordena los tracks de una playlist. `trackIds` es la lista completa en
+   *  el nuevo orden (la arma el drag & drop de LibraryTable). */
+  reorder: (playlistId: number, trackIds: number[]) => Promise<void>;
   /** Fuerza refetch de los tracks de la playlist seleccionada. Util cuando
    *  agregamos/quitamos un track y queremos que la tabla se actualice. */
   reloadSelectedTracks: () => Promise<void>;
@@ -144,6 +147,23 @@ export const usePlaylistStore = create<PlaylistState>()(
           }
         } catch (e) {
           set({ error: String(e) });
+        }
+      },
+
+      reorder: async (playlistId, trackIds) => {
+        // Optimista: reordenamos el cache local ya (drag se siente instantáneo)
+        // y persistimos en background. Si el backend falla, revertimos al orden
+        // real con un refetch.
+        const byId = new Map(get().tracksOfSelected.map((t) => [t.id, t]));
+        const reordered = trackIds
+          .map((id) => byId.get(id))
+          .filter((t): t is Track => t !== undefined);
+        set({ tracksOfSelected: reordered });
+        try {
+          await invoke("playlist_reorder", { playlistId, trackIds });
+        } catch (e) {
+          set({ error: String(e) });
+          await get().reloadSelectedTracks();
         }
       },
 
