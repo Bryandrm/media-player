@@ -3,9 +3,12 @@ pub mod settings;
 pub mod playlists;
 pub mod tracks;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
+};
 use sqlx::SqlitePool;
 use std::path::Path;
+use std::time::Duration;
 
 pub type DbError = Box<dyn std::error::Error>;
 
@@ -18,7 +21,19 @@ pub async fn init(data_dir: &Path) -> Result<SqlitePool, DbError> {
     let options = SqliteConnectOptions::new()
         .filename(&db_path)
         .create_if_missing(true)
-        .foreign_keys(true);
+        .foreign_keys(true)
+        // WAL permite lecturas concurrentes con UNA escritura sin que se
+        // bloqueen entre sí. Con el journal default (rollback/DELETE), una
+        // escritura larga como el persist de una playlist de 16 tracks
+        // (fpcalc + insert por archivo) contiende con las lecturas/escrituras
+        // que dispara el frontend mientras tanto (ej: persistencia de la
+        // posición de playback del track que suena) → SQLITE_BUSY o cuelgues
+        // silenciosos. `busy_timeout` reintenta locks transitorios en vez de
+        // fallar al toque. `synchronous=NORMAL` es seguro y recomendado con
+        // WAL. Ver Gotcha #21.
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal)
+        .busy_timeout(Duration::from_secs(10));
 
     let pool = SqlitePoolOptions::new()
         .max_connections(5)

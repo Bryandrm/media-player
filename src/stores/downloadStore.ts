@@ -13,6 +13,12 @@ type DownloadState = {
    *  cookies (descarga anónima). Persistido. */
   cookiesBrowser: string;
   setCookiesBrowser: (browser: string) => void;
+  /** Ruta a un cookies.txt exportado (formato Netscape). Si está seteado, tiene
+   *  prioridad sobre `cookiesBrowser` (`--cookies` en vez de
+   *  `--cookies-from-browser`). Funciona con el navegador abierto — único camino
+   *  viable con Chromium en Windows. "" = no usar archivo. Persistido. */
+  cookiesFile: string;
+  setCookiesFile: (path: string) => void;
 
   // Acciones llamadas por el hook de eventos:
   upsertDownload: (d: Download) => void;
@@ -35,8 +41,10 @@ export const useDownloadStore = create<DownloadState>()(
   submitting: false,
   error: null,
   cookiesBrowser: "",
+  cookiesFile: "",
 
   setCookiesBrowser: (browser) => set({ cookiesBrowser: browser }),
+  setCookiesFile: (path) => set({ cookiesFile: path }),
 
   upsertDownload: (d) =>
     set((state) => {
@@ -80,6 +88,7 @@ export const useDownloadStore = create<DownloadState>()(
         url: trimmed,
         playlist,
         cookiesBrowser: get().cookiesBrowser || null,
+        cookiesFile: get().cookiesFile || null,
       });
     } catch (e) {
       set({ error: String(e) });
@@ -99,8 +108,11 @@ export const useDownloadStore = create<DownloadState>()(
     }),
     {
       name: "brutalist-player:downloads",
-      // Sólo el browser de cookies se persiste — el resto es runtime state.
-      partialize: (state) => ({ cookiesBrowser: state.cookiesBrowser }),
+      // Sólo la config de cookies se persiste — el resto es runtime state.
+      partialize: (state) => ({
+        cookiesBrowser: state.cookiesBrowser,
+        cookiesFile: state.cookiesFile,
+      }),
     },
   ),
 );

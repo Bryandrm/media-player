@@ -71,6 +71,7 @@ pub async fn run_yt_dlp<F>(
     library_dir: &Path,
     playlist: bool,
     cookies_browser: Option<&str>,
+    cookies_file: Option<&str>,
     mut on_event: F,
 ) -> Result<Vec<DownloadedEntry>, DownloadError>
 where
@@ -89,11 +90,19 @@ where
     // "NA" en un video suelto → el parser los mapea a None.
     let playlist_flag = if playlist { "--yes-playlist" } else { "--no-playlist" };
 
-    // Cookies del navegador: necesarias para playlists privadas, videos con
-    // restricción de edad, members-only, etc. Si no hay browser seteado, no
-    // pasamos el flag (descargas anónimas, como antes).
-    let cookie_args: Vec<&str> = match cookies_browser {
-        Some(b) if !b.is_empty() => vec!["--cookies-from-browser", b],
+    // Cookies: necesarias para playlists privadas, videos con restricción de
+    // edad, members-only, etc. Dos fuentes posibles, con el archivo teniendo
+    // prioridad:
+    //   1. `--cookies <archivo.txt>`  — un cookies.txt exportado a mano. Funciona
+    //      con el navegador ABIERTO (no toca su base SQLite). Único camino viable
+    //      con Chromium en Windows, donde el lock del archivo de cookies impide
+    //      `--cookies-from-browser` mientras el navegador corre (ver Gotcha #18).
+    //   2. `--cookies-from-browser <b>` — lee la base del navegador en vivo.
+    //      Requiere el navegador cerrado en Chromium/Windows; Firefox anda igual.
+    // Sin ninguna de las dos, descarga anónima (default).
+    let cookie_args: Vec<&str> = match (cookies_file, cookies_browser) {
+        (Some(f), _) if !f.is_empty() => vec!["--cookies", f],
+        (_, Some(b)) if !b.is_empty() => vec!["--cookies-from-browser", b],
         _ => vec![],
     };
 
@@ -106,6 +115,28 @@ where
             // determinístico, no la config personal.
             "--ignore-config",
             "--no-quiet",
+            // Forzar UTF-8 en el output de yt-dlp. En Windows, la consola usa
+            // un codepage legacy (ej Latin-1/cp1252) y yt-dlp, al imprimir el
+            // `after_move:filepath`, REEMPLAZA los caracteres no representables
+            // (kanji, hangul, `：` fullwidth, etc) por espacios. Pero el ARCHIVO
+            // en disco sí los tiene (la creación usa la API wide de Windows).
+            // Resultado: el path impreso ≠ el path real → `extract_metadata`
+            // falla con "no such file" y el track no se persiste. Con
+            // `--encoding utf-8` el path impreso coincide byte-a-byte con disco
+            // (nuestro reader ya decodifica UTF-8). Ver Gotcha #22.
+            "--encoding",
+            "utf-8",
+            // YouTube exige resolver un challenge de JavaScript (firma + param
+            // `n` de throttling) para entregar los formatos de audio/video. Sin
+            // un runtime de JS, yt-dlp solo obtiene storyboards → "Requested
+            // format is not available" para todos los items. El solver
+            // (`yt_dlp_ejs`) ya viene con yt-dlp, pero por default SÓLO habilita
+            // Deno; Node hay que activarlo explícito. Usamos Node (≥22) porque
+            // ya es dep del entorno de este proyecto. Si en el futuro querés
+            // Deno, es el runtime recomendado por yt-dlp y se auto-detecta sin
+            // este flag. Ver Gotcha #20.
+            "--js-runtimes",
+            "node",
             "--extract-audio",
             "--audio-format",
             "mp3",
@@ -157,12 +188,20 @@ where
     // (y por ende ningún `done` trae el `playlist_title`).
     let mut playlist_title_hint: Option<String> = None;
     let mut recent_lines: Vec<String> = Vec::with_capacity(RECENT_LINES_CAP);
+    // Líneas `ERROR: ...` que imprime yt-dlp por cada item que falla. Las
+    // guardamos aparte porque en playlists largas se van del buffer de
+    // `recent_lines` antes de terminar → el mensaje de error caía en la última
+    // línea de stderr ("Finished downloading playlist", un falso positivo).
+    let mut error_lines: Vec<String> = Vec::new();
 
     while let Some(line) = rx.recv().await {
         if recent_lines.len() >= RECENT_LINES_CAP {
             recent_lines.remove(0);
         }
         recent_lines.push(line.clone());
+        if line.starts_with("ERROR") && error_lines.len() < RECENT_LINES_CAP {
+            error_lines.push(line.clone());
+        }
 
         if let Some(rest) = line.strip_prefix("done\t") {
             if let Some(entry) = parse_done_line(rest) {
@@ -214,22 +253,45 @@ where
 
     let status = child.wait().await.map_err(DownloadError::Io)?;
 
+    // yt-dlp devuelve exit code ≠ 0 si CUALQUIER item de una playlist falló
+    // (video borrado/privado/region-locked), aunque el resto se haya bajado
+    // perfecto. Si capturamos al menos un archivo, es un éxito parcial: nos
+    // quedamos con lo bueno en vez de descartar la lista entera. Sólo es falla
+    // real cuando no se materializó NADA (URL inválida, auth, fpcalc, etc).
+    if !entries.is_empty() {
+        return Ok(entries);
+    }
+
     if !status.success() {
-        // Última línea no-vacía como mensaje de error (yt-dlp suele cerrar con
-        // "ERROR: <descripción>"). Si no hay nada útil, fallback al exit code.
-        let msg = recent_lines
-            .iter()
-            .rev()
-            .find(|l| !l.trim().is_empty())
-            .cloned()
-            .unwrap_or_else(|| format!("yt-dlp exited with code {:?}", status.code()));
+        // Preferimos las líneas `ERROR:` capturadas (dicen el motivo real por
+        // item: formato no disponible, privado, age-restricted, etc) sobre la
+        // última línea de stderr, que en playlists suele ser un mensaje de
+        // éxito confuso. Mostramos hasta 3 distintas + un conteo del resto.
+        let msg = if !error_lines.is_empty() {
+            let mut unique: Vec<String> = Vec::new();
+            for e in &error_lines {
+                if !unique.contains(e) {
+                    unique.push(e.clone());
+                }
+            }
+            let shown = unique.len().min(3);
+            let mut m = unique[..shown].join(" | ");
+            if unique.len() > shown {
+                m.push_str(&format!(" | (+{} errores más)", unique.len() - shown));
+            }
+            m
+        } else {
+            recent_lines
+                .iter()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .cloned()
+                .unwrap_or_else(|| format!("yt-dlp exited with code {:?}", status.code()))
+        };
         return Err(DownloadError::NonZeroExit(msg));
     }
 
-    if entries.is_empty() {
-        return Err(DownloadError::NoFilepath);
-    }
-    Ok(entries)
+    Err(DownloadError::NoFilepath)
 }
 
 /// Parsea una línea `done\t<filepath>\t<playlist_title>\t<playlist_index>`

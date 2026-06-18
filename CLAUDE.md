@@ -170,10 +170,18 @@ src-tauri/resources/scripts/
   (`get_or_create_id` por nombre → idempotente al re-bajar). Progreso por item
   vía evento `download-item` (N/M). Para listas ya bajadas, recupera el path de
   la línea `has already been downloaded` (por si yt-dlp saltea `done`).
-  **Cookies**: select de navegador en el DownloadForm (`cookiesBrowser`
-  persistido en downloadStore) → `--cookies-from-browser <b>`. Necesario para
+  **Éxito parcial**: si un item de la lista falla (borrado/privado/region-locked)
+  yt-dlp sale con exit ≠ 0 aunque baje el resto; `run_yt_dlp` se queda con los
+  entries capturados en vez de descartar todo (sólo es falla real cuando no se
+  materializó nada). Ver Gotcha #19 + [ADR-028](./docs/DECISIONS.md#adr-028).
+  **Cookies** (dos fuentes, archivo > navegador): select de navegador
+  (`cookiesBrowser`) → `--cookies-from-browser <b>`, **o** botón COOKIES FILE
+  (`cookiesFile`) → `--cookies <archivo.txt>`. Ambos persistidos en
+  downloadStore; si hay archivo, el select queda inerte. Necesario para
   **playlists privadas** (yt-dlp anónimo devuelve "playlist does not exist") +
-  videos age-restricted / members-only. "" = sin cookies (default).
+  videos age-restricted / members-only. El archivo (cookies.txt exportado)
+  funciona con el navegador abierto — único camino con Chromium en Windows,
+  ver Gotcha #18. "" = sin cookies (default).
 - **Dedup de descargas** ✓ (2026-06-16) — en `persist_downloaded_file`, dos
   niveles: (1) **por path** (`file_path UNIQUE` + `--no-overwrites`) para el
   mismo video; (2) **por contenido** vía fingerprint Chromaprint exacto
@@ -184,6 +192,30 @@ src-tauri/resources/scripts/
   cacheado (download nuevo guarda el suyo, o identify previo). Requiere
   `fpcalc`; sin él cae a dedup por-path solamente. **No aplica al SCAN** (no
   borramos archivos del usuario).
+- **Hardening del downloader (Windows)** ✓ (2026-06-17) — sesión dedicada a
+  hacer la descarga de playlists robusta en Windows. Seis cambios + un
+  aprendizaje de uso (ver [ADR-028](./docs/DECISIONS.md#adr-028) + Gotchas
+  #18-22):
+  1. **cookies.txt** como segunda fuente (botón COOKIES FILE, prioridad sobre
+     el navegador) — Chromium en Windows lockea su DB de cookies con el
+     navegador abierto (Gotcha #18).
+  2. **Éxito parcial**: un item roto en la playlist ya no descarta toda la
+     descarga; + captura de líneas `ERROR:` para mensajes útiles (Gotcha #19).
+  3. **`--js-runtimes node`**: YouTube exige resolver un JS challenge; sin
+     runtime sólo da storyboards. Node ≥22 pasa a ser dep del sistema
+     (Gotcha #20).
+  4. **SQLite WAL + busy_timeout**: el persist loop largo se colgaba por
+     contención de lock con el frontend (Gotcha #21).
+  5. **Persist resiliente por entry**: un archivo que falla se saltea, no
+     aborta la playlist (ADR-028).
+  6. **`--encoding utf-8`**: yt-dlp mutilaba los paths no-ASCII (kanji, hangul,
+     fullwidth) al imprimir bajo el codepage de Windows → el archivo no se
+     encontraba (Gotcha #22).
+  - **Aprendizaje de uso**: un `cookies.txt` exportado puede verse "completo"
+    (cientos de cookies) pero faltarle `LOGIN_INFO` (httpOnly de YouTube) →
+    "Unable to recognize playlist". `--cookies-from-browser firefox` la incluye
+    y es el camino confiable para playlists privadas. (Firefox no sufre el lock
+    de Gotcha #18 en ninguna plataforma.)
 - Próximo recomendado: **Lyrics 2.c.3 (Musixmatch)** para cerrar la brecha
   de UX seamless que Bryan levantó después de 2.c.1, o **drag & drop a la
   library** como quick win, o **smart playlists / export M3U** para
@@ -245,8 +277,9 @@ cd src-tauri && cargo test
 
 **Deps del sistema** que el usuario tiene que tener en PATH para que
 el downloader funcione: `yt-dlp`, `ffmpeg` (`brew install yt-dlp ffmpeg`
-en macOS). La app verifica al boot vía `check_dependencies` y muestra
-un banner si faltan.
+en macOS) y **`node` ≥22** (runtime de JS que yt-dlp usa para resolver el
+challenge de YouTube — ver Gotcha #20; alternativa: `deno`). La app verifica
+al boot vía `check_dependencies` y muestra un banner si faltan.
 
 ---
 
@@ -427,6 +460,94 @@ un handle inicia, listeners de `pointermove`/`pointerup` en `window`, y
 API nativa de DnD. Así está el reorder de playlists en
 [LibraryTable](src/components/library/LibraryTable.tsx). Ver
 [ADR-027](docs/DECISIONS.md#adr-027--reorder-de-playlist-via-pointer-events-no-html5-dnd).
+
+### 18. `--cookies-from-browser` choca con el lock de Chromium en Windows
+`--cookies-from-browser chrome|brave|edge|...` falla con `Could not copy
+Chrome cookie database` (yt-dlp issue #7271) **si el navegador está abierto en
+Windows**. Causa: Chromium mantiene su base SQLite de cookies con un lock
+**obligatorio** (mandatory) a nivel filesystem; Windows le niega a yt-dlp hasta
+la copia. En macOS/Linux los locks son cooperativos (advisory) → no pasa, por
+eso "en macOS andaba". **Firefox no tiene el problema en ninguna plataforma**
+(maneja el archivo distinto). Copiar la DB nosotros choca con el mismo lock
+(+ App-Bound Encryption en Chromium reciente) → no vale la pena.
+
+**Fixes (en orden de preferencia):** (1) usar **Firefox**; (2) `--cookies
+<archivo.txt>` con un cookies.txt exportado a mano (extensión "Get cookies.txt
+LOCALLY") — funciona con el navegador abierto porque no toca la SQLite. El
+`DownloadForm` soporta ambos: el select de navegador **y** un botón COOKIES
+FILE; el archivo tiene prioridad (`cookies_file` antes que `cookies_browser`
+en [downloader/mod.rs](src-tauri/src/downloader/mod.rs)). (3) cerrar el
+navegador Chromium del todo (incluido procesos en background).
+
+### 19. yt-dlp sale con exit ≠ 0 si UN item de la playlist falla
+En una playlist con un video borrado/privado/region-locked, yt-dlp baja el
+resto perfecto pero **sale con código ≠ 0**. Bug que se pagó: `run_yt_dlp`
+trataba *cualquier* exit ≠ 0 como falla total → descartaba todos los entries
+buenos y la UI mostraba FAILED con la última línea de stderr (que suele ser
+`Finished downloading playlist: <name>`, un mensaje de **éxito** — confuso). El
+`ERROR:` del item fallido ya scrolleó fuera del buffer de 64 líneas.
+
+**Fix:** si capturamos ≥1 entry, es **éxito parcial** → `Ok(entries)`. Sólo es
+falla real cuando no se materializó nada. Ver
+[downloader/mod.rs](src-tauri/src/downloader/mod.rs) (chequeo de `entries`
+**antes** que `status.success()`). Bonus: ahora capturamos las líneas `ERROR:`
+aparte de `recent_lines` y las usamos como mensaje de error (las largas se iban
+del buffer de 64 líneas → el error mostrado era el "Finished" engañoso).
+
+### 20. YouTube exige un runtime de JS — sin él, sólo storyboards
+yt-dlp falla con `Requested format is not available` para **todos** los items y,
+en `-F`, sólo lista formatos `mhtml` (storyboards / imágenes). La causa NO es
+cookies ni yt-dlp viejo: YouTube ahora exige **resolver un challenge de
+JavaScript** (firma + param `n` de throttling) para entregar los formatos de
+audio. yt-dlp trae el solver (`yt_dlp_ejs`) pero necesita un **runtime de JS**
+para correrlo, y por default **sólo habilita Deno**. Síntoma en `--verbose`:
+`JS runtimes: none` + `WARNING: No supported JavaScript runtime could be found`.
+
+**Fix:** pasamos `--js-runtimes node` (Node ≥22, ya dep del proyecto) en
+[downloader/mod.rs](src-tauri/src/downloader/mod.rs). Confirmado: con el flag,
+`[jsc:node] Solving JS challenges using node` y aparecen los formatos de audio
+(140 m4a, 251 webm, etc). Alternativa: instalar **Deno** (runtime recomendado
+por yt-dlp, se auto-detecta sin flag). **Node pasa a ser dep del sistema** para
+el downloader, además de yt-dlp + ffmpeg.
+
+### 21. SQLite sin WAL se cuelga en escrituras largas concurrentes
+Síntoma que se pagó: descargar una playlist de 16 tracks dejó la UI pegada en
+CONVERTING ~15 min. Diagnóstico: yt-dlp terminó bien (16 mp3 en disco), pero el
+`persist_downloaded_file` loop (fpcalc + insert por archivo = escritura larga)
+se colgó a mitad — solo 6 de 16 tracks llegaron a la DB y las escrituras
+pararon. Causa: el pool abría SQLite en journal mode **rollback/DELETE** (default)
+sin `busy_timeout`. Mientras el loop escribía, el frontend tocaba la DB en
+paralelo (ej: persistencia de la posición de playback del track que sonaba) →
+contención de locks (reader bloquea writer y viceversa) → cuelgue.
+
+**Fix:** en [db/mod.rs](src-tauri/src/db/mod.rs), abrir con
+`journal_mode(WAL)` + `synchronous(NORMAL)` + `busy_timeout(10s)`. WAL permite
+lecturas concurrentes con una escritura sin bloqueo mutuo; busy_timeout
+reintenta locks transitorios. Además, el persist loop de
+[commands/downloader.rs](src-tauri/src/commands/downloader.rs) ahora es
+**resiliente por entry**: un archivo que falla se saltea (log + continue) en vez
+de abortar toda la playlist con `?`; sólo es falla real si NO se persistió
+ninguno. WAL crea archivos `player.db-wal` / `-shm` al lado de `player.db`
+(normal, no borrarlos en caliente).
+
+### 22. yt-dlp mutila los paths no-ASCII al imprimir (Windows codepage)
+Síntoma que se pagó: al bajar una playlist de 70 items, ~10 tracks con nombres
+no-ASCII (kanji 米津玄師, hangul 뜨거운, `：` fullwidth, Λ griega) fallaron al
+persistir con `metadata read failed: ... no such file (os error 2/3)`. Los
+archivos **sí estaban en disco** con el Unicode correcto, pero yt-dlp imprimió
+el `after_move:filepath` con esos caracteres **reemplazados por espacios**. En
+Windows la consola usa un codepage legacy (Latin-1/cp1252 acá); la creación del
+archivo usa la API wide (preserva Unicode) pero el `print` a stdout codifica con
+el codepage y reemplaza lo no representable. Path impreso ≠ path real → nuestro
+`extract_metadata(entry.path)` no encuentra el archivo. Los tracks ASCII andan;
+sólo fallan los de otros alfabetos. `PYTHONUTF8=1`/`PYTHONIOENCODING` **no**
+alcanzan (el build frozen no los respeta acá).
+
+**Fix:** `--encoding utf-8` en [downloader/mod.rs](src-tauri/src/downloader/mod.rs).
+Verificado: con el flag, el path impreso coincide byte-a-byte con disco (kanji
+incluidos) y nuestro reader (`from_utf8_lossy`) lo decodifica bien. Las tags
+internas del mp3 nunca se vieron afectadas (la metadata mostrada sale de ahí,
+no del filename).
 
 ---
 

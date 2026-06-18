@@ -375,14 +375,18 @@ Ver [LYRICS.md](./LYRICS.md) para el plan completo por fases.
 2. invoke('download_track', { url })
 3. Rust: emit 'download-started' { id, url, status: 'downloading' }
 4. Rust: spawn yt-dlp con (ver downloader/mod.rs):
+     [--cookies <file> | --cookies-from-browser <b>]  ← opcional (Gotcha #18)
      --ignore-config --no-quiet
+     --encoding utf-8           ← paths Unicode correctos en el output (Gotcha #22)
+     --js-runtimes node         ← resuelve el JS challenge de YT (Gotcha #20)
      --extract-audio --audio-format mp3 --audio-quality 0
      --embed-metadata --embed-thumbnail
-     --no-playlist --no-overwrites
+     [--no-playlist | --yes-playlist]   ← según toggle FULL PLAYLIST
+     --no-overwrites
      --newline
      -o '%(uploader,channel|Unknown)s/%(title)s.%(ext)s'
      -P <library_dir>  -P temp:<library_dir>/_pending
-     --print 'after_move:done %(filepath)s'
+     --print 'after_move:done\t%(filepath)s\t%(playlist_title)s\t%(playlist_index)s'
    env: PYTHONUNBUFFERED=1   ← yt-dlp es Python; sin esto el stdout queda
                                 block-buffered y el progreso aparece en
                                 tandas o nunca.
@@ -396,19 +400,37 @@ Ver [LYRICS.md](./LYRICS.md) para el plan completo por fases.
        '[ThumbnailsConvertor]' / '[ffmpeg]' / '[Fixup*]' /
        '[VideoConvertor]' → emit 'download-postprocessing' (deduplicado:
        sólo el primero que match-ee)
+   En playlists: cada item produce su línea 'done' (un DownloadedEntry con
+   playlist_title/index). Los ya-en-disco salen como 'has already been
+   downloaded' y se recuperan igual (Gotcha #19).
 7. Cuando ambos lectores llegan a EOF, esperamos child.wait().
-   - exit 0 sin final_path → DownloadError::NoFilepath
-   - exit != 0 → últimas 64 líneas guardadas, devolvemos la última
-     no-vacía como mensaje (típicamente "ERROR: ...")
-8. Post-éxito (commands/downloader.rs):
-     a. lofty extract_metadata del archivo final
-     b. db::tracks::insert_from_metadata (ON CONFLICT DO NOTHING)
-        → Some(id) si insertó, None si ya estaba (re-download → Skipped)
-     c. Si insertó: extract_cover_art (yt-dlp ya embebió el thumbnail) →
+   - **Éxito parcial** (Gotcha #19 / ADR-028): si capturamos ≥1 entry,
+     devolvemos Ok(entries) sin importar el exit code. yt-dlp sale != 0 si UN
+     item de la playlist falla (borrado/privado), pero no queremos descartar
+     el resto.
+   - entries vacío + exit != 0 → mensaje desde las líneas `ERROR:` capturadas
+     (no la última línea, que suele ser el "Finished downloading playlist"
+     engañoso). entries vacío + exit 0 → NoFilepath.
+8. Post-éxito (commands/downloader.rs), por cada entry — **resiliente**: un
+   archivo que falla se saltea (log + continue), no aborta la playlist entera.
+   Sólo es falla real si NO se persistió ninguno (ADR-028):
+     a. lofty extract_metadata del archivo final + cleanup heurístico
+     b. dedup nivel 1 (find_id_by_path) → Skipped si ya está
+     c. dedup nivel 2 (fpcalc fingerprint + find_id_by_fingerprint) → borra
+        copia + reusa si es la misma grabación de otro upload
+     d. insert_from_metadata → Some(id) si insertó; cachea fingerprint
+     e. Si insertó: extract_cover_art (yt-dlp ya embebió el thumbnail) →
         cache/thumbnails/<id>.jpg → set_cover_art
-     d. emit 'download-completed' { progress: 1.0, status, trackId }
+   Si fue playlist: get_or_create_id por nombre + add_track de cada track_id
+   (idempotente → re-bajar/re-asociar no duplica). Los ya-descargados se
+   **asocian** sin re-bajar.
+     → emit 'download-completed' { progress: 1.0, status, trackId }
 9. Frontend: el handler de 'download-completed' refresca library_list_tracks
    para que el track aparezca en la tabla.
+
+Nota DB: el pool abre SQLite en **WAL** + busy_timeout (db/mod.rs) — sin esto,
+el persist loop largo de una playlist se colgaba por contención de lock con las
+lecturas/escrituras del frontend (Gotcha #21).
 ```
 
 **TODOs abiertos:**

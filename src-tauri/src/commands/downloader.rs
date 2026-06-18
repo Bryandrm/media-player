@@ -48,6 +48,7 @@ pub async fn download_track(
     url: String,
     playlist: bool,
     cookies_browser: Option<String>,
+    cookies_file: Option<String>,
     app: AppHandle,
     pool: State<'_, SqlitePool>,
 ) -> AppResult<Download> {
@@ -84,6 +85,7 @@ pub async fn download_track(
         &library_dir,
         playlist,
         cookies_browser.as_deref(),
+        cookies_file.as_deref(),
         move |evt| match evt {
         DownloadEvent::Progress(fraction) => {
             let _ = app_for_event.emit(
@@ -144,13 +146,45 @@ pub async fn download_track(
                 if playlist_title.is_none() {
                     playlist_title = entry.playlist_title.clone();
                 }
-                let (status, track_id, title) =
-                    persist_downloaded_file(&app, pool_ref, &entry.path, &url).await?;
-                last_title = title;
-                single_status = status;
-                if let Some(id) = track_id {
-                    track_ids.push(id);
+                // Un archivo que falla al persistir (metadata corrupta, fpcalc,
+                // un lock de DB puntual) NO debe abortar toda la importación de
+                // la playlist. Lo salteamos y seguimos — la lista se arma con lo
+                // que sí entró. Mismo espíritu que el éxito parcial de la
+                // descarga (ADR-028). Para un video suelto, el guard de abajo
+                // (`track_ids.is_empty()`) lo convierte en error real.
+                match persist_downloaded_file(&app, pool_ref, &entry.path, &url).await {
+                    Ok((status, track_id, title)) => {
+                        last_title = title;
+                        single_status = status;
+                        if let Some(id) = track_id {
+                            track_ids.push(id);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[download] persist falló para {}: {}",
+                            entry.path.display(),
+                            e
+                        );
+                    }
                 }
+            }
+
+            // Si NADA se pudo persistir, es falla real (no creamos una playlist
+            // vacía ni reportamos un éxito fantasma).
+            if track_ids.is_empty() {
+                let msg = "no se pudo importar ningún archivo descargado".to_string();
+                let download = Download {
+                    id: download_id,
+                    url: url.clone(),
+                    status: DownloadStatus::Failed,
+                    progress: -1.0,
+                    title: None,
+                    error: Some(msg.clone()),
+                    track_id: None,
+                };
+                let _ = app.emit("download-failed", download);
+                return Err(AppError::Other(msg));
             }
 
             // Si era descarga de lista, además de dejar los tracks en "all

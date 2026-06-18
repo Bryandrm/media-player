@@ -713,3 +713,29 @@ Implementar el drag **a mano con pointer events**: `pointerdown` en un handle `�
 - **Pro:** reorder confiable en el webview.
 - **Contra:** sin auto-scroll cuando arrastrás al borde de una lista larga (pendiente de polish).
 - Sólo activo en vista de playlist sin search (reordenar una vista filtrada es ambiguo).
+
+## ADR-028 — Cookies por archivo + éxito parcial en descarga de playlists
+
+**Fecha:** 2026-06-17 · **Estado:** Accepted
+
+### Contexto
+Dos problemas surgieron al bajar una playlist privada de YouTube en Windows con cookies:
+
+1. **`--cookies-from-browser` falla con Chromium en Windows.** Con Brave/Edge/Chrome **abiertos**, yt-dlp tira `Could not copy Chrome cookie database` (issue #7271). Causa: Chromium mantiene su base SQLite de cookies con un lock **obligatorio** (mandatory) a nivel filesystem en Windows; el SO le niega la copia a yt-dlp. En macOS/Linux los locks son **cooperativos** (advisory) → no pasa, por eso en macOS andaba. Firefox no sufre el problema en ninguna plataforma.
+
+2. **Una playlist con un item fallido se reportaba como falla total.** Si un video de la lista está borrado/privado/region-locked, yt-dlp baja el resto pero sale con exit ≠ 0. `run_yt_dlp` trataba *cualquier* exit ≠ 0 como falla → descartaba todos los entries buenos y mostraba FAILED con la última línea de stderr (que suele ser `Finished downloading playlist: <name>`, un mensaje de éxito → confuso; el `ERROR:` del item ya scrolleó fuera del buffer de 64 líneas).
+
+### Decisión
+1. **Segunda fuente de cookies por archivo.** El `DownloadForm` ofrece, además del select de navegador, un botón **COOKIES FILE** que elige un `cookies.txt` (formato Netscape, exportado con una extensión tipo "Get cookies.txt LOCALLY"). Si está seteado, el backend usa `--cookies <archivo>` con **prioridad** sobre `--cookies-from-browser` (`cookies_file` antes que `cookies_browser` en el match de `run_yt_dlp`). El archivo no toca la SQLite del navegador → funciona con el navegador abierto. Persistido como `cookiesFile` en downloadStore.
+
+2. **Éxito parcial.** `run_yt_dlp` chequea `entries` **antes** que `status.success()`: si capturó ≥1 archivo, devuelve `Ok(entries)` (éxito parcial) sin importar el exit code. Sólo es falla real (`NonZeroExit` / `NoFilepath`) cuando no se materializó nada.
+
+### Razón
+- No copiar la DB de cookies nosotros: choca con el mismo lock, y la App-Bound Encryption de Chromium reciente lo complica más → frágil. El cookies.txt es la solución estándar de la comunidad yt-dlp.
+- Prioridad archivo > navegador: si el usuario se tomó el trabajo de exportar, es la intención explícita.
+- Éxito parcial: bajar 49 de 50 tracks y reportar FAILED es peor que quedarse con los 49. yt-dlp ya separó lo bueno de lo malo; nosotros sólo lo estábamos tirando.
+
+### Consecuencias
+- **Pro:** descarga viable con Chromium en Windows sin cerrar el navegador; playlists con items rotos ya no fallan enteras.
+- **Contra:** el cookies.txt caduca (semanas) → re-exportar manualmente. El éxito parcial **silencia** qué items fallaron (no se reporta cuáles) — trade-off aceptado; el usuario compara N tracks en la playlist vs el total de la lista si quiere chequear.
+- Recomendación de UX en el form: Firefox anda con el navegador abierto; Chromium requiere cerrarlo o usar el archivo. Ver Gotcha #18 + #19.
