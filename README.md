@@ -93,7 +93,7 @@ cd src-tauri && cargo test --lib           # tests Rust (audio::cleanup, etc)
 Documentos fuente de verdad:
 - [docs/PLAN-reproductor-brutalist.md](docs/PLAN-reproductor-brutalist.md) — visión, scope, roadmap
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — arquitectura técnica, contratos Tauri, pipeline de audio, lyrics
-- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 33 ADRs al 2026-06-18
+- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 34 ADRs al 2026-06-18
 - [docs/LYRICS.md](docs/LYRICS.md) — plan por fases del sub-sistema de letras
 - [docs/IDENTIFICATION.md](docs/IDENTIFICATION.md) — sub-sistema de identificación (AcoustID + Chromaprint)
 - [docs/KARAOKE.md](docs/KARAOKE.md) — sub-sistema de karaoke (forced alignment + futuras Fases B-E)
@@ -101,11 +101,11 @@ Documentos fuente de verdad:
 
 ## Estado actual
 
-**Fase 0 — Setup** ✓ · **Fase 1 — MVP funcional** ✓ (cerrada 2026-05-02 al 100%) · **AcoustID Fase 1+2** ✓ · **Lyrics 2.a** ✓ · **Karaoke Fase A** ✓ (revertido a fake, ver abajo) · **Lyrics 2.c.1 — manual edit** ✓ · **EQ 10 bandas** ✓ · **Playlists** ✓ · **Descarga de listas + dedup + cookies** ✓ · **Gapless switch** ✓ · **Lyrics 2.c.3 — NetEase** ✓ · **Descargas: historial persistente + cancelar** ✓ (al 2026-06-18)
+**Fase 0 — Setup** ✓ · **Fase 1 — MVP funcional** ✓ (cerrada 2026-05-02 al 100%) · **AcoustID Fase 1+2** ✓ · **Lyrics 2.a** ✓ · **Karaoke Fase A** ✓ (revertido a fake, ver abajo) · **Lyrics 2.c.1 — manual edit** ✓ · **EQ 10 bandas** ✓ · **Playlists** ✓ · **Descarga de listas + dedup + cookies** ✓ · **Gapless switch** ✓ · **Lyrics 2.c.3 — NetEase** ✓ · **Descargas: historial persistente + cancelar** ✓ · **Drag & drop import** ✓ (al 2026-06-18)
 
 Funcionando hoy:
 - **Player**: play/pause con fade gradual, seek, volume (GainNode), mute, prev/next, shuffle con historial (cap 64), crossfade configurable (off/3/6/12s) entre tracks.
-- **Library**: scan recursivo de directorio (lofty), tabla con search por tokens (AND), cover art embebido + fallback a sibling `cover.jpg`. Cleanup heurístico de metadata yt-dlp + comando "CLEAN METADATA" para backfill. Columnas L (lyrics) e ID (identification) con indicadores per row.
+- **Library**: scan recursivo de directorio (lofty) + **drag & drop** de archivos/carpetas a la ventana (import nativo de Tauri, sin SCAN), tabla con search por tokens (AND), cover art embebido + fallback a sibling `cover.jpg`. Cleanup heurístico de metadata yt-dlp + comando "CLEAN METADATA" para backfill. Columnas L (lyrics) e ID (identification) con indicadores per row.
 - **Downloader**: paste URL → yt-dlp con progreso en tiempo real + fase CONVERTING, idempotente (`--no-overwrites`). Toggle **FULL PLAYLIST**: baja la lista completa y la guarda como playlist (además de "all tracks"); default OFF = un solo video aunque la URL traiga `list=`. **Historial persistente** (tabla `downloads`) con fecha, descargas de lista expandibles, y **botón CANCEL** (mata yt-dlp conservando los parciales). Reconcile de descargas huérfanas + limpieza de temporales al boot. Ver [ADR-031](docs/DECISIONS.md#adr-031--history-de-descargas-persistente--reconcile-de-huérfanas), [ADR-032](docs/DECISIONS.md#adr-032--cancelar-descarga-conservando-parciales).
 - **Visualizer**: Butterchurn side-by-side con la library, split arrastrable, auto-cycle de presets random cada 5–10s, fullscreen vía `F`. Persistent mount — sin freeze al cambiar de tab.
 - **Lyrics**: cascade Embedded (USLT) → LRCLIB → **NetEase** (synced, free, sin key). Panel sincronizado (rAF) con karaoke fill per-palabra (gradient HARD entre accent y fg). Click-to-seek, offset/speed/RESET, ALIGN mode (set offset clickeando línea), AUTO-ALIGN (forced alignment via WhisperX), botón REFETCH en not_found. Indicador `[L]/·/♪/—` en cada row de la library, auto-fetch on track change.

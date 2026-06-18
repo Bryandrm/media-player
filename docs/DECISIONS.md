@@ -43,6 +43,7 @@
 | ADR-030 | NetEase como tercer provider (free, keyless) | Accepted |
 | ADR-031 | History de descargas persistente + reconcile de huérfanas | Accepted |
 | ADR-032 | Cancelar descarga conservando parciales | Accepted |
+| ADR-033 | Import por drag & drop via drag-drop nativo de Tauri | Accepted |
 
 ---
 
@@ -861,3 +862,23 @@ Una descarga de lista larga no se podía detener — no había forma de cancelar
 - **Pro:** cancelación inmediata sin perder lo descargado.
 - **Contra:** el track a-medio-bajar deja temporales en `_pending` (limpiados al boot, ver ADR-031).
 - Nuevo status `Cancelled` en el contrato `Download` (UI: "CANCELLED").
+
+## ADR-033 — Import por drag & drop via drag-drop nativo de Tauri
+
+**Fecha:** 2026-06-18 · **Estado:** Accepted
+
+### Contexto
+Quick win: importar archivos arrastrándolos a la ventana, sin pasar por SCAN DIRECTORY. Hay **tres mecanismos de "arrastre"** posibles y conviene dejar claro cuál se usa para qué (porque ya pagamos el de HTML5).
+
+### Decisión
+Usar el **drag-drop nativo de Tauri** (`getCurrentWebview().onDragDropEvent`), que entrega los **paths reales del filesystem** en el evento `drop`. `dragDropEnabled` queda en `true` (default de Tauri). Nuevo comando `library_import_paths(paths)` que reusa `import_one_file` (mismo insert idempotente que el scan: archivos directo, carpetas recursivo). Overlay brutalist "DROP TO IMPORT" mientras se arrastra.
+
+### Los tres "drags" del proyecto (coexisten)
+1. **HTML5 DnD del webview** (`draggable` + `onDrop`): **NO funciona** en WKWebView (ver Gotcha #17 / [ADR-027](#adr-027--reorder-de-playlist-via-pointer-events-no-html5-dnd)). No se usa.
+2. **Pointer events** (`pointerdown`/`move`/`up`): el **reorder de playlist** (ADR-027). Manual, dentro del DOM.
+3. **Drag-drop nativo de Tauri**: drop de **archivos del SO** → da paths. Es el de este ADR. No choca con (1)/(2): con `dragDropEnabled=true` el HTML5 drop del webview se desactiva, pero igual no lo usábamos.
+
+### Consecuencias
+- **Pro:** cero fricción para sumar música; idempotente (re-soltar = SKIPPED, no duplica); funciona desde cualquier tab.
+- **Contra:** el `ScanReport` (FOUND/NEW) sólo es visible en el toolbar de LIBRARY; un drop desde otra tab importa "en silencio" (el overlay confirma el drop).
+- Requiere `core:default` en capabilities (ya estaba) para los eventos del webview.

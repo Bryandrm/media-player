@@ -204,6 +204,12 @@ src-tauri/resources/scripts/
   `failed` (sino quedan "pegadas" en downloading). **Limpieza de `_pending`** al
   boot (temporales huérfanos). Ver [ADR-031](./docs/DECISIONS.md#adr-031--history-de-descargas-persistente--reconcile-de-huérfanas),
   [ADR-032](./docs/DECISIONS.md#adr-032--cancelar-descarga-conservando-parciales).
+- **Drag & drop import** ✓ (2026-06-18) — arrastrar archivos/carpetas a la
+  ventana los importa a la library (sin SCAN). Usa el **drag-drop nativo de
+  Tauri** (`onDragDropEvent` → paths reales), distinto del HTML5 DnD (roto en
+  WKWebView, Gotcha #17) y del pointer-events del reorder. Comando
+  `library_import_paths` reusa `import_one_file` (idempotente). Overlay
+  "DROP TO IMPORT". Ver [ADR-033](./docs/DECISIONS.md#adr-033--import-por-drag--drop-via-drag-drop-nativo-de-tauri).
 - **Hardening del downloader (Windows)** ✓ (2026-06-17) — sesión dedicada a
   hacer la descarga de playlists robusta en Windows. Seis cambios + un
   aprendizaje de uso (ver [ADR-028](./docs/DECISIONS.md#adr-028) + Gotchas
@@ -235,9 +241,9 @@ src-tauri/resources/scripts/
   preview-only / de pago). Sin key ni modal. Botón REFETCH en not_found
   (flag `force` en `lyrics_fetch`). Ver [ADR-030](./docs/DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)
   y [docs/LYRICS.md §15](./docs/LYRICS.md#15-netease-fase-2c3).
-- Próximo (orden acordado con Bryan 2026-06-18): **(1) quick wins** — drag &
-  drop a la library, export M3U, smart playlists (history persistente de
-  descargas ✓ hecho); **(2) calidad/plataforma** — testing Windows/Linux,
+- Próximo (orden acordado con Bryan 2026-06-18): **(1) quick wins** — export
+  M3U, smart playlists (drag & drop ✓ + history persistente ✓ hechos);
+  **(2) calidad/plataforma** — testing Windows/Linux,
   validar `pnpm tauri build`, tests + CI. **Features grandes al final**: Lyrics
   2.c.4 → karaoke real, Karaoke Fase B-E, Identification Fase 3.
 
