@@ -19,15 +19,20 @@ use crate::lyrics::{self, LyricsQuery};
 #[tauri::command]
 pub async fn lyrics_fetch(
     track_id: i64,
+    force: Option<bool>,
     pool: State<'_, SqlitePool>,
     http: State<'_, reqwest::Client>,
 ) -> AppResult<Option<Lyrics>> {
     // Cache check: si tenemos algo cacheado (sea found o not_found), respetarlo.
-    if let Some(cached) = db::lyrics::get_for_track(&pool, track_id).await? {
-        if cached.status == "not_found" {
-            return Ok(None);
+    // `force=true` lo saltea — lo usa el botón REFETCH para re-correr el cascade
+    // sobre un track antes marcado not_found (ej: cacheado antes de NetEase).
+    if !force.unwrap_or(false) {
+        if let Some(cached) = db::lyrics::get_for_track(&pool, track_id).await? {
+            if cached.status == "not_found" {
+                return Ok(None);
+            }
+            return Ok(Some(cached));
         }
-        return Ok(Some(cached));
     }
 
     // Cache miss: leer la metadata del track para armar la query a LRCLIB.

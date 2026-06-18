@@ -26,7 +26,9 @@ type LyricsState = {
    *  botón AUTO-ALIGN está disabled mientras `aligning`. */
   aligning: boolean;
 
-  fetch: (trackId: number) => Promise<void>;
+  /** `force` saltea el cache (incluido not_found) y re-corre el cascade —
+   *  lo usa el botón REFETCH (ej: track marcado not_found antes de NetEase). */
+  fetch: (trackId: number, force?: boolean) => Promise<void>;
   setOffset: (trackId: number, offsetMs: number) => Promise<void>;
   /** Ajusta el speedRatio (drift correction). Optimistic update igual
    *  que setOffset. */
@@ -62,10 +64,15 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
   error: null,
   aligning: false,
 
-  fetch: async (trackId) => {
+  fetch: async (trackId, force = false) => {
     // Race-guard: si ya estamos fetch-eando para este trackId, no duplicar.
     // Si es un trackId distinto, descartar el previo (set forTrackId acá).
-    if (get().forTrackId === trackId && (get().loading || get().current !== null)) {
+    // `force` salta el guard (re-fetch deliberado tras configurar la key).
+    if (
+      !force &&
+      get().forTrackId === trackId &&
+      (get().loading || get().current !== null)
+    ) {
       return;
     }
     set({
@@ -76,7 +83,10 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
       error: null,
     });
     try {
-      const result = await invoke<Lyrics | null>("lyrics_fetch", { trackId });
+      const result = await invoke<Lyrics | null>("lyrics_fetch", {
+        trackId,
+        force,
+      });
       // Race-check al volver: si el usuario cambió de track durante el
       // await, descartamos este resultado.
       if (get().forTrackId !== trackId) return;

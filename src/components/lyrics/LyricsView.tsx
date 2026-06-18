@@ -61,6 +61,7 @@ export function LyricsView() {
   const resetSync = useLyricsStore((s) => s.resetSync);
   const alignTrack = useLyricsStore((s) => s.alignTrack);
   const saveManualEdit = useLyricsStore((s) => s.saveManualEdit);
+  const fetchLyrics = useLyricsStore((s) => s.fetch);
   const tracks = useLibraryStore((s) => s.tracks);
   const whisperxAvailable = useDownloadStore((s) => s.deps?.whisperx ?? false);
 
@@ -205,8 +206,14 @@ export function LyricsView() {
       <>
         <div className="h-full flex flex-col items-center justify-center gap-2 text-xs uppercase tracking-wider">
           <div className="text-fg text-base">NO LYRICS AVAILABLE</div>
-          <div className="text-muted">TRIED: EMBEDDED · LRCLIB</div>
-          <div className="mt-4">
+          <div className="text-muted">TRIED: EMBEDDED · LRCLIB · NETEASE</div>
+          <div className="mt-4 flex gap-2">
+            {/* REFETCH: re-corre el cascade ignorando el cache de not_found.
+                Útil para tracks marcados not_found antes de que NetEase
+                existiera en el cascade. */}
+            <Button size="sm" onClick={() => fetchLyrics(trackId, true)}>
+              REFETCH
+            </Button>
             <Button size="sm" onClick={openEdit}>
               ADD MANUALLY
             </Button>

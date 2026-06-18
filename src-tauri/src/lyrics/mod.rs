@@ -1,18 +1,21 @@
 //! Coordinador de la cascade de providers de letras.
 //!
-//! Estrategia (Fase 1):
+//! Estrategia:
 //!   1. Embedded (USLT via lofty)
-//!   2. LRCLIB
+//!   2. LRCLIB (gratis)
+//!   2.5 NetEase (gratis, sin key — sólo si no hubo synced aún) — ADR-030
 //!   3. → mark_not_found
 //!
 //! Política híbrida cuando un provider tiene plain pero no synced: lo
 //! retenemos como fallback y seguimos buscando synced en el siguiente. Si
 //! nadie tiene synced, devolvemos el mejor plain encontrado.
 //!
-//! Ver docs/LYRICS.md (plan por fases) y docs/PLAN-reproductor-brutalist.md §5.4.
+//! Ver docs/LYRICS.md (plan por fases + §15) y
+//! docs/PLAN-reproductor-brutalist.md §5.4.
 
 pub mod embedded;
 pub mod lrclib;
+pub mod netease;
 
 use std::path::Path;
 
@@ -65,10 +68,30 @@ pub async fn fetch_lyrics(
             duration_seconds: query.duration_seconds,
         };
         if let Some(found) = lrclib::try_lrclib(http, query.track_id, &lrc_query).await? {
-            // Si LRCLIB devolvió synced, gana sobre el plain de embedded.
-            // Si devolvió sólo plain y no teníamos plain de embedded, nos
-            // quedamos con LRCLIB. Si ya teníamos plain de embedded, nos
-            // quedamos con ese (confidence 1.0 vs LRCLIB que puede ser <0.8).
+            // Synced de LRCLIB gana sobre cualquier plain previo → return.
+            if found.synced_lyrics.is_some() {
+                db::lyrics::upsert(pool, &found).await?;
+                return Ok(Some(found));
+            }
+            // Plain-only: lo retenemos como fallback (si no teníamos uno de
+            // embedded, que tiene confidence 1.0) pero NO retornamos —
+            // todavía le damos a NetEase la chance de proveer synced.
+            if best_plain.is_none() {
+                best_plain = Some(found);
+            }
+        }
+    }
+
+    // 2.5 NetEase — sólo si no encontramos synced aún y hay artist. Gratis y
+    //     sin key (ADR-030); siempre se intenta. NetEase devuelve LRC directo.
+    if let Some(artist) = query.artist {
+        let ne_query = netease::NeteaseQuery {
+            artist,
+            title: query.title,
+            duration_seconds: query.duration_seconds,
+        };
+        if let Some(found) = netease::try_netease(http, query.track_id, &ne_query).await? {
+            // Synced de NetEase gana; plain sólo si no teníamos fallback.
             if found.synced_lyrics.is_some() || best_plain.is_none() {
                 db::lyrics::upsert(pool, &found).await?;
                 return Ok(Some(found));
@@ -76,7 +99,7 @@ pub async fn fetch_lyrics(
         }
     }
 
-    // 3. Si tenemos plain de embedded como fallback, persistimos ese.
+    // 3. Si tenemos plain de fallback (embedded o LRCLIB), persistimos ese.
     if let Some(plain) = best_plain {
         db::lyrics::upsert(pool, &plain).await?;
         return Ok(Some(plain));
