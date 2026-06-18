@@ -34,6 +34,7 @@
 | ADR-021 | A2 LRC extendido con trailing end marker | Accepted |
 | ADR-022 | Cursor de lyrics usa `wordTimestampsMs[0]` con alignment | Accepted |
 | ADR-023 | EQ insertado post-tap del visualizer | Accepted |
+| ADR-029 | Musixmatch como tercer provider, LRCLIB-first | Accepted |
 
 ---
 
@@ -739,3 +740,31 @@ Dos problemas surgieron al bajar una playlist privada de YouTube en Windows con 
 - **Pro:** descarga viable con Chromium en Windows sin cerrar el navegador; playlists con items rotos ya no fallan enteras.
 - **Contra:** el cookies.txt caduca (semanas) → re-exportar manualmente. El éxito parcial **silencia** qué items fallaron (no se reporta cuáles) — trade-off aceptado; el usuario compara N tracks en la playlist vs el total de la lista si quiere chequear.
 - Recomendación de UX en el form: Firefox anda con el navegador abierto; Chromium requiere cerrarlo o usar el archivo. Ver Gotcha #18 + #19.
+
+## ADR-029 — Musixmatch como tercer provider, LRCLIB-first
+
+**Fecha:** 2026-06-17 · **Estado:** Accepted
+
+### Contexto
+LRCLIB es gratuito pero su cobertura de letras synced en pop/rock comercial tiene huecos y calidad variable (community-curated). Musixmatch tiene la mayor base de letras sincronizadas comercialmente curada. Se necesita decidir: (1) si agregar Musixmatch al cascade, (2) en qué orden, (3) si refactorizar a trait `LyricsProvider`.
+
+### Opciones consideradas
+1. **Musixmatch primero, LRCLIB fallback.** Mejor calidad por defecto, pero gasta ~1 call/track incluso cuando LRCLIB ya tiene synced.
+2. **LRCLIB primero, Musixmatch si LRCLIB no tiene synced.** Ahorra calls de Musixmatch (plan free = ~2000/día). LRCLIB cubre la mayoría de tracks mainstream; Musixmatch complementa los huecos.
+3. **Musixmatch en paralelo** con LRCLIB, comparar resultados. Complejidad sin beneficio claro — el usuario no va a notar la diferencia en calidad si LRCLIB ya tiene synced.
+
+### Decisión
+**Opción 2 — LRCLIB first, Musixmatch second.** El cascade queda: Embedded → LRCLIB → Musixmatch → not_found. Musixmatch sólo se intenta cuando (a) LRCLIB no devolvió synced, y (b) el usuario configuró su API key en settings.
+
+### Razón
+- Ahorra calls de la cuota free de Musixmatch para los tracks que realmente lo necesitan.
+- Sin API key, el cascade se comporta exactamente como antes (zero-impact default).
+- API key del usuario en `settings` table — nunca bundleada. Misma decisión que AcoustID ([ADR-015](DECISIONS.md#adr-015)).
+- Sin trait refactor: se mantienen funciones libres (`try_embedded`, `try_lrclib`, `try_musixmatch`). El trait `LyricsProvider` se justifica con el 4to provider (Genius), no antes. CLAUDE.md: "preferir patrones simples sobre abstracciones prematuras".
+
+### Consecuencias
+- **Pro:** cobertura synced significativamente mejor para pop/rock comercial; el usuario que no ponga API key no nota ningún cambio.
+- **Pro:** sin migración de DB — `settings` y `lyrics` table ya soportan todo.
+- **Contra:** Musixmatch no devuelve la duración del track matcheado, así que no podemos calcular confidence por duration delta (se usa fija 0.9) ni auto-baseline de speedRatio.
+- **Contra:** Musixmatch devuelve synced en formato JSON subtitle (no LRC) → requiere conversión `subtitle_to_lrc()`.
+- Cross-ref: [LYRICS.md §15](LYRICS.md#15-musixmatch-fase-2c3) para implementación detallada.
