@@ -22,6 +22,9 @@ type LibraryState = {
   backfillCovers: () => Promise<void>;
   backfillMetadata: () => Promise<void>;
   scanDirectory: () => Promise<void>;
+  /** Importa paths (archivos o carpetas) arrastrados desde el explorador.
+   *  Reusa el mismo insert idempotente que el scan. */
+  importPaths: (paths: string[]) => Promise<void>;
 };
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
@@ -91,6 +94,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       const report = await invoke<ScanReport>("library_scan_directory", {
         path: picked,
       });
+      set({ lastReport: report });
+      await get().loadTracks();
+    } catch (e) {
+      set({ error: String(e) });
+    } finally {
+      set({ scanning: false });
+    }
+  },
+
+  importPaths: async (paths) => {
+    if (paths.length === 0) return;
+    set({ error: null, scanning: true });
+    try {
+      const report = await invoke<ScanReport>("library_import_paths", { paths });
       set({ lastReport: report });
       await get().loadTracks();
     } catch (e) {

@@ -1,7 +1,7 @@
 //! Comandos Tauri de la biblioteca: scan de directorios + listado.
 
 use sqlx::SqlitePool;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager, State};
 use walkdir::WalkDir;
 
@@ -9,6 +9,56 @@ use crate::audio;
 use crate::contracts::{ScanReport, Track};
 use crate::db;
 use crate::errors::{AppError, AppResult};
+
+/// Importa un único archivo de audio: extrae metadata, inserta en `tracks`
+/// (idempotente por `file_path`), y materializa el cover art si es nuevo.
+/// Actualiza `report` con el resultado. No-op si no es un archivo de audio.
+/// Corre dentro de un contexto blocking (lofty es sync) — usa `block_on` para
+/// los inserts async. Compartido por el scan de directorios y el import por
+/// drag & drop.
+fn import_one_file(
+    pool: &SqlitePool,
+    file_path: &Path,
+    cache_dir: &Path,
+    report: &mut ScanReport,
+) {
+    if !audio::is_audio_file(file_path) {
+        return;
+    }
+    report.scanned += 1;
+
+    let meta = match audio::extract_metadata(file_path) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("[import] skip {}: {}", file_path.display(), e);
+            report.errors += 1;
+            return;
+        }
+    };
+
+    let insert_result = tauri::async_runtime::block_on(db::tracks::insert_from_metadata(
+        pool, file_path, meta, "local", None,
+    ));
+
+    match insert_result {
+        Ok(Some(track_id)) => {
+            report.inserted += 1;
+            // Cover art best-effort: el track es válido aunque falle.
+            if let Ok(Some(cover_path)) = audio::extract_cover_art(file_path, track_id, cache_dir) {
+                let _ = tauri::async_runtime::block_on(db::tracks::set_cover_art(
+                    pool,
+                    track_id,
+                    Some(&cover_path),
+                ));
+            }
+        }
+        Ok(None) => report.skipped += 1,
+        Err(e) => {
+            eprintln!("[import] insert failed {}: {}", file_path.display(), e);
+            report.errors += 1;
+        }
+    }
+}
 
 /// Escanea recursivamente un directorio e inserta todos los archivos de audio
 /// legibles en `tracks`. Devuelve un `ScanReport` con contadores.
@@ -53,48 +103,7 @@ pub async fn library_scan_directory(
             if !entry.file_type().is_file() {
                 continue;
             }
-            let file_path = entry.path();
-            if !audio::is_audio_file(file_path) {
-                continue;
-            }
-            report.scanned += 1;
-
-            let meta = match audio::extract_metadata(file_path) {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("[scan] skip {}: {}", file_path.display(), e);
-                    report.errors += 1;
-                    continue;
-                }
-            };
-
-            // Ejecutar el insert async desde un contexto blocking: usamos
-            // tauri::async_runtime::block_on. Cada insert es <1ms normalmente.
-            let insert_result = tauri::async_runtime::block_on(
-                db::tracks::insert_from_metadata(&pool_for_blocking, file_path, meta, "local", None),
-            );
-
-            match insert_result {
-                Ok(Some(track_id)) => {
-                    report.inserted += 1;
-                    // Cover art: best-effort, no marcamos error si falla — el
-                    // track sigue siendo válido sin imagen.
-                    if let Ok(Some(cover_path)) =
-                        audio::extract_cover_art(file_path, track_id, &cache_dir)
-                    {
-                        let _ = tauri::async_runtime::block_on(db::tracks::set_cover_art(
-                            &pool_for_blocking,
-                            track_id,
-                            Some(&cover_path),
-                        ));
-                    }
-                }
-                Ok(None) => report.skipped += 1,
-                Err(e) => {
-                    eprintln!("[scan] insert failed {}: {}", file_path.display(), e);
-                    report.errors += 1;
-                }
-            }
+            import_one_file(&pool_for_blocking, entry.path(), &cache_dir, &mut report);
         }
 
         report
@@ -109,6 +118,56 @@ pub async fn library_scan_directory(
         report.inserted,
         report.skipped,
         report.errors
+    );
+
+    Ok(report)
+}
+
+/// Importa una lista de paths (archivos o directorios), típicamente de un
+/// drag & drop desde el explorador del sistema. Los archivos de audio se
+/// importan directo; los directorios se escanean recursivo. Reusa
+/// `import_one_file` (idempotente por `file_path` → re-importar no duplica).
+/// Devuelve un `ScanReport` agregado.
+#[tauri::command]
+pub async fn library_import_paths(
+    paths: Vec<String>,
+    app: AppHandle,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<ScanReport> {
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| AppError::Other(format!("cache dir unavailable: {}", e)))?;
+    let pool_for_blocking = pool.inner().clone();
+    let n_paths = paths.len();
+
+    let report = tauri::async_runtime::spawn_blocking(move || -> ScanReport {
+        let mut report = ScanReport {
+            scanned: 0,
+            inserted: 0,
+            skipped: 0,
+            errors: 0,
+        };
+        for p in &paths {
+            let path = PathBuf::from(p);
+            if path.is_dir() {
+                for entry in WalkDir::new(&path).into_iter().filter_map(Result::ok) {
+                    if entry.file_type().is_file() {
+                        import_one_file(&pool_for_blocking, entry.path(), &cache_dir, &mut report);
+                    }
+                }
+            } else if path.is_file() {
+                import_one_file(&pool_for_blocking, &path, &cache_dir, &mut report);
+            }
+        }
+        report
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("import task joined with error: {}", e)))?;
+
+    eprintln!(
+        "[import] {} paths → scanned={} inserted={} skipped={} errors={}",
+        n_paths, report.scanned, report.inserted, report.skipped, report.errors
     );
 
     Ok(report)
