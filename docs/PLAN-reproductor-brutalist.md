@@ -431,7 +431,8 @@ Post-descarga, usar `lofty-rs` en Rust para leer los tags embebidos y poblar la 
 - [ ] MPRIS en Linux para integración con panel del sistema.
 - [ ] Exportar playlists a M3U.
 - [x] **Lyrics Fase 2.a + 2.b + 2.c.1** ✓ (2026-05-03 / 2026-05-04 / 2026-06-14) — drift correction (`speedRatio`), forced alignment via WhisperX, manual edit modal. Ver [LYRICS.md](LYRICS.md).
-- [ ] **Lyrics Fase 2.c.2+ (UX seamless)** — Musixmatch como provider primario, Genius como fallback plain, auto-fallback por confidence baja, auto-detect de mismatch via whisperx score. Ver [LYRICS.md "Bandera de UX"](LYRICS.md).
+- [x] **Lyrics Fase 2.c.3 — NetEase provider** ✓ (2026-06-18) — tercer provider synced free/keyless (reemplazó Musixmatch, que es de pago). Ver [LYRICS.md §15](LYRICS.md#15-netease-fase-2c3) y [ADR-030](DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless).
+- [ ] **Lyrics Fase 2.c.4+ (UX seamless)** — auto-fallback por confidence baja, auto-detect de mismatch via whisperx score, Genius como fallback plain. Ver [LYRICS.md "Bandera de UX"](LYRICS.md).
 - [ ] History persistente de descargas (chunk 2 — ADR-011).
 - [x] ~~Búsqueda rápida en biblioteca~~ — implementada en Fase 1 (token AND match).
 - [x] ~~Media keys integration~~ — implementada en Fase 1 (MediaSession API).
@@ -580,7 +581,7 @@ brutalist-player/
 | 9 | Funciona al menos en macOS (daily del autor). Linux/Windows bonus. | ✓ macOS validado, Windows pendiente test |
 | 10 | Repo con README explicando setup + disclaimer legal. | ✓ |
 
-**Estado al 2026-06-16:**
+**Estado al 2026-06-18:**
 
 - Fase 1 (MVP) ✓ cerrada 2026-05-02.
 - AcoustID identification Fase 1 + Fase 2 ✓ cerradas 2026-05-02.
@@ -591,8 +592,13 @@ brutalist-player/
 - Playlists (CRUD + rename inline + reorder drag&drop) ✓ 2026-06-14 / 2026-06-16.
 - Descarga de listas + dedup + cookies ✓ 2026-06-16 ([ADR-024](DECISIONS.md#adr-024), [ADR-025](DECISIONS.md#adr-025)).
 - Switch gapless en selección manual ✓ 2026-06-16 ([ADR-026](DECISIONS.md#adr-026)).
+- Descarga de listas + cookies.txt + robustez Windows ✓ 2026-06-17.
+- Lyrics Fase 2.c.3 — **NetEase** provider synced (free, keyless) ✓ 2026-06-18 ([ADR-030](DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)). Reemplazó el plan de Musixmatch (de pago).
 
-**Próximo recomendado:** Lyrics Fase 2.c.3 — Musixmatch como provider primario (2.c.1 manual edit ya está). Justificación: el bottleneck del karaoke es la calidad del LRC; mejor LRC base destraba el karaoke real y mejora display + forced alignment aguas abajo.
+**Próximo (orden acordado 2026-06-18):**
+1. **Quick wins** — drag & drop a la library (importar sin SCAN), export M3U, smart playlists, history persistente de descargas (ADR-011 chunk 2).
+2. **Calidad / plataforma** — testing en Windows (media keys + flujo general) + Linux (MPRIS), validar `pnpm tauri build` (binario distribuible), tests de frontend/integración + CI.
+3. **Features grandes al final** — Lyrics 2.c.4 (auto-fallback por confidence + auto-detect de mismatch via whisperx score) → **karaoke real** (revertir el fake), Karaoke Fase B-E, Identification Fase 3, Genius (4to provider → trait `LyricsProvider`).
 
 ---
 

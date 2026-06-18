@@ -9,7 +9,7 @@
 - **Backend:** Rust async, SQLite vía `sqlx` 0.8 (runtime-tokio), `lofty` 0.22 para tags + cover art + USLT, `reqwest` (rustls-tls) para HTTP
 - **Audio:** dos singletons `<audio>` (canales A/B fuera del JSX) → channelGains → preMasterGain (vis tap) → masterGain (volume) → playPauseGain (fades) → destination. Butterchurn tapea preMasterGain.
 - **Visualizer:** Butterchurn 2.6 + butterchurn-presets 2.4 (~100 presets base, auto-cycle 5–10s, persistent mount)
-- **Lyrics:** LRCLIB API + USLT embebido en tags ID3, parser LRC + A2 (per-word timestamps), panel sincronizado con rAF, drift correction (`speedRatio` + offset + ALIGN mode)
+- **Lyrics:** cascade Embedded (USLT) → LRCLIB → NetEase (synced, free, sin key), parser LRC + A2 (per-word timestamps), panel sincronizado con rAF, drift correction (`speedRatio` + offset + ALIGN mode)
 - **Identification:** `fpcalc` (Chromaprint) + AcoustID API → MBID de MusicBrainz; pisa metadata sucia con canónica
 - **Karaoke:** WhisperX en align-only mode via wrapper Python para forced alignment per-palabra
 - **Externos:** `yt-dlp`, `ffmpeg`, `fpcalc`, `whisperx` como deps del sistema (no bundled, opt-in según feature)
@@ -93,24 +93,24 @@ cd src-tauri && cargo test --lib           # tests Rust (audio::cleanup, etc)
 Documentos fuente de verdad:
 - [docs/PLAN-reproductor-brutalist.md](docs/PLAN-reproductor-brutalist.md) — visión, scope, roadmap
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — arquitectura técnica, contratos Tauri, pipeline de audio, lyrics
-- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 27 ADRs al 2026-06-16
+- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 31 ADRs al 2026-06-18
 - [docs/LYRICS.md](docs/LYRICS.md) — plan por fases del sub-sistema de letras
 - [docs/IDENTIFICATION.md](docs/IDENTIFICATION.md) — sub-sistema de identificación (AcoustID + Chromaprint)
 - [docs/KARAOKE.md](docs/KARAOKE.md) — sub-sistema de karaoke (forced alignment + futuras Fases B-E)
-- [CLAUDE.md](CLAUDE.md) — convenciones + gotchas (17 gotchas pagados, el archivo más útil para entender footguns)
+- [CLAUDE.md](CLAUDE.md) — convenciones + gotchas (22 gotchas pagados, el archivo más útil para entender footguns)
 
 ## Estado actual
 
-**Fase 0 — Setup** ✓ · **Fase 1 — MVP funcional** ✓ (cerrada 2026-05-02 al 100%) · **AcoustID Fase 1+2** ✓ · **Lyrics 2.a** ✓ · **Karaoke Fase A** ✓ (revertido a fake, ver abajo) · **Lyrics 2.c.1 — manual edit** ✓ · **EQ 10 bandas** ✓ · **Playlists** ✓ (al 2026-06-14)
+**Fase 0 — Setup** ✓ · **Fase 1 — MVP funcional** ✓ (cerrada 2026-05-02 al 100%) · **AcoustID Fase 1+2** ✓ · **Lyrics 2.a** ✓ · **Karaoke Fase A** ✓ (revertido a fake, ver abajo) · **Lyrics 2.c.1 — manual edit** ✓ · **EQ 10 bandas** ✓ · **Playlists** ✓ · **Descarga de listas + dedup + cookies** ✓ · **Gapless switch** ✓ · **Lyrics 2.c.3 — NetEase** ✓ (al 2026-06-18)
 
 Funcionando hoy:
 - **Player**: play/pause con fade gradual, seek, volume (GainNode), mute, prev/next, shuffle con historial (cap 64), crossfade configurable (off/3/6/12s) entre tracks.
 - **Library**: scan recursivo de directorio (lofty), tabla con search por tokens (AND), cover art embebido + fallback a sibling `cover.jpg`. Cleanup heurístico de metadata yt-dlp + comando "CLEAN METADATA" para backfill. Columnas L (lyrics) e ID (identification) con indicadores per row.
 - **Downloader**: paste URL → yt-dlp con progreso en tiempo real + fase CONVERTING, idempotente (`--no-overwrites`). Toggle **FULL PLAYLIST**: baja la lista completa y la guarda como playlist (además de "all tracks"); default OFF = un solo video aunque la URL traiga `list=`.
 - **Visualizer**: Butterchurn side-by-side con la library, split arrastrable, auto-cycle de presets random cada 5–10s, fullscreen vía `F`. Persistent mount — sin freeze al cambiar de tab.
-- **Lyrics**: LRCLIB + USLT embebido. Panel sincronizado (rAF) con karaoke fill per-palabra (gradient HARD entre accent y fg). Click-to-seek, offset/speed/RESET, ALIGN mode (set offset clickeando línea), AUTO-ALIGN (forced alignment via WhisperX). Indicador `[L]/·/♪/—` en cada row de la library, auto-fetch on track change.
+- **Lyrics**: cascade Embedded (USLT) → LRCLIB → **NetEase** (synced, free, sin key). Panel sincronizado (rAF) con karaoke fill per-palabra (gradient HARD entre accent y fg). Click-to-seek, offset/speed/RESET, ALIGN mode (set offset clickeando línea), AUTO-ALIGN (forced alignment via WhisperX), botón REFETCH en not_found. Indicador `[L]/·/♪/—` en cada row de la library, auto-fetch on track change.
 - **Identification AcoustID**: fpcalc fingerprint → MBID de MusicBrainz → pisa metadata sucia. Single-track + bulk IDENTIFY ALL con throttle 2.85 rps cancelable. Indicador ID per row (`[ID]`/`?`/`—`/`!`/`⌛`).
-- **Karaoke Fase A** (infraestructura): forced alignment via WhisperX en align-only mode + parser A2 + botón AUTO-ALIGN. **Actualmente revertido a fake karaoke** (interpolación uniforme dentro de línea) porque WhisperX hereda los mismatches del LRC de LRCLIB. Volverá cuando Lyrics 2.c.3 (Musixmatch) suba la calidad del LRC base. Ver [docs/KARAOKE.md §13](docs/KARAOKE.md#13-lecciones-aprendidas-fase-a).
+- **Karaoke Fase A** (infraestructura): forced alignment via WhisperX en align-only mode + parser A2 + botón AUTO-ALIGN. **Actualmente revertido a fake karaoke** (interpolación uniforme dentro de línea) porque WhisperX hereda los mismatches del LRC. Volverá cuando mejore el LRC base — 2.c.3 (NetEase) ✓ sumó cobertura synced; falta 2.c.4 (auto-fallback por confidence + auto-detect de mismatch). Ver [docs/KARAOKE.md §13](docs/KARAOKE.md#13-lecciones-aprendidas-fase-a).
 - **Lyrics manual edit (2.c.1)**: botón EDIT en LyricsView → modal con textareas synced + plain. Guarda vía `lyrics_save_manual_edit`, sobreescribe `original_synced_lyrics` (preserva la edición a través de RE-ALIGNs) y resetea offset/speedRatio. Escalera de emergencia para usuario técnico, no flujo seamless aún.
 - **Equalizer 10 bandas**: `BiquadFilterNode` chain ISO estándar (lowshelf + 8 peaking + highshelf), ±12dB, tab EQ con sliders verticales, BYPASS preserva preset, double-click resetea banda. Insertado entre `preMasterGain` y `masterGain` → el visualizer tapea pre-EQ (independiente). Ver [ADR-023](docs/DECISIONS.md#adr-023).
 - **Playlists**: CRUD + add/remove tracks + sidebar UI + rename inline (doble-click) + reorder por drag & drop. `getQueue()` lee de la playlist seleccionada → NEXT/PREV/shuffle navegan dentro de ella. La vista de playlist se mantiene en sync con la library (identify/clean/scan/letras refrescan ambas). Smart playlists quedan para polish.

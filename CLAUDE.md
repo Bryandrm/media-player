@@ -138,16 +138,17 @@ src-tauri/resources/scripts/
   hereda errores. Ver [docs/KARAOKE.md §13](./docs/KARAOKE.md#13-lecciones-aprendidas-fase-a)
   para el journey completo de implementación + límites honestos. Actualmente
   revertido a **fake karaoke** (interpolación uniforme dentro de línea)
-  porque whisperx hereda los mismatches del LRC. Volverá cuando 2.c.3
-  (Musixmatch) suba la calidad del LRC base.
+  porque whisperx hereda los mismatches del LRC. Volverá cuando mejore la
+  calidad del LRC base — 2.c.3 (NetEase) ya sumó cobertura synced; falta
+  2.c.4 (auto-fallback por confidence + auto-detect de mismatch).
 - **Lyrics Fase 2.c.1 — manual edit modal** ✓ (2026-06-14) — botón EDIT en
   LyricsView abre modal con textareas synced + plain. Save vía
   `lyrics_save_manual_edit` sobreescribe `original_synced_lyrics` (preserva
   edición a través de RE-ALIGNs) y resetea offset/speedRatio/aligned_at.
   **Caveat de UX honesto**: es escalera de emergencia para usuario técnico,
   no flujo seamless. Ver [docs/LYRICS.md "Bandera de UX"](./docs/LYRICS.md)
-  para el path hacia automatización (Musixmatch + auto-fallback por
-  confidence + auto-detect de mismatch via whisperx score).
+  para el path hacia automatización (NetEase ✓ 2.c.3 + auto-fallback por
+  confidence + auto-detect de mismatch via whisperx score, pendientes).
 - **Equalizer 10 bandas** ✓ (2026-06-14) — `BiquadFilterNode` chain ISO
   estándar (lowshelf + 8 peaking + highshelf), ±12dB, tab EQ dedicada con
   sliders verticales, BYPASS preserva preset, double-click resetea banda
@@ -216,11 +217,18 @@ src-tauri/resources/scripts/
     "Unable to recognize playlist". `--cookies-from-browser firefox` la incluye
     y es el camino confiable para playlists privadas. (Firefox no sufre el lock
     de Gotcha #18 en ninguna plataforma.)
-- Próximo recomendado: **Lyrics 2.c.3 (Musixmatch)** para cerrar la brecha
-  de UX seamless que Bryan levantó después de 2.c.1, o **drag & drop a la
-  library** como quick win, o **smart playlists / export M3U** para
-  apalancar lo recién hecho. Lyrics/karaoke siempre tiene prioridad
-  paralela (ver feedback de memoria correspondiente).
+- **Lyrics Fase 2.c.3 — NetEase** ✓ (2026-06-18) — tercer provider synced
+  free/keyless en el cascade (`Embedded → LRCLIB → NetEase → not_found`).
+  Devuelve LRC directo, matching conservador por duración (±8s), todo falla
+  graceful a not_found. **Reemplazó el plan de Musixmatch** (free tier
+  preview-only / de pago). Sin key ni modal. Botón REFETCH en not_found
+  (flag `force` en `lyrics_fetch`). Ver [ADR-030](./docs/DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)
+  y [docs/LYRICS.md §15](./docs/LYRICS.md#15-netease-fase-2c3).
+- Próximo (orden acordado con Bryan 2026-06-18): **(1) quick wins** — drag &
+  drop a la library, export M3U, smart playlists, history persistente de
+  descargas; **(2) calidad/plataforma** — testing Windows/Linux, validar
+  `pnpm tauri build`, tests + CI. **Features grandes al final**: Lyrics 2.c.4
+  → karaoke real, Karaoke Fase B-E, Identification Fase 3.
 
 ---
 

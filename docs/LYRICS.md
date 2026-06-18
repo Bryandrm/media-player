@@ -24,16 +24,16 @@ Mínimo viable para tachar lyrics de los criterios "done" de Fase 1 del PLAN ([�
 
 ### Fase 2 — Polish (post-MVP estable)
 
-Sub-fase 2.a (drift + intros) ✓ cerrada 2026-05-03. Sub-fase 2.b (forced alignment / A2) ✓ cerrada 2026-05-04. Sub-fase 2.c (alternative providers + manual edit): **manual edit modal ✓ cerrado 2026-06-14**, providers (Genius/Musixmatch) y refactor a trait `LyricsProvider` siguen pendientes.
+Sub-fase 2.a (drift + intros) ✓ cerrada 2026-05-03. Sub-fase 2.b (forced alignment / A2) ✓ cerrada 2026-05-04. Sub-fase 2.c (alternative providers + manual edit): **manual edit modal ✓ cerrado 2026-06-14**, **NetEase provider ✓ cerrado 2026-06-18** (reemplazó el plan de Musixmatch, que es de pago); Genius + refactor a trait `LyricsProvider` siguen pendientes.
 
 - ✅ **Drift correction (`speedRatio`)** — multiplicador de tempo + auto-baseline por duration ratio + UI SLOWER/FASTER (±0.5% step). Migración `20260503000001_lyrics_speed_ratio.sql` agregó `lyrics.speed_ratio REAL DEFAULT 1.0`. Comando `lyrics_set_speed_ratio`. Fórmula al consumir: `audioMs = (lrcMs + lrcOffset) * speedRatio + userOffsetMs` — speedRatio se aplica DESPUÉS de sumar el offset del archivo LRC pero ANTES de sumar el offset del usuario, para que userOffset sea un shift externo absoluto (típicamente padding de YouTube) y no quede escalado.
 - ✅ **`ALIGN` mode** — toggle one-shot para resolver intros grandes (típico YouTube padding 5-30s). Click en el botón ALIGN, después click en cualquier línea durante reproducción → offset se ajusta para alinear ESA línea con el audio actual. Resuelve casos donde el offset manual ±100ms es demasiado fino. Escape sale del modo.
 - ✅ **`RESET` extendido** — un solo click resetea offset + speedRatio a sus valores neutros (0 y 1.0). Comando `lyrics_reset_sync`.
 - ✅ **Forced alignment / A2 (Sub-fase 2.b)** — ver [KARAOKE.md](./KARAOKE.md). Per-word timestamps reales vía WhisperX. Resolvió drift dentro de línea PARA tracks con LRC de buena calidad. Para LRC malo, no compensa el mismatch text↔audio (límite teórico de forced alignment).
 - ✅ **Manual edit modal (sub-fase 2.c.1)** — shipped 2026-06-14. Botón EDIT en LyricsView (visible en estados synced / plain / instrumental / not_found), abre modal full-screen con dos textareas (synced LRC + plain fallback). Save persiste vía `lyrics_save_manual_edit` command que sobreescribe `original_synced_lyrics` con la versión editada (así el RE-ALIGN posterior parte del LRC corregido — sin esto, Gotcha #16 se rompía) y resetea `offset_ms`/`speed_ratio`/`aligned_at` (los ajustes viejos compensaban drift contra timestamps que ya no aplican). Source pasa a `'manual'`, source_id y confidence se limpian. **Resuelve el caso Substitution** mencionado en el plan original.
-- ⏳ **Musixmatch como provider synced (sub-fase 2.c.3)** — en progreso. Ver [§15 — Musixmatch (Fase 2.c.3)](#15-musixmatch-fase-2c3) y [ADR-029](DECISIONS.md#adr-029--musixmatch-como-tercer-provider-lrclib-first).
-- **Botón "Search again"** que fuerza refetch ignorando el cache `not_found`.
-- **Refactor a trait `LyricsProvider` + resolver** — recién cuando se sume el 4to provider (Genius). Con Musixmatch se mantienen funciones libres ([ADR-029](DECISIONS.md#adr-029--musixmatch-como-tercer-provider-lrclib-first)).
+- ✅ **NetEase como provider synced (sub-fase 2.c.3)** — shipped 2026-06-18. Free, sin key, LRC directo. Reemplazó el plan de Musixmatch (free tier preview-only / de pago). Ver [§15 — NetEase (Fase 2.c.3)](#15-netease-fase-2c3) y [ADR-030](DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless).
+- ✅ **Botón REFETCH** que fuerza refetch ignorando el cache `not_found` — shipped con NetEase (2026-06-18).
+- **Refactor a trait `LyricsProvider` + resolver** — recién cuando se sume el 4to provider (Genius). Con NetEase se mantienen funciones libres ([ADR-030](DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)).
 - **Genius** como último recurso (sólo plain — Genius no tiene letras synced).
 - **Tabla `lyrics_search_attempts`** con TTL para evitar martillar providers ante búsquedas repetidas.
 
@@ -41,13 +41,13 @@ Sub-fase 2.a (drift + intros) ✓ cerrada 2026-05-03. Sub-fase 2.b (forced align
 
 El manual edit modal (2.c.1) cubre el caso edge donde un usuario *técnico* corrige un LRC malo. El usuario común no va a pegar `[mm:ss.xx]text` en una textarea. Para que la corrección de drift / mismatch sea **automática** y no requiera intervención, queda este backlog priorizado por ROI:
 
-1. **Musixmatch como provider primario synced** (alta prioridad). Cobertura superior a LRCLIB en pop / rock comercial, donde más sufre la calidad actual. Requiere API key del usuario (Fase 3 lo mencionaba como "Musixmatch opcional"). Subir prioridad a **Fase 2.c.3**.
+1. ✅ **Provider synced adicional gratis** (alta prioridad) — **resuelto con NetEase** (2.c.3, 2026-06-18). El plan era Musixmatch, pero su free tier es preview-only/de pago; NetEase es free + keyless. Complementa a LRCLIB en los huecos de cobertura synced.
 2. **Auto-fallback por confidence baja**. Si el cascade actual devuelve algo con `confidence < 0.7`, intentar el siguiente provider en vez de quedarnos con el match débil. Hoy nos quedamos con el primer hit.
 3. **Genius como fallback plain** (media prioridad). No cubre synced, pero al menos da letras para tracks que LRCLIB no tiene. Útil para indie / nicho.
 4. **Auto-detect de mismatch via WhisperX score**. Cuando corramos AUTO-ALIGN, si whisperx devuelve un score muy bajo (alignment de mala calidad → señal de que el texto no matchea el audio), automáticamente intentar refetchear de un provider distinto antes de mostrarle al usuario el resultado roto.
 5. **Submit edits a LRCLIB**. Cuando un usuario *sí* edita manualmente y la edición resulta bien (post-AUTO-ALIGN exitoso), ofrecer botón "Contribute to LRCLIB" para que ese fix beneficie a la comunidad. Cero esfuerzo extra para el usuario, beneficio compuesto a largo plazo.
 
-**Conclusión:** el modal de 2.c.1 es escalera de emergencia, no la solución de UX. El path completo es 2.c.3 (Musixmatch) + auto-fallback + auto-detect — solo después del cual podemos decir que el sub-sistema es "automático" desde la perspectiva del usuario común.
+**Conclusión:** el modal de 2.c.1 es escalera de emergencia, no la solución de UX. Con 2.c.3 (NetEase) shipped, los pasos restantes hacia "automático" son **auto-fallback por confidence baja** + **auto-detect de mismatch via whisperx score**.
 
 ### Fase 3 — Avanzado
 
@@ -839,60 +839,33 @@ A cerrar al implementar Fase 2:
 
 ---
 
-## 15. Musixmatch (Fase 2.c.3)
+## 15. NetEase (Fase 2.c.3)
 
-> ADR asociado: [ADR-029](DECISIONS.md#adr-029--musixmatch-como-tercer-provider-lrclib-first).
+> ADR asociado: [ADR-030](DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless). Reemplaza el plan original de Musixmatch ([ADR-029](DECISIONS.md#adr-029--musixmatch-como-tercer-provider-lrclib-first), **superseded** — su plan free resultó preview-only / de pago).
 
 ### 15.1 Motivación
 
-LRCLIB es gratuito y community-curated, pero su cobertura de letras **synced** en pop/rock comercial tiene huecos y la calidad es variable (ver Bandera de UX §0). Musixmatch tiene la mayor base de letras sincronizadas comercialmente curada. Agregarlo como tercer provider en el cascade resuelve la brecha para el caso más frecuente sin perder LRCLIB como fallback gratuito.
+LRCLIB es gratuito y community-curated, pero su cobertura de letras **synced** tiene huecos (ver Bandera de UX §0). El plan original (Musixmatch) cayó porque su plan free es **preview-only**: devuelve un fragmento truncado, nunca synced; letras completas requieren licencia comercial paga. Pivoteamos a **NetEase Cloud Music**: free, **sin API key**, y devuelve la letra **directamente en formato LRC** (sin conversión). Complementa a LRCLIB sin agregar fricción — cero configuración para el usuario.
 
-### 15.2 API de Musixmatch
+### 15.2 API de NetEase
 
-- **Base URL:** `https://api.musixmatch.com/ws/1.1/`
-- **Auth:** query parameter `apikey`. Plan free: ~2000 calls/día, suficiente para uso personal.
-- **API key:** del usuario, guardada en `settings` table con key `musixmatch_api_key`. **Nunca bundlear key.**
+- **Base:** `https://music.163.com` — API comunitaria, **sin auth/key**.
+- **Header requerido:** `Referer: https://music.163.com` (sin él NetEase no responde).
 
 **Endpoints usados:**
 
 | Endpoint | Retorna | Uso |
 |---|---|---|
-| `matcher.subtitle.get` | Synced (JSON subtitle) | Intento primario — letras sincronizadas |
-| `matcher.lyrics.get` | Plain text | Fallback si no hay subtitle disponible |
+| `GET /api/search/get/` | JSON `result.songs[]` (`id`, `duration` ms) | Buscar el track |
+| `GET /api/song/lyric` | JSON `lrc.lyric` (LRC string) | Traer la letra |
 
-**Parámetros de `matcher.subtitle.get`:**
-```
-?q_track=TITLE&q_artist=ARTIST&f_subtitle_length=DURATION_S&apikey=KEY
-```
+**Búsqueda:** `?s=<artist title>&type=1&limit=10&offset=0`. Devuelve songs ordenados por relevancia. Usamos `get/` y **no** `get/web` (este último viene eapi-encriptado).
 
-**Shape de respuesta (envelope):**
-```json
-{
-  "message": {
-    "header": { "status_code": 200 },
-    "body": {
-      "subtitle": {
-        "subtitle_id": 12345,
-        "subtitle_body": "[{\"text\":\"Come as you are\",\"time\":{\"total\":25.43,\"minutes\":0,\"seconds\":25,\"hundredths\":43}},...]"
-      }
-    }
-  }
-}
-```
+**Letra:** `?id=<song_id>&lv=1&kv=1&tv=-1` → `{ "lrc": { "lyric": "[mm:ss.xxx]..." }, "code": 200 }`. **La letra ya viene en formato LRC** — sin conversión. NetEase usa fracciones de 3 dígitos (`[00:06.220]`); el parser frontend ([lrcParser.ts](../src/lib/lrcParser.ts)) ya las soporta.
 
-`subtitle_body` es un **JSON string** (no un objeto) que contiene un array de `{ text, time }`. Requiere doble deserialización: primero el envelope, después parsear el string como `Vec<SubtitleLine>`.
+**Matching:** se acepta el primer result cuya `duration` cae dentro de **±8s** del track local (conservador — evita letras de otra versión live/edit/remix). Si ninguno calza → `None`.
 
-**Conversión a LRC:**
-Cada `SubtitleLine` → `[mm:ss.xx]text`. Minutos y centésimas se obtienen de `time.minutes`, `time.seconds`, `time.hundredths`. Líneas con `text` vacío se omiten (gaps instrumentales).
-
-**Códigos de error relevantes:**
-
-| Status | Significado | Manejo |
-|---|---|---|
-| 200 | OK | Parsear body |
-| 401 | API key inválida | Log + return `None` (no romper cascade) |
-| 402 | Quota excedida | Log + return `None` |
-| 404 | No encontrado | Return `None` (pasar a `mark_not_found`) |
+**Synced vs plain:** si el LRC tiene al menos una línea que arranca con `[<dígito>` → synced; si no → plain. Errores (status raro, JSON inesperado, red, geo-block) → `Ok(None)`, el cascade sigue a `mark_not_found`.
 
 ### 15.3 Cascade actualizado
 
@@ -900,62 +873,47 @@ Cada `SubtitleLine` → `[mm:ss.xx]text`. Minutos y centésimas se obtienen de `
 Embedded (USLT via lofty)
   ↓ si no hay synced
 LRCLIB (gratis, sin rate limit)
-  ↓ si no hay synced Y hay API key de Musixmatch
-Musixmatch (matcher.subtitle.get → matcher.lyrics.get)
+  ↓ si no hay synced
+NetEase (search → song/lyric)   ← free, sin key, siempre se intenta
   ↓ si nada
 mark_not_found
 ```
 
-**LRCLIB va primero** para ahorrar calls de Musixmatch. Si LRCLIB ya devolvió synced, Musixmatch no se toca. Si LRCLIB devolvió sólo plain o nada, Musixmatch intenta proveer synced. Misma "hybrid policy" que el cascade actual: synced gana sobre plain de cualquier fuente anterior.
-
-**Sin API key:** el bloque de Musixmatch se salta silenciosamente — el cascade sigue siendo Embedded → LRCLIB como hasta ahora.
+**LRCLIB va primero.** Si ya devolvió synced, NetEase no se toca. Si devolvió sólo plain o nada, NetEase intenta proveer synced. Misma hybrid policy: synced gana sobre plain de cualquier fuente anterior. NetEase **no necesita key** → se intenta siempre (sólo requiere `artist` para armar el query).
 
 ### 15.4 Confidence
 
-Musixmatch hace su propio matching interno — no devuelve la duración del track matcheado como LRCLIB. Sin señal externa de comparación, se usa confidence fija:
-- `0.9` para resultados synced (alto, pero debajo del `1.0` de LRCLIB exact match).
-- `0.85` para resultados plain-only.
-- `speed_ratio` defaults a `1.0` (sin referencia de duración para auto-baseline).
+NetEase matchea por texto (no por MBID), así que no hay duration-delta exacto como LRCLIB. Se usa confidence fija **0.85** (debajo del `1.0` de LRCLIB exact match, por encima del umbral de warning `0.8`); el match ya está validado por tolerancia de duración (±8s). `speed_ratio` defaults a `1.0`.
 
 ### 15.5 Implementación — archivos
 
 | Archivo | Cambio |
 |---|---|
-| `src-tauri/src/lyrics/musixmatch.rs` | **Nuevo.** Cliente HTTP + structs de respuesta + `subtitle_to_lrc()` + `try_musixmatch()`. |
-| `src-tauri/src/lyrics/mod.rs` | `pub mod musixmatch`, campo `musixmatch_api_key: Option<&'a str>` en `LyricsQuery`, paso 2.5 en cascade. |
-| `src-tauri/src/commands/lyrics.rs` | Lee API key de settings, la pasa a `LyricsQuery`. Comandos nuevos: `lyrics_get_musixmatch_api_key`, `lyrics_set_musixmatch_api_key`. |
-| `src-tauri/src/lib.rs` | Registrar los 2 comandos nuevos en `invoke_handler`. |
-| `src/stores/lyricsStore.ts` | Estado `musixmatchApiKey`, acciones `loadMusixmatchApiKey`, `setMusixmatchApiKey`, open/close modal. |
-| `src/components/lyrics/MusixmatchApiKeyModal.tsx` | **Nuevo.** Modal para API key (misma estructura que `ApiKeyModal` de identification). |
-| `src/components/lyrics/LyricsView.tsx` | "TRIED: EMBEDDED · LRCLIB · MUSIXMATCH" cuando hay key. Botón "SET UP MUSIXMATCH" cuando no hay key y lyrics no encontradas. |
-| `src/App.tsx` | Montar `MusixmatchApiKeyModal`, llamar `loadMusixmatchApiKey` al boot. |
+| `src-tauri/src/lyrics/netease.rs` | **Nuevo.** Cliente HTTP + structs + `try_netease()` + `search_best_match()` + `looks_synced()`. |
+| `src-tauri/src/lyrics/mod.rs` | `pub mod netease`, paso 2.5 en cascade (gate sólo por `artist`, sin key). |
+| `src-tauri/src/commands/lyrics.rs` | `lyrics_fetch` acepta `force: Option<bool>` para saltar el cache de `not_found` (botón REFETCH). |
+| `src/stores/lyricsStore.ts` | `fetch(trackId, force?)`. |
+| `src/components/lyrics/LyricsView.tsx` | "TRIED: EMBEDDED · LRCLIB · NETEASE" + botón **REFETCH** en vista not_found. Header "SYNCED — NETEASE" cuando NetEase es la fuente (CSS uppercase). |
 
-**Sin migración de DB** — `settings` table (key/value) ya soporta la API key, `lyrics` table ya tiene `source TEXT` (guardará `"musixmatch"`).
+**Sin API key, sin modal, sin settings** — NetEase es keyless (a diferencia del plan Musixmatch).
+
+**Sin migración de DB** — `lyrics.source` guarda `"netease"`.
 
 **Sin deps nuevas** — `reqwest` y `serde_json` ya están.
 
-**Sin trait refactor** — se mantienen funciones libres. El trait (`LyricsProvider`) se introduce recién con el 4to provider (Genius). Ver [ADR-015](DECISIONS.md#adr-015) y [ADR-029](DECISIONS.md#adr-029--musixmatch-como-tercer-provider-lrclib-first).
+**Sin trait refactor** — funciones libres. El trait (`LyricsProvider`) se introduce recién con el 4to provider (Genius). Ver [ADR-015](DECISIONS.md#adr-015) y [ADR-030](DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless).
 
-### 15.6 Pasos de implementación (orden)
+### 15.6 Testing
 
-1. **Backend:** crear `musixmatch.rs` (compila independiente).
-2. **Backend:** integrar en `mod.rs` (cascade) + actualizar `LyricsQuery`.
-3. **Backend:** comandos + registro en `lib.rs`.
-4. **Frontend:** store + modal + LyricsView + App.tsx.
-5. **Testing:** verificar con tracks reales (ver §15.7).
-
-### 15.7 Testing
-
-**Backend:**
-- Con API key válida + track sin synced en LRCLIB pero sí en Musixmatch → verificar `source: "musixmatch"`.
-- Con API key válida + track que LRCLIB ya tiene synced → verificar que Musixmatch NO se llama (no gastar calls).
-- Sin API key → verificar que el cascade salta Musixmatch y funciona igual que antes.
-- Con API key inválida → verificar 401 graceful (log, return `None`, cascade continúa a `mark_not_found`).
+**Backend** (la API es keyless → se puede probar con curl directo):
+- Track sin synced en LRCLIB pero presente en NetEase → `source: "netease"`, synced.
+- Track que LRCLIB ya tiene synced → NetEase no se llama.
+- Track sin match en ningún provider → `not_found`; el botón REFETCH re-corre el cascade ignorando el cache.
+- Endpoint caído / geo-block → `Ok(None)`, cascade sigue a not_found (no rompe).
 
 **Frontend:**
-- Sin key: "TRIED: EMBEDDED · LRCLIB" + botón "SET UP MUSIXMATCH" en vista not_found.
-- Con key: "TRIED: EMBEDDED · LRCLIB · MUSIXMATCH" en vista not_found.
-- Header muestra "SYNCED — MUSIXMATCH" cuando Musixmatch es la fuente.
+- Vista not_found: "TRIED: EMBEDDED · LRCLIB · NETEASE" + botones REFETCH y ADD MANUALLY.
+- Header "SYNCED — NETEASE" cuando NetEase es la fuente.
 - Offset/speedRatio/ALIGN/EDIT funcionan igual (downstream es source-agnostic).
 
 ---

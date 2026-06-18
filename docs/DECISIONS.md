@@ -34,7 +34,13 @@
 | ADR-021 | A2 LRC extendido con trailing end marker | Accepted |
 | ADR-022 | Cursor de lyrics usa `wordTimestampsMs[0]` con alignment | Accepted |
 | ADR-023 | EQ insertado post-tap del visualizer | Accepted |
-| ADR-029 | Musixmatch como tercer provider, LRCLIB-first | Accepted |
+| ADR-024 | Descarga de listas (FULL PLAYLIST) + cookies del navegador | Accepted |
+| ADR-025 | Dedup de descargas: por path + fingerprint exacto | Accepted |
+| ADR-026 | Switch gapless en selección manual de track | Accepted |
+| ADR-027 | Reorder de playlist via pointer events (no HTML5 DnD) | Accepted |
+| ADR-028 | Cookies por archivo + éxito parcial en descarga de playlists | Accepted |
+| ADR-029 | Musixmatch como tercer provider, LRCLIB-first | Superseded (ADR-030) |
+| ADR-030 | NetEase como tercer provider (free, keyless) | Accepted |
 
 ---
 
@@ -743,7 +749,14 @@ Dos problemas surgieron al bajar una playlist privada de YouTube en Windows con 
 
 ## ADR-029 — Musixmatch como tercer provider, LRCLIB-first
 
-**Fecha:** 2026-06-17 · **Estado:** Accepted
+**Fecha:** 2026-06-17 · **Estado:** ~~Accepted~~ **Superseded por [ADR-030](#adr-030--netease-como-tercer-provider-free-keyless)** (2026-06-18)
+
+> **Superseded:** al implementarlo se descubrió que el plan free de Musixmatch
+> es **preview-only** (devuelve un fragmento truncado, nunca la letra completa
+> ni synced) — letras completas requieren licencia comercial paga. No sirve
+> para un reproductor. Pivoteamos a **NetEase** (free, keyless) como el tercer
+> provider synced. El diseño de cascade LRCLIB-first de este ADR se conserva;
+> sólo cambia el provider concreto. Ver ADR-030.
 
 ### Contexto
 LRCLIB es gratuito pero su cobertura de letras synced en pop/rock comercial tiene huecos y calidad variable (community-curated). Musixmatch tiene la mayor base de letras sincronizadas comercialmente curada. Se necesita decidir: (1) si agregar Musixmatch al cascade, (2) en qué orden, (3) si refactorizar a trait `LyricsProvider`.
@@ -768,3 +781,32 @@ LRCLIB es gratuito pero su cobertura de letras synced en pop/rock comercial tien
 - **Contra:** Musixmatch no devuelve la duración del track matcheado, así que no podemos calcular confidence por duration delta (se usa fija 0.9) ni auto-baseline de speedRatio.
 - **Contra:** Musixmatch devuelve synced en formato JSON subtitle (no LRC) → requiere conversión `subtitle_to_lrc()`.
 - Cross-ref: [LYRICS.md §15](LYRICS.md#15-musixmatch-fase-2c3) para implementación detallada.
+
+## ADR-030 — NetEase como tercer provider (free, keyless)
+
+**Fecha:** 2026-06-18 · **Estado:** Accepted · Reemplaza [ADR-029](#adr-029--musixmatch-como-tercer-provider-lrclib-first)
+
+### Contexto
+ADR-029 eligió Musixmatch como tercer provider synced. Al implementarlo se confirmó (verificando docs + pricing) que su **plan free es preview-only**: devuelve sólo un fragmento de la letra, nunca el texto completo ni el synced. Las letras completas/sincronizadas requieren **licencia comercial paga** (Professional/Enterprise). Para un reproductor personal eso no sirve. Se necesita un provider synced **gratis** que cierre la brecha de cobertura de LRCLIB.
+
+### Opciones consideradas
+1. **NetEase Cloud Music (music.163.com).** API comunitaria, sin key. Devuelve la letra **directamente en formato LRC** vía `/api/song/lyric`. Endpoints no oficiales (riesgo de cambio/geo-block).
+2. **Musixmatch reverse-engineered** (token de la app, estilo lib `syncedlyrics`). Mejor cobertura pero zona gris de ToS más profunda + token frágil.
+3. **Mantener Musixmatch oficial** detrás de key paga opcional. No cumple el objetivo de "mejor synced gratis".
+
+### Decisión
+**Opción 1 — NetEase.** Cascade: Embedded → LRCLIB → **NetEase** → not_found. Se intenta siempre que no haya synced aún y haya artist; **sin key ni configuración** (a diferencia de Musixmatch). Validado contra la API real (keyless permite probarla): `/api/search/get/` (JSON plano; `get/web` viene eapi-encriptado) + `/api/song/lyric` con header `Referer: https://music.163.com`.
+
+### Razón
+- **Gratis y sin fricción** — cumple el objetivo de la Bandera de UX (mejor synced sin que el usuario configure nada). Sin key = sin modal, sin settings, sin plumbing.
+- NetEase devuelve **LRC directo** (con fracciones de 3 dígitos `[mm:ss.xxx]` que el parser frontend ya soporta) — sin conversión `subtitle_to_lrc` que requería Musixmatch.
+- Matching **conservador** por duración (±8s) — preferimos no mostrar letras a mostrar las de otra versión (mismo principio que LRCLIB / Gotcha #11).
+- Sin trait refactor (igual que ADR-029/ADR-015): se mantienen funciones libres.
+
+### Consecuencias
+- **Pro:** cobertura synced extra gratis; cero config para el usuario.
+- **Contra:** endpoint comunitario/no documentado → puede cambiar o estar geo-restringido. Todos los fallos degradan a `Ok(None)` (cascade sigue a not_found, no rompe nada).
+- **Contra:** cobertura sesgada al catálogo de NetEase (fuerte en pop asiático, decente en mainstream occidental). Complementa LRCLIB, no lo reemplaza.
+- Sin migración de DB — `lyrics.source` guarda `"netease"`.
+- Botón **REFETCH** en la vista not_found (reusa el flag `force` de `lyrics_fetch`) para re-correr el cascade sobre tracks marcados `not_found` antes de que NetEase existiera. Cierra el TODO de "Search again" del backlog de LYRICS.md §0.
+- Cross-ref: [LYRICS.md §15](LYRICS.md#15-netease-fase-2c3).
