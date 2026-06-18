@@ -82,6 +82,7 @@ pub fn run() {
             commands::playlists::playlist_remove_track,
             commands::playlists::playlist_get_tracks,
             commands::playlists::playlist_reorder,
+            commands::playlists::playlist_export_m3u,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

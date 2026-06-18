@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import type { Playlist, Track } from "../types";
 
 // Estado de playlists del usuario. La fuente de verdad es la DB del backend;
@@ -35,6 +36,9 @@ type PlaylistState = {
   /** Fuerza refetch de los tracks de la playlist seleccionada. Util cuando
    *  agregamos/quitamos un track y queremos que la tabla se actualice. */
   reloadSelectedTracks: () => Promise<void>;
+  /** Exporta una playlist a un archivo `.m3u`. Abre el save dialog nativo
+   *  (default filename = nombre de la playlist) y delega la escritura a Rust. */
+  exportM3u: (playlistId: number, name: string) => Promise<void>;
 };
 
 export const usePlaylistStore = create<PlaylistState>()(
@@ -183,6 +187,23 @@ export const usePlaylistStore = create<PlaylistState>()(
           set({ error: String(e) });
         } finally {
           set({ loadingTracks: false });
+        }
+      },
+
+      exportM3u: async (playlistId, name) => {
+        try {
+          // Sanitizar el nombre para el filename sugerido (sin separadores de
+          // path ni caracteres prohibidos en Windows).
+          const safe = name.replace(/[\\/:*?"<>|]/g, "_").trim() || "playlist";
+          const dest = await save({
+            defaultPath: `${safe}.m3u`,
+            filters: [{ name: "M3U Playlist", extensions: ["m3u"] }],
+          });
+          // null = el usuario canceló el diálogo.
+          if (!dest) return;
+          await invoke("playlist_export_m3u", { playlistId, destPath: dest });
+        } catch (e) {
+          set({ error: String(e) });
         }
       },
     }),

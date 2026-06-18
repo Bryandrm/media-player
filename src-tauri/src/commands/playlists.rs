@@ -87,3 +87,42 @@ pub async fn playlist_reorder(
 ) -> AppResult<()> {
     db::playlists::reorder(&pool, playlist_id, &track_ids).await
 }
+
+/// Exporta una playlist a un archivo `.m3u` (extended M3U). `dest_path` lo
+/// elige el usuario en el frontend vía el save dialog del plugin. Escribimos
+/// rutas **absolutas** — es un player local, no movemos los archivos, así que
+/// las rutas absolutas son las más robustas (un M3U relativo se rompe si el
+/// `.m3u` se mueve a otra carpeta). El filesystem lo toca Rust, no el frontend.
+#[tauri::command]
+pub async fn playlist_export_m3u(
+    playlist_id: i64,
+    dest_path: String,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<()> {
+    let tracks = db::playlists::list_tracks(&pool, playlist_id).await?;
+    std::fs::write(&dest_path, build_m3u(&tracks))?;
+    Ok(())
+}
+
+/// Construye el contenido de un extended M3U a partir de los tracks en orden.
+/// Cada track: una línea `#EXTINF:<segundos>,<artista> - <título>` seguida de
+/// la ruta absoluta. `duration_ms` se redondea a segundos (-1 si es 0/desconocida,
+/// como manda la spec de EXTINF). Sin artista, sólo el título.
+fn build_m3u(tracks: &[Track]) -> String {
+    let mut out = String::from("#EXTM3U\n");
+    for t in tracks {
+        let secs = if t.duration_ms > 0 {
+            (t.duration_ms as f64 / 1000.0).round() as i64
+        } else {
+            -1
+        };
+        let label = match &t.artist {
+            Some(a) if !a.trim().is_empty() => format!("{} - {}", a, t.title),
+            _ => t.title.clone(),
+        };
+        out.push_str(&format!("#EXTINF:{secs},{label}\n"));
+        out.push_str(&t.file_path);
+        out.push('\n');
+    }
+    out
+}

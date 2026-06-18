@@ -18,6 +18,7 @@ export function PlaylistSidebar() {
   const create = usePlaylistStore((s) => s.create);
   const remove = usePlaylistStore((s) => s.remove);
   const rename = usePlaylistStore((s) => s.rename);
+  const exportM3u = usePlaylistStore((s) => s.exportM3u);
 
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -135,6 +136,9 @@ export function PlaylistSidebar() {
               onClick={() => select(p.id)}
               onRename={() => startRename(p.id, p.name)}
               onDelete={() => onDelete(p.id, p.name)}
+              onExport={
+                p.trackCount > 0 ? () => exportM3u(p.id, p.name) : undefined
+              }
             />
           ),
         )}
@@ -193,6 +197,7 @@ function SidebarRow({
   onClick,
   onRename,
   onDelete,
+  onExport,
 }: {
   label: string;
   count: number | null;
@@ -200,9 +205,10 @@ function SidebarRow({
   onClick: () => void;
   onRename?: () => void;
   onDelete?: () => void;
+  onExport?: () => void;
 }) {
   const [hover, setHover] = useState(false);
-  const showDelete = onDelete && hover;
+  const showActions = (onDelete || onExport) && hover;
 
   return (
     <button
@@ -216,19 +222,37 @@ function SidebarRow({
       }`}
     >
       <span className="truncate flex-1">{label}</span>
-      {showDelete ? (
-        // El span actúa como botón secundario sin anidar <button> (HTML
+      {showActions ? (
+        // Los spans actúan como botones secundarios sin anidar <button> (HTML
         // inválido). onClick stopPropaga para no triggear select del row.
-        <span
-          role="button"
-          aria-label={`Delete ${label}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete?.();
-          }}
-          className="text-accent font-bold cursor-pointer px-1"
-        >
-          ×
+        <span className="flex items-center gap-1.5">
+          {onExport ? (
+            <span
+              role="button"
+              aria-label={`Export ${label} to M3U`}
+              title="Export to .m3u"
+              onClick={(e) => {
+                e.stopPropagation();
+                onExport();
+              }}
+              className="font-bold cursor-pointer px-1 text-[10px] tracking-wide"
+            >
+              M3U
+            </span>
+          ) : null}
+          {onDelete ? (
+            <span
+              role="button"
+              aria-label={`Delete ${label}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className="text-accent font-bold cursor-pointer px-1"
+            >
+              ×
+            </span>
+          ) : null}
         </span>
       ) : count !== null ? (
         <span className={active ? "text-bg/70" : "text-muted"}>{count}</span>
