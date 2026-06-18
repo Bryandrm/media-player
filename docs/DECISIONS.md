@@ -41,6 +41,8 @@
 | ADR-028 | Cookies por archivo + éxito parcial en descarga de playlists | Accepted |
 | ADR-029 | Musixmatch como tercer provider, LRCLIB-first | Superseded (ADR-030) |
 | ADR-030 | NetEase como tercer provider (free, keyless) | Accepted |
+| ADR-031 | History de descargas persistente + reconcile de huérfanas | Accepted |
+| ADR-032 | Cancelar descarga conservando parciales | Accepted |
 
 ---
 
@@ -272,7 +274,7 @@ Cero state-tracking en la app. La fuente de verdad es la combinación archivo-en
 
 ## ADR-011 — History de descargas en memoria (chunk 1)
 
-**Fecha:** 2026-04-30 · **Estado:** Accepted
+**Fecha:** 2026-04-30 · **Estado:** Accepted · **Chunk 2 (persistente) implementado en [ADR-031](#adr-031--history-de-descargas-persistente--reconcile-de-huérfanas) (2026-06-18)**
 
 ### Contexto
 La tabla `downloads` existe en el schema desde la primera migración, pero el código del downloader no la toca. El ID de descarga es un `AtomicI64` en memoria.
@@ -810,3 +812,52 @@ ADR-029 eligió Musixmatch como tercer provider synced. Al implementarlo se conf
 - Sin migración de DB — `lyrics.source` guarda `"netease"`.
 - Botón **REFETCH** en la vista not_found (reusa el flag `force` de `lyrics_fetch`) para re-correr el cascade sobre tracks marcados `not_found` antes de que NetEase existiera. Cierra el TODO de "Search again" del backlog de LYRICS.md §0.
 - Cross-ref: [LYRICS.md §15](LYRICS.md#15-netease-fase-2c3).
+
+## ADR-031 — History de descargas persistente + reconcile de huérfanas
+
+**Fecha:** 2026-06-18 · **Estado:** Accepted · Implementa el chunk 2 de [ADR-011](#adr-011--history-de-descargas-en-memoria-chunk-1)
+
+### Contexto
+La cola de descargas vivía en memoria (un contador `AtomicI64` para el `download_id`) y se perdía al cerrar la app (ADR-011 chunk 1). La tabla `downloads` existía desde Fase 0 pero no se usaba. Se pidió historial persistente entre sesiones.
+
+### Decisión
+Persistir el ciclo de vida en la tabla `downloads`:
+- **insert** al arrancar (status `downloading`) → el **id de la fila ES el `download_id`** de los eventos (elimina el contador en memoria).
+- **finish** al terminar: estado terminal + `title`/`error`/`track_id`/`playlist_id` + `completed_at`.
+- **list_recent** carga el historial al boot.
+- **Reconcile al boot** (en `db::init`): filas en estado no-terminal (`downloading`/`postprocessing`/`queued`) de una sesión previa → `failed` ("interrumpido"). El proceso yt-dlp ya no existe y el estado no se puede reanudar, así que sin esto quedarían "pegadas" en `downloading` para siempre.
+- **Limpieza de `_pending` al boot**: borra los temporales (`.part`) huérfanos de descargas canceladas/interrumpidas; al boot no hay descargas corriendo, así que es seguro.
+
+### Razón
+- El id de DB como `download_id` evita mantener un contador paralelo y vincula evento↔fila naturalmente.
+- El progreso en vivo NO se persiste (es efímero, vive en el frontend) — sólo el registro durable (url, título, estado, track, fecha). Escribir cada tick de progreso a la DB sería ruido inútil.
+- El reconcile es la pieza clave de UX: sin él, una app cerrada a mitad deja una fila zombie visible en cada boot.
+
+### Consecuencias
+- **Pro:** historial entre sesiones; descargas de lista expandibles (guardan `playlist_id` → lazy-load de tracks); fecha por fila.
+- **Contra:** migraciones aditivas (`downloads.title`, `downloads.playlist_id`).
+- **Contra:** una descarga interrumpida se marca `failed` (no hay status "interrupted" dedicado) — el mensaje lo aclara.
+- Cross-ref: [LYRICS.md] N/A. Detalle en `db/downloads.rs` + `commands/downloader.rs`.
+
+## ADR-032 — Cancelar descarga conservando parciales
+
+**Fecha:** 2026-06-18 · **Estado:** Accepted
+
+### Contexto
+Una descarga de lista larga no se podía detener — no había forma de cancelar el yt-dlp en curso.
+
+### Opciones consideradas
+1. **Cancelar y descartar todo lo parcial.** Simple, pero perder los N tracks ya bajados de una lista larga es frustrante.
+2. **Cancelar conservando los parciales.** Los tracks que ya terminaron quedan en la library + la playlist.
+
+### Decisión
+**Opción 2.** Un canal `oneshot` por `download_id` (estado `DownloadCancels` manejado por Tauri) + comando `download_cancel`. `run_yt_dlp` hace `tokio::select!` entre las líneas de yt-dlp y la señal; al cancelar, mata el proceso (`child.start_kill()`) y drena lo que quede. Los entries que ya emitieron `done` se persisten (reusa la lógica de éxito parcial) → la descarga termina como `Cancelled` con sus parciales; si era lista, la playlist se crea con lo bajado.
+
+### Razón
+- Conservar lo bajado respeta el trabajo ya hecho; **re-descargar la misma lista reanuda** (el dedup por path + fingerprint saltea lo ya presente).
+- `select!` requiere habilitar el feature `macros` de `tokio` (era `process`+`io-util`).
+
+### Consecuencias
+- **Pro:** cancelación inmediata sin perder lo descargado.
+- **Contra:** el track a-medio-bajar deja temporales en `_pending` (limpiados al boot, ver ADR-031).
+- Nuevo status `Cancelled` en el contrato `Download` (UI: "CANCELLED").

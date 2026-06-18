@@ -594,9 +594,10 @@ brutalist-player/
 - Switch gapless en selección manual ✓ 2026-06-16 ([ADR-026](DECISIONS.md#adr-026)).
 - Descarga de listas + cookies.txt + robustez Windows ✓ 2026-06-17.
 - Lyrics Fase 2.c.3 — **NetEase** provider synced (free, keyless) ✓ 2026-06-18 ([ADR-030](DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)). Reemplazó el plan de Musixmatch (de pago).
+- Descargas: **historial persistente + fecha + listas expandibles + cancelar** ✓ 2026-06-18 ([ADR-031](DECISIONS.md#adr-031--history-de-descargas-persistente--reconcile-de-huérfanas), [ADR-032](DECISIONS.md#adr-032--cancelar-descarga-conservando-parciales)). Cierra el chunk 2 de ADR-011.
 
 **Próximo (orden acordado 2026-06-18):**
-1. **Quick wins** — drag & drop a la library (importar sin SCAN), export M3U, smart playlists, history persistente de descargas (ADR-011 chunk 2).
+1. **Quick wins** — drag & drop a la library (importar sin SCAN), export M3U, smart playlists. (History persistente de descargas ✓ hecho.)
 2. **Calidad / plataforma** — testing en Windows (media keys + flujo general) + Linux (MPRIS), validar `pnpm tauri build` (binario distribuible), tests de frontend/integración + CI.
 3. **Features grandes al final** — Lyrics 2.c.4 (auto-fallback por confidence + auto-detect de mismatch via whisperx score) → **karaoke real** (revertir el fake), Karaoke Fase B-E, Identification Fase 3, Genius (4to provider → trait `LyricsProvider`).
 

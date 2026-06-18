@@ -193,6 +193,17 @@ src-tauri/resources/scripts/
   cacheado (download nuevo guarda el suyo, o identify previo). Requiere
   `fpcalc`; sin él cae a dedup por-path solamente. **No aplica al SCAN** (no
   borramos archivos del usuario).
+- **History persistente + cancelar descargas** ✓ (2026-06-18) — la tabla
+  `downloads` ahora se persiste (insert al arrancar → su id ES el download_id;
+  finish al terminar). Se carga al boot (`list_recent`); fila con **fecha**
+  (`completed_at`), descargas de lista **expandibles** (guardan `playlist_id` →
+  lazy-load de tracks), botones CLEAR HISTORY / ✕ / **CANCEL**. Cancelar =
+  `oneshot` por download + `download_cancel` mata yt-dlp (`tokio::select!`,
+  feature `macros`) **conservando los parciales** (estado Cancelled). **Reconcile
+  al boot**: filas no-terminales de sesiones previas (app cerrada a mitad) →
+  `failed` (sino quedan "pegadas" en downloading). **Limpieza de `_pending`** al
+  boot (temporales huérfanos). Ver [ADR-031](./docs/DECISIONS.md#adr-031--history-de-descargas-persistente--reconcile-de-huérfanas),
+  [ADR-032](./docs/DECISIONS.md#adr-032--cancelar-descarga-conservando-parciales).
 - **Hardening del downloader (Windows)** ✓ (2026-06-17) — sesión dedicada a
   hacer la descarga de playlists robusta en Windows. Seis cambios + un
   aprendizaje de uso (ver [ADR-028](./docs/DECISIONS.md#adr-028) + Gotchas
@@ -225,10 +236,10 @@ src-tauri/resources/scripts/
   (flag `force` en `lyrics_fetch`). Ver [ADR-030](./docs/DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)
   y [docs/LYRICS.md §15](./docs/LYRICS.md#15-netease-fase-2c3).
 - Próximo (orden acordado con Bryan 2026-06-18): **(1) quick wins** — drag &
-  drop a la library, export M3U, smart playlists, history persistente de
-  descargas; **(2) calidad/plataforma** — testing Windows/Linux, validar
-  `pnpm tauri build`, tests + CI. **Features grandes al final**: Lyrics 2.c.4
-  → karaoke real, Karaoke Fase B-E, Identification Fase 3.
+  drop a la library, export M3U, smart playlists (history persistente de
+  descargas ✓ hecho); **(2) calidad/plataforma** — testing Windows/Linux,
+  validar `pnpm tauri build`, tests + CI. **Features grandes al final**: Lyrics
+  2.c.4 → karaoke real, Karaoke Fase B-E, Identification Fase 3.
 
 ---
 
