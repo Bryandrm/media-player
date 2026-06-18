@@ -429,7 +429,7 @@ Post-descarga, usar `lofty-rs` en Rust para leer los tags embebidos y poblar la 
 - [ ] Smart playlists / auto-queue basado en género, año, o recientemente agregado.
 - [x] **Drag & drop de archivos para agregar a biblioteca** ✓ (2026-06-18) — drag-drop nativo de Tauri, comando `library_import_paths`. Ver [ADR-033](DECISIONS.md#adr-033--import-por-drag--drop-via-drag-drop-nativo-de-tauri).
 - [ ] MPRIS en Linux para integración con panel del sistema.
-- [ ] Exportar playlists a M3U.
+- [x] **Exportar playlists a M3U** ✓ (2026-06-18) — botón M3U en hover del sidebar; save dialog nativo → comando `playlist_export_m3u` escribe extended M3U (rutas absolutas, `#EXTINF:<seg>,<artista> - <título>`).
 - [x] **Lyrics Fase 2.a + 2.b + 2.c.1** ✓ (2026-05-03 / 2026-05-04 / 2026-06-14) — drift correction (`speedRatio`), forced alignment via WhisperX, manual edit modal. Ver [LYRICS.md](LYRICS.md).
 - [x] **Lyrics Fase 2.c.3 — NetEase provider** ✓ (2026-06-18) — tercer provider synced free/keyless (reemplazó Musixmatch, que es de pago). Ver [LYRICS.md §15](LYRICS.md#15-netease-fase-2c3) y [ADR-030](DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless).
 - [ ] **Lyrics Fase 2.c.4+ (UX seamless)** — auto-fallback por confidence baja, auto-detect de mismatch via whisperx score, Genius como fallback plain. Ver [LYRICS.md "Bandera de UX"](LYRICS.md).
@@ -595,9 +595,10 @@ brutalist-player/
 - Descarga de listas + cookies.txt + robustez Windows ✓ 2026-06-17.
 - Lyrics Fase 2.c.3 — **NetEase** provider synced (free, keyless) ✓ 2026-06-18 ([ADR-030](DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)). Reemplazó el plan de Musixmatch (de pago).
 - Descargas: **historial persistente + fecha + listas expandibles + cancelar** ✓ 2026-06-18 ([ADR-031](DECISIONS.md#adr-031--history-de-descargas-persistente--reconcile-de-huérfanas), [ADR-032](DECISIONS.md#adr-032--cancelar-descarga-conservando-parciales)). Cierra el chunk 2 de ADR-011.
+- **Export M3U** ✓ 2026-06-18 — botón M3U en el sidebar → save dialog → `playlist_export_m3u` (extended M3U, rutas absolutas).
 
 **Próximo (orden acordado 2026-06-18):**
-1. **Quick wins** — export M3U, smart playlists. (Drag & drop ✓ + history persistente de descargas ✓ hechos.)
+1. **Quick wins** — smart playlists. (Drag & drop ✓ + history persistente ✓ + export M3U ✓ hechos.)
 2. **Calidad / plataforma** — testing en Windows (media keys + flujo general) + Linux (MPRIS), validar `pnpm tauri build` (binario distribuible), tests de frontend/integración + CI.
 3. **Features grandes al final** — Lyrics 2.c.4 (auto-fallback por confidence + auto-detect de mismatch via whisperx score) → **karaoke real** (revertir el fake), Karaoke Fase B-E, Identification Fase 3, Genius (4to provider → trait `LyricsProvider`).
 

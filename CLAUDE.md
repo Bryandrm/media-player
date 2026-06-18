@@ -161,8 +161,12 @@ src-tauri/resources/scripts/
   NEXT/PREV/shuffle navegan dentro de la playlist. Schema desde Fase 0 (no
   migración nueva). **Cache de la playlist seleccionada se sincroniza vía
   `libraryStore.loadTracks()`** (único punto): identify/clean/scan/fetch de
-  letras refrescan también `tracksOfSelected`. Smart playlists quedan para
-  polish.
+  letras refrescan también `tracksOfSelected`. **Export M3U** ✓ (2026-06-18):
+  botón M3U en hover del sidebar (sólo si la playlist tiene tracks) → save
+  dialog nativo (`@tauri-apps/plugin-dialog`) → comando `playlist_export_m3u`
+  escribe extended M3U con rutas **absolutas** (`#EXTINF:<seg>,<artista> -
+  <título>`). El filesystem lo toca Rust, no el frontend. Smart playlists
+  quedan para polish.
 - **Descarga de listas** ✓ (2026-06-16) — toggle **FULL PLAYLIST** en el
   DownloadForm (default OFF = `--no-playlist`, un solo video; ON =
   `--yes-playlist`). `run_yt_dlp` devuelve `Vec<DownloadedEntry>` (multi-file)
@@ -241,8 +245,8 @@ src-tauri/resources/scripts/
   preview-only / de pago). Sin key ni modal. Botón REFETCH en not_found
   (flag `force` en `lyrics_fetch`). Ver [ADR-030](./docs/DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)
   y [docs/LYRICS.md §15](./docs/LYRICS.md#15-netease-fase-2c3).
-- Próximo (orden acordado con Bryan 2026-06-18): **(1) quick wins** — export
-  M3U, smart playlists (drag & drop ✓ + history persistente ✓ hechos);
+- Próximo (orden acordado con Bryan 2026-06-18): **(1) quick wins** — smart
+  playlists (drag & drop ✓ + history persistente ✓ + export M3U ✓ hechos);
   **(2) calidad/plataforma** — testing Windows/Linux,
   validar `pnpm tauri build`, tests + CI. **Features grandes al final**: Lyrics
   2.c.4 → karaoke real, Karaoke Fase B-E, Identification Fase 3.
