@@ -39,6 +39,16 @@ pub fn run() {
             // entre el comando que lanza el task y el que cancela.
             app.manage(commands::identification::BulkIdentifyState::default());
 
+            // Registro de descargas en curso para poder cancelarlas.
+            app.manage(commands::downloader::DownloadCancels::default());
+
+            // Limpiar temporales de descargas canceladas/interrumpidas (`.part`
+            // huérfanos en `_pending`). Al boot no hay descargas corriendo.
+            if let Ok(audio_dir) = app.path().audio_dir() {
+                let library_dir = audio_dir.join("BrutalistPlayer").join("library");
+                downloader::clean_pending(&library_dir);
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -48,6 +58,10 @@ pub fn run() {
             commands::library::library_backfill_metadata,
             commands::system::check_dependencies,
             commands::downloader::download_track,
+            commands::downloader::download_list_history,
+            commands::downloader::download_clear_history,
+            commands::downloader::download_delete,
+            commands::downloader::download_cancel,
             commands::lyrics::lyrics_fetch,
             commands::lyrics::lyrics_set_offset,
             commands::lyrics::lyrics_set_speed_ratio,

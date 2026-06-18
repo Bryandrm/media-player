@@ -95,7 +95,8 @@ export type DownloadStatus =
   | "postprocessing"
   | "completed"
   | "failed"
-  | "skipped";
+  | "skipped"
+  | "cancelled";
 
 export type Download = {
   id: number;
@@ -106,6 +107,12 @@ export type Download = {
   title: string | null;
   error: string | null;
   trackId: number | null;
+  /** Timestamp ISO de cuándo terminó. null mientras está en curso. El historial
+   *  (list_recent) lo trae de la DB; en eventos en vivo el frontend lo estampa. */
+  completedAt: string | null;
+  /** Si fue descarga de lista, el id de la playlist creada/reusada → permite
+   *  expandir la fila para ver sus tracks. null para video suelto. */
+  playlistId: number | null;
 };
 
 /** Status posibles en la columna `lyrics.status`:

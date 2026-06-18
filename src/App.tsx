@@ -26,6 +26,7 @@ function App() {
   const backfillCovers = useLibraryStore((s) => s.backfillCovers);
   const error = useLibraryStore((s) => s.error);
   const checkDependencies = useDownloadStore((s) => s.checkDependencies);
+  const loadDownloadHistory = useDownloadStore((s) => s.loadHistory);
   const loadApiKey = useIdentificationStore((s) => s.loadApiKey);
   const loadPlaylists = usePlaylistStore((s) => s.load);
   const view = useUiStore((s) => s.view);
@@ -51,7 +52,15 @@ function App() {
     checkDependencies();
     loadApiKey();
     loadPlaylists();
-  }, [loadTracks, backfillCovers, checkDependencies, loadApiKey, loadPlaylists]);
+    loadDownloadHistory();
+  }, [
+    loadTracks,
+    backfillCovers,
+    checkDependencies,
+    loadApiKey,
+    loadPlaylists,
+    loadDownloadHistory,
+  ]);
 
   useEffect(() => {
     if (view === "visualizer") setVisualizerVisited(true);

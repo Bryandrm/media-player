@@ -1,3 +1,4 @@
+pub mod downloads;
 pub mod lyrics;
 pub mod settings;
 pub mod playlists;
@@ -51,6 +52,20 @@ pub async fn init(data_dir: &Path) -> Result<SqlitePool, DbError> {
     .fetch_one(&pool)
     .await?;
     eprintln!("[db] migrations complete, {} user tables", user_tables);
+
+    // Reconciliar descargas huérfanas: filas que quedaron en un estado
+    // no-terminal ('downloading'/'postprocessing'/'queued') de una sesión
+    // anterior (la app se cerró a mitad de la descarga, así que `finish` nunca
+    // corrió). El proceso yt-dlp ya no existe → las marcamos como interrumpidas
+    // para que no aparezcan "pegadas" en el historial al reabrir.
+    sqlx::query(
+        "UPDATE downloads SET status = 'failed', \
+         error_message = COALESCE(error_message, 'interrumpido (app cerrada)'), \
+         completed_at = CURRENT_TIMESTAMP \
+         WHERE status IN ('downloading', 'postprocessing', 'queued')",
+    )
+    .execute(&pool)
+    .await?;
 
     Ok(pool)
 }

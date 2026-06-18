@@ -3,19 +3,21 @@
 //! tiempo real.
 //!
 //! Notas de diseño:
-//! - El ID de descarga es un contador en memoria. Por ahora no persistimos a
-//!   la tabla `downloads` — esto es chunk 1, history persistente queda para
-//!   un follow-up.
+//! - El ID de descarga es el id de la fila en `downloads` (history persistente,
+//!   ADR-011 chunk 2): insertamos al arrancar y actualizamos al terminar. El
+//!   frontend carga el historial al boot.
 //! - Idempotencia: yt-dlp corre con `--no-overwrites`. Si el archivo final
 //!   ya existía en disco, marcamos `Skipped` (la fila en `tracks` ya está;
 //!   `insert_from_metadata` es no-op gracias a `ON CONFLICT DO NOTHING`).
 
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::oneshot;
 
 use crate::audio;
 use crate::contracts::{Download, DownloadStatus};
@@ -41,7 +43,11 @@ struct ItemProgressEvent {
     total: u32,
 }
 
-static NEXT_DOWNLOAD_ID: AtomicI64 = AtomicI64::new(1);
+/// Registro de descargas en curso → su canal de cancelación. `download_cancel`
+/// busca el sender por id y dispara el kill de yt-dlp. `Mutex` std: el lock se
+/// tiene sólo para insert/remove instantáneos, nunca cruzando un `await`.
+#[derive(Default)]
+pub struct DownloadCancels(pub Mutex<HashMap<i64, oneshot::Sender<()>>>);
 
 #[tauri::command]
 pub async fn download_track(
@@ -51,8 +57,16 @@ pub async fn download_track(
     cookies_file: Option<String>,
     app: AppHandle,
     pool: State<'_, SqlitePool>,
+    cancels: State<'_, DownloadCancels>,
 ) -> AppResult<Download> {
-    let download_id = NEXT_DOWNLOAD_ID.fetch_add(1, Ordering::SeqCst);
+    // Insertamos la fila de descarga al arrancar → su id es el download_id que
+    // usan los eventos (history persistente, ADR-011 chunk 2).
+    let download_id = db::downloads::insert(pool.inner(), &url).await?;
+
+    // Canal de cancelación: registramos el sender bajo el download_id para que
+    // `download_cancel` pueda matar este yt-dlp. Se desregistra al terminar.
+    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+    cancels.0.lock().unwrap().insert(download_id, cancel_tx);
 
     let audio_dir = app
         .path()
@@ -71,6 +85,8 @@ pub async fn download_track(
             title: None,
             error: None,
             track_id: None,
+            completed_at: None,
+            playlist_id: None,
         },
     );
 
@@ -86,6 +102,7 @@ pub async fn download_track(
         playlist,
         cookies_browser.as_deref(),
         cookies_file.as_deref(),
+        cancel_rx,
         move |evt| match evt {
         DownloadEvent::Progress(fraction) => {
             let _ = app_for_event.emit(
@@ -121,14 +138,19 @@ pub async fn download_track(
                     title: None,
                     error: None,
                     track_id: None,
+                    completed_at: None,
+                    playlist_id: None,
                 },
             );
         }
     })
     .await;
 
+    // Descarga terminada (o cancelada) → desregistramos el canal de cancelación.
+    cancels.0.lock().unwrap().remove(&download_id);
+
     match result {
-        Ok(mut entries) => {
+        Ok((mut entries, cancelled)) => {
             let pool_ref = pool.inner();
 
             // Orden estable: en playlist, por índice original de la lista; un
@@ -170,8 +192,26 @@ pub async fn download_track(
                 }
             }
 
-            // Si NADA se pudo persistir, es falla real (no creamos una playlist
-            // vacía ni reportamos un éxito fantasma).
+            // Cancelado sin nada persistido → estado Cancelled (no es error).
+            if cancelled && track_ids.is_empty() {
+                let download = Download {
+                    id: download_id,
+                    url: url.clone(),
+                    status: DownloadStatus::Cancelled,
+                    progress: -1.0,
+                    title: Some("Cancelado".to_string()),
+                    error: None,
+                    track_id: None,
+                    completed_at: None,
+                    playlist_id: None,
+                };
+                let _ = db::downloads::finish(pool_ref, &download).await;
+                let _ = app.emit("download-completed", download.clone());
+                return Ok(download);
+            }
+
+            // Si NADA se pudo persistir (y no fue cancelación), es falla real (no
+            // creamos una playlist vacía ni reportamos un éxito fantasma).
             if track_ids.is_empty() {
                 let msg = "no se pudo importar ningún archivo descargado".to_string();
                 let download = Download {
@@ -182,7 +222,10 @@ pub async fn download_track(
                     title: None,
                     error: Some(msg.clone()),
                     track_id: None,
+                    completed_at: None,
+                    playlist_id: None,
                 };
+                let _ = db::downloads::finish(pool_ref, &download).await;
                 let _ = app.emit("download-failed", download);
                 return Err(AppError::Other(msg));
             }
@@ -191,19 +234,34 @@ pub async fn download_track(
             // tracks" creamos/reusamos la playlist y los agregamos en orden.
             // get_or_create + add_track idempotente → re-bajar la misma lista
             // no duplica ni la playlist ni sus tracks.
-            let (summary_title, completed_track_id, status) = if playlist {
+            let (summary_title, completed_track_id, status, playlist_ref) = if playlist {
                 let name = playlist_title.unwrap_or_else(|| "Imported playlist".to_string());
                 let playlist_id = db::playlists::get_or_create_id(pool_ref, &name).await?;
                 for track_id in &track_ids {
                     let _ = db::playlists::add_track(pool_ref, playlist_id, *track_id).await;
                 }
+                let suffix = if cancelled { " (cancelado)" } else { "" };
                 (
-                    format!("{} — {} tracks", name, track_ids.len()),
+                    format!("{} — {} tracks{}", name, track_ids.len(), suffix),
                     None,
-                    DownloadStatus::Completed,
+                    if cancelled {
+                        DownloadStatus::Cancelled
+                    } else {
+                        DownloadStatus::Completed
+                    },
+                    Some(playlist_id),
                 )
             } else {
-                (last_title, track_ids.first().copied(), single_status)
+                (
+                    last_title,
+                    track_ids.first().copied(),
+                    if cancelled {
+                        DownloadStatus::Cancelled
+                    } else {
+                        single_status
+                    },
+                    None,
+                )
             };
 
             let download = Download {
@@ -214,7 +272,10 @@ pub async fn download_track(
                 title: Some(summary_title),
                 error: None,
                 track_id: completed_track_id,
+                completed_at: None,
+                playlist_id: playlist_ref,
             };
+            let _ = db::downloads::finish(pool_ref, &download).await;
             let _ = app.emit("download-completed", download.clone());
             Ok(download)
         }
@@ -228,10 +289,42 @@ pub async fn download_track(
                 title: None,
                 error: Some(error_msg.clone()),
                 track_id: None,
+                completed_at: None,
+                playlist_id: None,
             };
+            let _ = db::downloads::finish(pool.inner(), &download).await;
             let _ = app.emit("download-failed", download.clone());
             Err(AppError::Other(error_msg))
         }
+    }
+}
+
+/// Devuelve el historial de descargas (más recientes primero) para poblar la
+/// cola al boot.
+#[tauri::command]
+pub async fn download_list_history(pool: State<'_, SqlitePool>) -> AppResult<Vec<Download>> {
+    db::downloads::list_recent(&pool, 100).await
+}
+
+/// Borra del historial las descargas terminales (no toca una en curso).
+#[tauri::command]
+pub async fn download_clear_history(pool: State<'_, SqlitePool>) -> AppResult<()> {
+    db::downloads::clear_terminal(&pool).await
+}
+
+/// Borra una descarga puntual del historial (botón ✕ de la fila).
+#[tauri::command]
+pub async fn download_delete(id: i64, pool: State<'_, SqlitePool>) -> AppResult<()> {
+    db::downloads::delete(&pool, id).await
+}
+
+/// Cancela una descarga en curso: mata el yt-dlp asociado. Los archivos que ya
+/// se bajaron se conservan (la descarga termina como `Cancelled` con sus
+/// parciales). No-op si la descarga ya terminó (sender ya desregistrado).
+#[tauri::command]
+pub fn download_cancel(download_id: i64, cancels: State<'_, DownloadCancels>) {
+    if let Some(tx) = cancels.0.lock().unwrap().remove(&download_id) {
+        let _ = tx.send(());
     }
 }
 

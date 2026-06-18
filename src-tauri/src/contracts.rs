@@ -106,7 +106,8 @@ pub enum DownloadStatus {
     Postprocessing,
     Completed,
     Failed,
-    Skipped, // archivo ya existía en disco — no se re-bajó
+    Skipped,   // archivo ya existía en disco — no se re-bajó
+    Cancelled, // el usuario canceló la descarga (puede haber parciales)
 }
 
 /// Snapshot de una descarga. Lo que el frontend recibe en la lista del store
@@ -122,6 +123,14 @@ pub struct Download {
     pub title: Option<String>,
     pub error: Option<String>,
     pub track_id: Option<i64>,
+    /// Timestamp ISO (UTC) de cuándo terminó la descarga. `None` mientras está
+    /// en curso. Lo llena `list_recent` desde la DB; en los eventos en vivo va
+    /// `None` y el frontend lo estampa con la hora local.
+    pub completed_at: Option<String>,
+    /// Si fue descarga de lista, el id de la playlist creada/reusada — permite
+    /// expandir la descarga en el historial para ver sus tracks. `None` para
+    /// un video suelto.
+    pub playlist_id: Option<i64>,
 }
 
 /// Letras de un track. El backend NO parsea el LRC — guarda el blob raw en

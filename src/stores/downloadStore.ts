@@ -30,7 +30,13 @@ type DownloadState = {
 
   // Acciones de UI:
   startDownload: (url: string, playlist?: boolean) => Promise<void>;
+  /** Cancela una descarga en curso (mata el yt-dlp asociado en el backend). */
+  cancelDownload: (id: number) => void;
   checkDependencies: () => Promise<void>;
+  /** Carga el historial persistido (tabla `downloads`) al boot. */
+  loadHistory: () => Promise<void>;
+  /** Borra del historial las descargas terminales (backend + estado). */
+  clearHistory: () => Promise<void>;
 };
 
 export const useDownloadStore = create<DownloadState>()(
@@ -71,10 +77,15 @@ export const useDownloadStore = create<DownloadState>()(
       ),
     })),
 
-  removeDownload: (id) =>
+  removeDownload: (id) => {
     set((state) => ({
       downloads: state.downloads.filter((d) => d.id !== id),
-    })),
+    }));
+    // Borrar también del historial persistido (best-effort).
+    invoke("download_delete", { id }).catch((e) =>
+      console.warn("download_delete failed:", e),
+    );
+  },
 
   startDownload: async (url, playlist = false) => {
     const trimmed = url.trim();
@@ -97,12 +108,46 @@ export const useDownloadStore = create<DownloadState>()(
     }
   },
 
+  cancelDownload: (id) => {
+    // El backend mata yt-dlp; el evento terminal (download-completed con status
+    // cancelled, o failed) actualiza la fila. Best-effort.
+    invoke("download_cancel", { downloadId: id }).catch((e) =>
+      console.warn("download_cancel failed:", e),
+    );
+  },
+
   checkDependencies: async () => {
     try {
       const deps = await invoke<DependencyStatus>("check_dependencies");
       set({ deps });
     } catch (e) {
       set({ error: String(e) });
+    }
+  },
+
+  loadHistory: async () => {
+    try {
+      const history = await invoke<Download[]>("download_list_history");
+      set({ downloads: history });
+    } catch (e) {
+      console.warn("download_list_history failed:", e);
+    }
+  },
+
+  clearHistory: async () => {
+    try {
+      await invoke("download_clear_history");
+      // Quitar las terminales del estado; conservar las en curso.
+      set((state) => ({
+        downloads: state.downloads.filter(
+          (d) =>
+            d.status === "downloading" ||
+            d.status === "postprocessing" ||
+            d.status === "queued",
+        ),
+      }));
+    } catch (e) {
+      console.warn("download_clear_history failed:", e);
     }
   },
     }),

@@ -20,7 +20,7 @@ use std::process::Stdio;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{ChildStderr, ChildStdout, Command};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 /// Eventos que reporta `run_yt_dlp` al caller. Cubrimos download (con fracción)
 /// y postprocess (sólo señal de que arrancó — yt-dlp no reporta fracción para
@@ -61,6 +61,17 @@ pub enum DownloadError {
 
 const RECENT_LINES_CAP: usize = 64;
 
+/// Borra los temporales abandonados en `_pending` (ej: el track a medio bajar
+/// de una descarga cancelada o interrumpida). Se llama al boot, cuando no hay
+/// ninguna descarga en curso, así que borrar todo el dir es seguro — yt-dlp lo
+/// recrea en la próxima descarga. Best-effort: si falla, no rompe el arranque.
+pub fn clean_pending(library_dir: &Path) {
+    let pending = library_dir.join("_pending");
+    if pending.exists() {
+        let _ = std::fs::remove_dir_all(&pending);
+    }
+}
+
 /// Corre yt-dlp para una URL. `library_dir` es la raíz donde se materializa
 /// el árbol `<uploader>/<title>.mp3`. Si `playlist` es false, fuerza
 /// `--no-playlist` (un solo video aunque la URL traiga `list=`); si es true,
@@ -72,8 +83,9 @@ pub async fn run_yt_dlp<F>(
     playlist: bool,
     cookies_browser: Option<&str>,
     cookies_file: Option<&str>,
+    mut cancel_rx: oneshot::Receiver<()>,
     mut on_event: F,
-) -> Result<Vec<DownloadedEntry>, DownloadError>
+) -> Result<(Vec<DownloadedEntry>, bool), DownloadError>
 where
     F: FnMut(DownloadEvent) + Send + 'static,
 {
@@ -194,7 +206,31 @@ where
     // línea de stderr ("Finished downloading playlist", un falso positivo).
     let mut error_lines: Vec<String> = Vec::new();
 
-    while let Some(line) = rx.recv().await {
+    let mut cancelled = false;
+    loop {
+        let line = if cancelled {
+            // Ya matamos el child; sólo drenamos las líneas que queden en el
+            // canal hasta EOF (para no perder `done` ya emitidos).
+            match rx.recv().await {
+                Some(l) => l,
+                None => break,
+            }
+        } else {
+            tokio::select! {
+                maybe = rx.recv() => match maybe {
+                    Some(l) => l,
+                    None => break,
+                },
+                _ = &mut cancel_rx => {
+                    // Cancelación del usuario: matamos yt-dlp y pasamos a modo
+                    // drenado. Los archivos ya bajados quedan en `entries` →
+                    // el caller los persiste (éxito parcial).
+                    let _ = child.start_kill();
+                    cancelled = true;
+                    continue;
+                }
+            }
+        };
         if recent_lines.len() >= RECENT_LINES_CAP {
             recent_lines.remove(0);
         }
@@ -253,13 +289,19 @@ where
 
     let status = child.wait().await.map_err(DownloadError::Io)?;
 
+    // Cancelado por el usuario: devolvemos lo parcial (puede estar vacío) con el
+    // flag, sin tratar el exit non-zero del kill como error.
+    if cancelled {
+        return Ok((entries, true));
+    }
+
     // yt-dlp devuelve exit code ≠ 0 si CUALQUIER item de una playlist falló
     // (video borrado/privado/region-locked), aunque el resto se haya bajado
     // perfecto. Si capturamos al menos un archivo, es un éxito parcial: nos
     // quedamos con lo bueno en vez de descartar la lista entera. Sólo es falla
     // real cuando no se materializó NADA (URL inválida, auth, fpcalc, etc).
     if !entries.is_empty() {
-        return Ok(entries);
+        return Ok((entries, false));
     }
 
     if !status.success() {

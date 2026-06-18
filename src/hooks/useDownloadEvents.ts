@@ -41,14 +41,22 @@ export function useDownloadEvents() {
         store.getState().upsertDownload(e.payload);
       }),
       listen<Download>("download-completed", (e) => {
-        store.getState().upsertDownload(e.payload);
+        // Estampamos la fecha local si el backend no la mandó (en vivo va null;
+        // el historial recargado sí la trae de la DB).
+        store.getState().upsertDownload({
+          ...e.payload,
+          completedAt: e.payload.completedAt ?? new Date().toISOString(),
+        });
         library.getState().loadTracks();
         // Una descarga de playlist crea/actualiza una playlist — refrescamos
         // el sidebar para que aparezca sin reload manual.
         usePlaylistStore.getState().load();
       }),
       listen<Download>("download-failed", (e) => {
-        store.getState().upsertDownload(e.payload);
+        store.getState().upsertDownload({
+          ...e.payload,
+          completedAt: e.payload.completedAt ?? new Date().toISOString(),
+        });
       }),
     ]).then((fns) => unlisten.push(...fns));
 
