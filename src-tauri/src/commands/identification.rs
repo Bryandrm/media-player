@@ -199,6 +199,13 @@ pub async fn identification_identify_all(
             .await
             {
                 Ok(r) => r,
+                // Key inválida: no tiene sentido seguir — fallarían los 70.
+                // Cortamos el bulk acá. El usuario corrige la key (un IDENTIFY
+                // suelto reabre el modal) y re-lanza.
+                Err(AppError::AcoustIdInvalidKey) => {
+                    eprintln!("[bulk identify] invalid AcoustID API key — aborting");
+                    break;
+                }
                 Err(e) => {
                     eprintln!("[bulk identify] error on track {track_id}: {e}");
                     // identify_track ya updatea el status en DB para sus

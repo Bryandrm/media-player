@@ -116,6 +116,14 @@ pub async fn identify_track(
 
     let best = match lookup_result {
         Ok(opt) => opt,
+        // Key inválida: NO es un problema del track sino de config. Propagamos
+        // el error (en vez de marcar el track 'api_error') para que el frontend
+        // reabra el modal de API key. Sin esto, una key mala marcaría todos los
+        // tracks como api_error sin forma de corregir la key desde la UI.
+        Err(e @ AppError::AcoustIdInvalidKey) => {
+            eprintln!("[identify] invalid AcoustID API key (track {track_id})");
+            return Err(e);
+        }
         Err(e) => {
             eprintln!("[identify] acoustid lookup failed for track {track_id}: {e}");
             db::tracks::update_identification_status(pool, track_id, "api_error").await?;

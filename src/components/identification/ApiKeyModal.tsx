@@ -16,18 +16,22 @@ export function ApiKeyModal() {
   const close = useIdentificationStore((s) => s.closeApiKeyModal);
   const currentKey = useIdentificationStore((s) => s.apiKey);
   const setApiKey = useIdentificationStore((s) => s.setApiKey);
+  const lastError = useIdentificationStore((s) => s.lastError);
 
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Resetear draft cuando se abre con la key actual (vacía o no).
+  // Resetear draft cuando se abre con la key actual (vacía o no). Si se reabrió
+  // porque AcoustID rechazó la key, mostramos ese motivo arriba.
   useEffect(() => {
     if (open_) {
       setDraft(currentKey ?? "");
-      setError(null);
+      const rejected =
+        lastError && lastError.toLowerCase().includes("api key is invalid");
+      setError(rejected ? lastError : null);
     }
-  }, [open_, currentKey]);
+  }, [open_, currentKey, lastError]);
 
   // Escape para cerrar — sólo cuando está visible para no consumir el
   // event globalmente.
@@ -90,6 +94,11 @@ export function ApiKeyModal() {
               acoustid.org/new-application
             </button>
             . You&apos;ll need a MusicBrainz account first (also free).
+          </p>
+          <p className="text-xs text-muted">
+            Use the <span className="font-bold">Application API key</span> from
+            registering an app — not the personal/account API key (the account
+            key is for submitting fingerprints and will be rejected here).
           </p>
 
           <div className="space-y-2">

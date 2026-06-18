@@ -2,6 +2,13 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { IdentificationResult } from "../types";
 
+/** El backend serializa `AppError::AcoustIdInvalidKey` como un string que
+ *  incluye "API key is invalid". Lo detectamos para reabrir el modal y que el
+ *  usuario corrija una key presente-pero-rechazada (vs ausente). */
+function isInvalidKeyError(msg: string): boolean {
+  return msg.toLowerCase().includes("api key is invalid");
+}
+
 // Estado de la feature IDENTIFY (AcoustID + Chromaprint).
 // Nada se persiste — la fuente de verdad para la API key es la tabla
 // `settings` del backend; los Sets/progress son runtime puro.
@@ -125,6 +132,10 @@ export const useIdentificationStore = create<IdentificationState>((set, get) => 
       const msg = String(e);
       console.warn("identification_identify_track failed:", msg);
       set({ lastError: msg });
+      // Key inválida (no sólo ausente): reabrimos el modal para que el usuario
+      // la corrija. Sin esto quedaba trabado — el modal sólo abría si la key
+      // estaba vacía, no si estaba presente-pero-mal.
+      if (isInvalidKeyError(msg)) get().openApiKeyModal();
       return null;
     } finally {
       const after = new Set(get().identifying);

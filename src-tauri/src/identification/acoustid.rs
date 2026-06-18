@@ -77,7 +77,14 @@ struct RawArtist {
 struct RawError {
     #[serde(default)]
     message: Option<String>,
+    // Código de error de AcoustID. El 4 es "invalid API key" — lo tratamos
+    // distinto (AcoustIdInvalidKey) para que el frontend reabra el modal.
+    #[serde(default)]
+    code: Option<i64>,
 }
+
+/// Código de AcoustID para "invalid API key".
+const ACOUSTID_ERR_INVALID_KEY: i64 = 4;
 
 /// Llama a AcoustID `/v2/lookup` y devuelve el mejor match disponible
 /// (mayor `score` con al menos un recording que tenga MBID). `Ok(None)` si
@@ -105,9 +112,12 @@ pub async fn lookup(
             ("meta", "recordings"),
         ])
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
 
+    // NO usamos `error_for_status()`: AcoustID manda el detalle del error en el
+    // body JSON incluso con 400 (ej `{"error":{"code":4,"message":"invalid API
+    // key"}}`). Si cortáramos por el status code perderíamos ese mensaje y
+    // tendríamos sólo "400 Bad Request". Parseamos el body siempre.
     let body = response.bytes().await?;
     parse_response(&body)
 }
@@ -120,6 +130,13 @@ pub fn parse_response(body: &[u8]) -> AppResult<Option<AcoustIdMatch>> {
         .map_err(|e| AppError::AcoustIdApi(format!("invalid response JSON: {e}")))?;
 
     if raw.status != "ok" {
+        // Key inválida (código 4) → error tipado para que el frontend reabra
+        // el modal. Cualquier otro error → AcoustIdApi con el mensaje real.
+        if let Some(err) = &raw.error {
+            if err.code == Some(ACOUSTID_ERR_INVALID_KEY) {
+                return Err(AppError::AcoustIdInvalidKey);
+            }
+        }
         let msg = raw
             .error
             .and_then(|e| e.message)
@@ -206,6 +223,17 @@ mod tests {
     }
 
     #[test]
+    fn invalid_api_key_maps_to_typed_error() {
+        // Respuesta real de AcoustID con una client key inválida (código 4).
+        let body = br#"{"error": {"code": 4, "message": "invalid API key"}, "status": "error"}"#;
+        let err = parse_response(body).expect_err("invalid key should error");
+        assert!(
+            matches!(err, AppError::AcoustIdInvalidKey),
+            "expected AcoustIdInvalidKey, got {err:?}"
+        );
+    }
+
+    #[test]
     fn skips_results_without_recordings() {
         // AcoustID conoce el fingerprint pero ningún result tiene linkeo a
         // MusicBrainz — para nosotros es no_match (no tenemos MBID que usar).
@@ -273,14 +301,16 @@ mod tests {
 
     #[test]
     fn returns_error_when_status_error() {
+        // Error de status sin código de key inválida → AcoustIdApi genérico
+        // con el mensaje real.
         let body = br#"{
             "status": "error",
-            "error": {"code": 4, "message": "invalid API key"}
+            "error": {"code": 3, "message": "invalid musicbrainz access token"}
         }"#;
         let err = parse_response(body).expect_err("should error");
         assert!(
-            matches!(&err, AppError::AcoustIdApi(msg) if msg.contains("invalid API key")),
-            "expected AcoustIdApi(invalid API key), got {err:?}"
+            matches!(&err, AppError::AcoustIdApi(msg) if msg.contains("musicbrainz")),
+            "expected AcoustIdApi, got {err:?}"
         );
     }
 

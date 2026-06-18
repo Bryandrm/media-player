@@ -38,6 +38,13 @@ pub enum AppError {
     #[error("AcoustID API key not configured — set it in Settings")]
     AcoustIdNoApiKey,
 
+    // Key presente pero rechazada por AcoustID (código 4). Distinta de
+    // NoApiKey: acá hay una key seteada pero inválida (typo, o pegaron la
+    // "user API key" en vez de la "application API key"). El frontend la usa
+    // para reabrir el modal y que el usuario la corrija.
+    #[error("AcoustID API key is invalid — get an Application API key at acoustid.org/new-application")]
+    AcoustIdInvalidKey,
+
     // Karaoke (forced alignment via WhisperX).
     #[error("whisperx not installed — install via: pipx install whisperx")]
     WhisperxMissing,

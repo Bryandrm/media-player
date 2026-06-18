@@ -600,6 +600,16 @@ Eventos:
 
 Tabla `settings`, key `acoustid_api_key`. Plain text — la API key de AcoustID free tier no es sensible (no permite escrituras destructivas, sólo lookups). Si en el futuro queremos OAuth o keys con privilegios elevados, encriptar.
 
+**Tipo de key (footgun común):** el lookup usa la key como `client=`, que es la **Application API key** (de registrar una app en https://acoustid.org/new-application). NO confundir con la **user/account API key** (https://acoustid.org/api-key), que es para *subir* fingerprints y AcoustID **rechaza** en el lookup con `{"error":{"code":4,"message":"invalid API key"}}`. El modal aclara la distinción.
+
+### 7.1.1 Key inválida (rechazada, no ausente)
+
+Distinguimos dos casos: key **ausente** (`AcoustIdNoApiKey`) vs key **presente-pero-rechazada** (`AcoustIdInvalidKey`, código 4 de AcoustID). Detalles del manejo:
+
+- `acoustid::lookup` **no** usa `error_for_status()` — AcoustID manda el detalle del error en el body JSON incluso con HTTP 400. Lo parseamos siempre; código 4 → `AppError::AcoustIdInvalidKey`, el resto → `AcoustIdApi(mensaje real)`. Sin esto el error era un opaco "http error 400".
+- El cascade **propaga** `AcoustIdInvalidKey` como `Err` (en vez de marcar el track `api_error`): es un problema de config, no del track. El bulk identify **aborta** al primer invalid-key (no martilla N requests).
+- El frontend (`identificationStore.identify`) detecta el error y **reabre el `ApiKeyModal`** para que el usuario corrija la key. Sin esto quedaba trabado: el modal sólo abría con la key vacía, no con una key presente-pero-mal.
+
 ### 7.2 Disclaimer en UI
 
 Cuando el usuario abre el modal por primera vez:
