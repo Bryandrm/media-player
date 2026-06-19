@@ -73,8 +73,10 @@ src/
 ├── components/
 │   ├── ui/                 Button, Tabs (con tab EQ), MarqueeText (genéricos)
 │   ├── library/            LibraryTable (con indicador L + columna +/−),
-│   │                       LibrarySearchBar, LibraryToolbar (SCAN + CLEAN),
-│   │                       PlaylistSidebar, AddToPlaylistPopover
+│   │                       LibrarySearchBar, LibraryToolbar (SCAN + CLEAN +
+│   │                       MB BACKFILL), PlaylistSidebar (tabs PLAYLISTS /
+│   │                       DETAILS), AddToPlaylistPopover, MultiSelectPicker,
+│   │                       SmartPlaylistModal, TrackDetailsPanel
 │   ├── player/             PlayerBar, Controls (con XFADE button), SeekBar,
 │   │                       VolumeSlider, CoverArt
 │   ├── visualizer/         VisualizerView (con toggle vis/lyrics + persistent
@@ -273,6 +275,18 @@ src-tauri/resources/scripts/
   preview-only / de pago). Sin key ni modal. Botón REFETCH en not_found
   (flag `force` en `lyrics_fetch`). Ver [ADR-030](./docs/DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)
   y [docs/LYRICS.md §15](./docs/LYRICS.md#15-netease-fase-2c3).
+- **Panel DETAILS en sidebar** ✓ (2026-06-19) — PlaylistSidebar gana un
+  toggle de tabs PLAYLISTS / DETAILS (persistido en `uiStore.sidebarTab`).
+  La pestaña DETAILS **auto-sigue al `currentTrackId`** y muestra cover
+  full-width + 5 secciones brutalist (TRACK / TECH / PLAYBACK / EXTERNAL
+  / SOURCE) con KV components copyable para MBID / ACOUSTID / URL / PATH.
+  Backend: `TrackDetails` contract con TODOS los campos de la DB +
+  `file_size_bytes` (leído del filesystem on-demand con
+  `tokio::fs::metadata`); comando dedicado `library_get_track_details` —
+  intencionalmente fuera de `list_tracks` para no engrosar el listado.
+  Race-guard en el fetch del frontend. **Caveat:** PLAY COUNT siempre 0
+  y LAST PLAYED siempre NEVER hasta que se implemente el tracking de
+  reproducciones (gap conocido).
 - Próximo (orden acordado con Bryan 2026-06-18): quick wins **cerrados** (drag
   & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓).
   **(2) calidad/plataforma** — testing Windows/Linux,
