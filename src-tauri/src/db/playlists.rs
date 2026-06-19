@@ -1,10 +1,10 @@
-//! Queries para `playlists` + `playlist_tracks`. CRUD básico — sin reorder,
-//! rename ni descripción editable por ahora. Esos quedan para sub-fase polish.
+//! Queries para `playlists` + `playlist_tracks`. CRUD + reorder + rename +
+//! smart playlists (membresía derivada de reglas, ver `db::smart`).
 
 use sqlx::SqlitePool;
 
 use crate::contracts::{Playlist, Track};
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 
 /// Crea una playlist nueva. Devuelve la fila creada (con `id` autogenerado
 /// y `track_count=0`).
@@ -19,16 +19,71 @@ pub async fn create(pool: &SqlitePool, name: &str) -> AppResult<Playlist> {
         name: name.to_string(),
         description: None,
         track_count: 0,
+        is_smart: false,
+        rules: None,
     })
+}
+
+/// Crea una smart playlist. `rules_json` es el JSON ya serializado de las
+/// condiciones (el frontend lo arma; el comando valida que parsee). El
+/// `track_count` devuelto se calcula evaluando las reglas al toque.
+pub async fn create_smart(
+    pool: &SqlitePool,
+    name: &str,
+    rules_json: &str,
+) -> AppResult<Playlist> {
+    let result = sqlx::query("INSERT INTO playlists (name, is_smart, rules) VALUES (?, 1, ?)")
+        .bind(name)
+        .bind(rules_json)
+        .execute(pool)
+        .await?;
+    let id = result.last_insert_rowid();
+    let track_count = smart_count(pool, rules_json).await;
+    Ok(Playlist {
+        id,
+        name: name.to_string(),
+        description: None,
+        track_count,
+        is_smart: true,
+        rules: Some(rules_json.to_string()),
+    })
+}
+
+/// Reescribe las reglas de una smart playlist (desde el editor).
+pub async fn update_smart_rules(
+    pool: &SqlitePool,
+    playlist_id: i64,
+    rules_json: &str,
+) -> AppResult<()> {
+    sqlx::query("UPDATE playlists SET rules = ? WHERE id = ? AND is_smart = 1")
+        .bind(rules_json)
+        .bind(playlist_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Cuenta los tracks que matchean las reglas. Si el JSON no parsea, devuelve 0
+/// (la playlist se ve vacía en vez de romper el listado del sidebar).
+async fn smart_count(pool: &SqlitePool, rules_json: &str) -> i64 {
+    let Ok(rules) = serde_json::from_str::<crate::db::smart::SmartRules>(rules_json) else {
+        return 0;
+    };
+    crate::db::smart::build_count_query(&rules)
+        .build_query_scalar::<i64>()
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0)
 }
 
 /// Lista todas las playlists con el count de tracks calculado en SQL.
 /// LEFT JOIN para incluir playlists vacías con `track_count=0`. Orden por
 /// nombre A-Z; reordenar manualmente queda para una sub-fase posterior.
 pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Playlist>> {
-    let rows = sqlx::query_as::<_, Playlist>(
+    let mut rows = sqlx::query_as::<_, Playlist>(
         "SELECT p.id, p.name, p.description, \
-                COUNT(pt.track_id) AS track_count \
+                COUNT(pt.track_id) AS track_count, \
+                p.is_smart, p.rules \
          FROM playlists p \
          LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id \
          GROUP BY p.id \
@@ -36,6 +91,16 @@ pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Playlist>> {
     )
     .fetch_all(pool)
     .await?;
+    // Para las smart, el COUNT del JOIN es 0 (no tienen filas en
+    // playlist_tracks) — su count real sale de evaluar las reglas. N+1 queries,
+    // pero las playlists son un puñado en una library personal.
+    for p in rows.iter_mut() {
+        if p.is_smart {
+            if let Some(rules_json) = &p.rules {
+                p.track_count = smart_count(pool, rules_json).await;
+            }
+        }
+    }
     Ok(rows)
 }
 
@@ -157,6 +222,25 @@ pub async fn list_tracks(
     pool: &SqlitePool,
     playlist_id: i64,
 ) -> AppResult<Vec<Track>> {
+    // ¿Es smart? Si lo es, sus tracks se derivan de las reglas (no hay filas en
+    // playlist_tracks). Branch temprano antes del JOIN manual.
+    let smart_rules = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT rules FROM playlists WHERE id = ? AND is_smart = 1",
+    )
+    .bind(playlist_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    if let Some(rules_json) = smart_rules {
+        let rules: crate::db::smart::SmartRules = serde_json::from_str(&rules_json)
+            .map_err(|e| AppError::InvalidInput(format!("invalid smart rules: {e}")))?;
+        let tracks = crate::db::smart::build_tracks_query(&rules)
+            .build_query_as::<Track>()
+            .fetch_all(pool)
+            .await?;
+        return Ok(tracks);
+    }
+
     let rows = sqlx::query_as::<_, Track>(
         "SELECT t.id, t.file_path, t.title, t.artist, t.album, t.duration_ms, \
                 t.track_number, t.year, t.genre, t.format, t.cover_art_path, \

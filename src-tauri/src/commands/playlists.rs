@@ -23,6 +23,42 @@ pub async fn playlist_create(
     db::playlists::create(&pool, trimmed).await
 }
 
+/// Crea una smart playlist. `rules` es el JSON de las condiciones; lo validamos
+/// parseándolo (un JSON inválido es error de input, no se guarda).
+#[tauri::command]
+pub async fn playlist_create_smart(
+    name: String,
+    rules: String,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<Playlist> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::InvalidInput(
+            "playlist name cannot be empty".to_string(),
+        ));
+    }
+    validate_rules(&rules)?;
+    db::playlists::create_smart(&pool, trimmed, &rules).await
+}
+
+/// Reescribe las reglas de una smart playlist (desde el editor).
+#[tauri::command]
+pub async fn playlist_update_smart(
+    playlist_id: i64,
+    rules: String,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<()> {
+    validate_rules(&rules)?;
+    db::playlists::update_smart_rules(&pool, playlist_id, &rules).await
+}
+
+/// Valida que `rules` sea un JSON que el motor de smart playlists sepa parsear.
+fn validate_rules(rules: &str) -> AppResult<()> {
+    serde_json::from_str::<db::smart::SmartRules>(rules)
+        .map(|_| ())
+        .map_err(|e| AppError::InvalidInput(format!("invalid smart rules: {e}")))
+}
+
 #[tauri::command]
 pub async fn playlist_list(pool: State<'_, SqlitePool>) -> AppResult<Vec<Playlist>> {
     db::playlists::list_all(&pool).await

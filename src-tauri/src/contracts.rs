@@ -75,6 +75,14 @@ pub struct Playlist {
     pub name: String,
     pub description: Option<String>,
     pub track_count: i64,
+    /// Smart playlist: sus tracks se derivan de `rules`, no de una lista
+    /// manual en `playlist_tracks`. El frontend la marca con ⚡ y deshabilita
+    /// reorder / add / remove (la membresía es read-only).
+    pub is_smart: bool,
+    /// JSON de las reglas (sólo cuando `is_smart`). Shape:
+    /// `{"match":"all"|"any","conditions":[{"field","op","value"}]}`.
+    /// El frontend lo parsea para poblar el editor; el backend para evaluar.
+    pub rules: Option<String>,
 }
 
 /// Estado de las dependencias externas. Detectadas al boot. Cada una

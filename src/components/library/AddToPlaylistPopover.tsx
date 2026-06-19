@@ -24,9 +24,13 @@ export function AddToPlaylistPopover({
   anchorRect,
   onClose,
 }: Props) {
-  const playlists = usePlaylistStore((s) => s.playlists);
+  const allPlaylists = usePlaylistStore((s) => s.playlists);
   const addTrack = usePlaylistStore((s) => s.addTrack);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Sólo playlists normales: a una smart no se le agregan tracks a mano (su
+  // membresía la deciden las reglas).
+  const playlists = allPlaylists.filter((p) => !p.isSmart);
 
   // Click fuera del popover → cerrar. Pero NO si el click viene del botón
   // que disparó el open — ese caso es ambiguo (open+close en mismo tick).

@@ -75,6 +75,8 @@ pub fn run() {
             commands::identification::identification_cancel_all,
             commands::karaoke::karaoke_auto_align,
             commands::playlists::playlist_create,
+            commands::playlists::playlist_create_smart,
+            commands::playlists::playlist_update_smart,
             commands::playlists::playlist_list,
             commands::playlists::playlist_delete,
             commands::playlists::playlist_rename,

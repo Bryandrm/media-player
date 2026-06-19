@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import { usePlaylistStore } from "../../stores/playlistStore";
+import type { Playlist } from "../../types";
 import { Button } from "../ui/Button";
+import { SmartPlaylistModal } from "./SmartPlaylistModal";
 
 // Sidebar de playlists en la library view. Items:
 //   - ALL TRACKS (default, selectedId=null) — muestra la library completa.
@@ -22,6 +24,19 @@ export function PlaylistSidebar() {
 
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+
+  // Modal de smart playlist: open + qué playlist se edita (null = crear nueva).
+  const [smartModalOpen, setSmartModalOpen] = useState(false);
+  const [editingSmart, setEditingSmart] = useState<Playlist | null>(null);
+
+  const openCreateSmart = () => {
+    setEditingSmart(null);
+    setSmartModalOpen(true);
+  };
+  const openEditSmart = (p: Playlist) => {
+    setEditingSmart(p);
+    setSmartModalOpen(true);
+  };
 
   // Rename inline: qué playlist se está editando + el valor en vuelo. Un solo
   // rename a la vez. `skipBlur` evita que el commit-on-blur se dispare cuando
@@ -133,12 +148,14 @@ export function PlaylistSidebar() {
               label={p.name}
               count={p.trackCount}
               active={selectedId === p.id}
+              isSmart={p.isSmart}
               onClick={() => select(p.id)}
               onRename={() => startRename(p.id, p.name)}
               onDelete={() => onDelete(p.id, p.name)}
               onExport={
                 p.trackCount > 0 ? () => exportM3u(p.id, p.name) : undefined
               }
+              onEdit={p.isSmart ? () => openEditSmart(p) : undefined}
             />
           ),
         )}
@@ -181,11 +198,22 @@ export function PlaylistSidebar() {
             </div>
           </div>
         ) : (
-          <Button size="sm" onClick={() => setCreating(true)}>
-            + NEW PLAYLIST
-          </Button>
+          <div className="flex flex-col gap-2">
+            <Button size="sm" onClick={() => setCreating(true)}>
+              + NEW PLAYLIST
+            </Button>
+            <Button size="sm" onClick={openCreateSmart}>
+              + SMART ⚡
+            </Button>
+          </div>
         )}
       </div>
+
+      <SmartPlaylistModal
+        open={smartModalOpen}
+        editing={editingSmart}
+        onClose={() => setSmartModalOpen(false)}
+      />
     </aside>
   );
 }
@@ -194,21 +222,25 @@ function SidebarRow({
   label,
   count,
   active,
+  isSmart = false,
   onClick,
   onRename,
   onDelete,
   onExport,
+  onEdit,
 }: {
   label: string;
   count: number | null;
   active: boolean;
+  isSmart?: boolean;
   onClick: () => void;
   onRename?: () => void;
   onDelete?: () => void;
   onExport?: () => void;
+  onEdit?: () => void;
 }) {
   const [hover, setHover] = useState(false);
-  const showActions = (onDelete || onExport) && hover;
+  const showActions = (onDelete || onExport || onEdit) && hover;
 
   return (
     <button
@@ -221,11 +253,28 @@ function SidebarRow({
         active ? "bg-fg text-bg font-bold" : "hover:bg-fg hover:text-bg"
       }`}
     >
+      {/* Marcador ⚡ para smart playlists — read-only, tracks derivados de
+          reglas. Se distingue de las normales sin recurrir a iconos pesados. */}
+      {isSmart ? <span className="text-accent" title="Smart playlist">⚡</span> : null}
       <span className="truncate flex-1">{label}</span>
       {showActions ? (
         // Los spans actúan como botones secundarios sin anidar <button> (HTML
         // inválido). onClick stopPropaga para no triggear select del row.
         <span className="flex items-center gap-1.5">
+          {onEdit ? (
+            <span
+              role="button"
+              aria-label={`Edit ${label} rules`}
+              title="Edit rules"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit();
+              }}
+              className="font-bold cursor-pointer px-1 text-[10px] tracking-wide"
+            >
+              EDIT
+            </span>
+          ) : null}
           {onExport ? (
             <span
               role="button"

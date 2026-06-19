@@ -158,10 +158,20 @@ export function LibraryTable() {
   // mostramos sus tracks; cuando es null, la library entera. El search
   // funciona igual en ambos casos.
   const selectedPlaylistId = usePlaylistStore((s) => s.selectedId);
+  const playlists = usePlaylistStore((s) => s.playlists);
   const playlistTracks = usePlaylistStore((s) => s.tracksOfSelected);
   const removeTrackFromPlaylist = usePlaylistStore((s) => s.removeTrack);
   const reorder = usePlaylistStore((s) => s.reorder);
   const sourceTracks = selectedPlaylistId === null ? tracks : playlistTracks;
+
+  // Smart playlist: membresía derivada de reglas → read-only. No se reordena ni
+  // se quitan tracks a mano (eso lo decide el editor de reglas).
+  const selectedIsSmart =
+    selectedPlaylistId !== null &&
+    (playlists.find((p) => p.id === selectedPlaylistId)?.isSmart ?? false);
+  // La columna +/− sólo tiene sentido en "all tracks" (+) o en una playlist
+  // normal (−); en una smart no mostramos acción de membresía.
+  const showMembershipCol = !selectedIsSmart;
 
   const filtered = useMemo(
     () => filterTracks(sourceTracks, searchQuery),
@@ -172,7 +182,8 @@ export function LibraryTable() {
   // (reordenar una vista filtrada es ambiguo — qué position le tocaría a lo
   // que está oculto por el filtro). `dragIndex` = fila agarrada; `dragOverIndex`
   // = fila sobre la que se está soltando (para el indicador visual).
-  const canReorder = selectedPlaylistId !== null && searchQuery.trim() === "";
+  const canReorder =
+    selectedPlaylistId !== null && searchQuery.trim() === "" && !selectedIsSmart;
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const dragFromRef = useRef<number | null>(null);
@@ -326,8 +337,8 @@ export function LibraryTable() {
               <col className="w-2/5" />
               <col className="w-24" />
               {/* Columna del botón + (add to playlist) o − (remove from
-                  selected playlist). Mismo width que L/ID. */}
-              <col className="w-10" />
+                  selected playlist). Ausente en smart playlists (read-only). */}
+              {showMembershipCol && <col className="w-10" />}
             </colgroup>
             <thead className="sticky top-0 bg-bg">
               <tr className="border-b-2 border-fg text-muted">
@@ -345,9 +356,14 @@ export function LibraryTable() {
                 <th className="text-left px-3 py-2">TITLE</th>
                 <th className="text-left px-3 py-2">ARTIST</th>
                 <th className="text-right px-3 py-2">DURATION</th>
-                <th className="text-center px-3 py-2" title="Add to / remove from playlist">
-                  {selectedPlaylistId === null ? "+" : "−"}
-                </th>
+                {showMembershipCol && (
+                  <th
+                    className="text-center px-3 py-2"
+                    title="Add to / remove from playlist"
+                  >
+                    {selectedPlaylistId === null ? "+" : "−"}
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -417,21 +433,23 @@ export function LibraryTable() {
                     <td className="px-3 py-2 text-right tabular-nums">
                       {formatDuration(t.durationMs)}
                     </td>
-                    <td
-                      className="px-3 py-2 text-center font-bold cursor-pointer hover:text-accent"
-                      onClick={(e) =>
-                        selectedPlaylistId === null
-                          ? onPlusClick(e, t)
-                          : onRemoveFromPlaylistClick(e, t.id)
-                      }
-                      title={
-                        selectedPlaylistId === null
-                          ? "Add to playlist"
-                          : "Remove from playlist"
-                      }
-                    >
-                      {selectedPlaylistId === null ? "+" : "−"}
-                    </td>
+                    {showMembershipCol && (
+                      <td
+                        className="px-3 py-2 text-center font-bold cursor-pointer hover:text-accent"
+                        onClick={(e) =>
+                          selectedPlaylistId === null
+                            ? onPlusClick(e, t)
+                            : onRemoveFromPlaylistClick(e, t.id)
+                        }
+                        title={
+                          selectedPlaylistId === null
+                            ? "Add to playlist"
+                            : "Remove from playlist"
+                        }
+                      >
+                        {selectedPlaylistId === null ? "+" : "−"}
+                      </td>
+                    )}
                   </tr>
                 );
               })}

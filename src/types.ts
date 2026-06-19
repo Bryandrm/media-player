@@ -72,8 +72,52 @@ export type Playlist = {
   id: number;
   name: string;
   description: string | null;
-  /** Calculado en SQL via LEFT JOIN. Se refresca cada vez que load() corre. */
+  /** Calculado en SQL via LEFT JOIN (o evaluando las reglas, si es smart). Se
+   *  refresca cada vez que load() corre. */
   trackCount: number;
+  /** Smart playlist: tracks derivados de `rules`, membresía read-only. */
+  isSmart: boolean;
+  /** JSON crudo de las reglas (sólo si isSmart). El editor lo parsea a
+   *  SmartRules; null en playlists normales. */
+  rules: string | null;
+};
+
+// Smart playlists: motor de reglas. Una condición compara un campo del track
+// contra un valor con un operador; las condiciones se combinan con AND ("all")
+// u OR ("any"). El backend (db::smart) tiene la whitelist autoritativa de
+// campos/operadores válidos — estos tipos la espejan para el editor.
+
+export type SmartField =
+  | "title"
+  | "artist"
+  | "album"
+  | "genre"
+  | "year"
+  | "play_count"
+  | "added_within_days"
+  | "played_within_days";
+
+export type SmartOp =
+  | "is"
+  | "is_not"
+  | "contains"
+  | "not_contains"
+  | "gt"
+  | "lt"
+  | "gte"
+  | "lte";
+
+export type SmartCondition = {
+  field: SmartField;
+  /** Operador. Para los campos `*_within_days` se ignora (la semántica es fija
+   *  "en los últimos N días"); igual mandamos uno por consistencia del shape. */
+  op: SmartOp;
+  value: string;
+};
+
+export type SmartRules = {
+  match: "all" | "any";
+  conditions: SmartCondition[];
 };
 
 export type DependencyStatus = {

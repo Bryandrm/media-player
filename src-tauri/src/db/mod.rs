@@ -2,6 +2,7 @@ pub mod downloads;
 pub mod lyrics;
 pub mod settings;
 pub mod playlists;
+pub mod smart;
 pub mod tracks;
 
 use sqlx::sqlite::{

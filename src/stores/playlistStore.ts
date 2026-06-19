@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import type { Playlist, Track } from "../types";
+import type { Playlist, SmartRules, Track } from "../types";
 
 // Estado de playlists del usuario. La fuente de verdad es la DB del backend;
 // cacheamos `playlists` y `tracksOfSelected` en memoria.
@@ -25,6 +25,10 @@ type PlaylistState = {
 
   load: () => Promise<void>;
   create: (name: string) => Promise<Playlist | null>;
+  /** Crea una smart playlist con un set de reglas. */
+  createSmart: (name: string, rules: SmartRules) => Promise<Playlist | null>;
+  /** Reescribe las reglas de una smart playlist y refresca count + tracks. */
+  updateSmart: (id: number, rules: SmartRules) => Promise<void>;
   remove: (id: number) => Promise<void>;
   rename: (id: number, name: string) => Promise<void>;
   select: (id: number | null) => Promise<void>;
@@ -79,6 +83,40 @@ export const usePlaylistStore = create<PlaylistState>()(
         } catch (e) {
           set({ error: String(e) });
           return null;
+        }
+      },
+
+      createSmart: async (name, rules) => {
+        const trimmed = name.trim();
+        if (trimmed === "") return null;
+        try {
+          const created = await invoke<Playlist>("playlist_create_smart", {
+            name: trimmed,
+            rules: JSON.stringify(rules),
+          });
+          set({ playlists: [...get().playlists, created].sort(byName) });
+          return created;
+        } catch (e) {
+          set({ error: String(e) });
+          return null;
+        }
+      },
+
+      updateSmart: async (id, rules) => {
+        try {
+          await invoke("playlist_update_smart", {
+            playlistId: id,
+            rules: JSON.stringify(rules),
+          });
+          // El count y los tracks cambian con las reglas: recargamos la lista
+          // (refresca trackCount + rules cacheadas) y, si está seleccionada,
+          // sus tracks.
+          await get().load();
+          if (get().selectedId === id) {
+            await get().reloadSelectedTracks();
+          }
+        } catch (e) {
+          set({ error: String(e) });
         }
       },
 
