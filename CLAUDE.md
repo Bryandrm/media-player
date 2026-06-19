@@ -165,8 +165,20 @@ src-tauri/resources/scripts/
   botón M3U en hover del sidebar (sólo si la playlist tiene tracks) → save
   dialog nativo (`@tauri-apps/plugin-dialog`) → comando `playlist_export_m3u`
   escribe extended M3U con rutas **absolutas** (`#EXTINF:<seg>,<artista> -
-  <título>`). El filesystem lo toca Rust, no el frontend. Smart playlists
-  quedan para polish.
+  <título>`). El filesystem lo toca Rust, no el frontend.
+- **Smart playlists** ✓ (2026-06-18) — motor multi-regla (AND/OR). Columnas
+  `is_smart` + `rules` (JSON) en `playlists`; **sin filas en
+  `playlist_tracks`** (membresía derivada de reglas, recalculada por query).
+  El query builder ([db/smart.rs](src-tauri/src/db/smart.rs)) usa
+  `sqlx::QueryBuilder`: **whitelist** de campos (columna por `match` contra
+  literales) + valores **siempre por `push_bind`** (cero inyección);
+  condiciones inválidas se descartan, sin ninguna válida → `WHERE 1=0`.
+  Campos: title/artist/album/genre (text), year/play_count (num),
+  added_within_days/played_within_days (fecha relativa). `list_tracks`
+  ramifica smart vs JOIN normal → `getQueue()` + `playlist_export_m3u`
+  funcionan en smart sin cambios. UI: botón `+ SMART ⚡` → `SmartPlaylistModal`,
+  marcador ⚡ + EDIT en el sidebar; `LibraryTable` deshabilita reorder y +/−
+  (read-only). Ver [ADR-034](./docs/DECISIONS.md#adr-034--smart-playlists-motor-multi-regla-con-query-builder-dinámico).
 - **Descarga de listas** ✓ (2026-06-16) — toggle **FULL PLAYLIST** en el
   DownloadForm (default OFF = `--no-playlist`, un solo video; ON =
   `--yes-playlist`). `run_yt_dlp` devuelve `Vec<DownloadedEntry>` (multi-file)
@@ -245,8 +257,8 @@ src-tauri/resources/scripts/
   preview-only / de pago). Sin key ni modal. Botón REFETCH en not_found
   (flag `force` en `lyrics_fetch`). Ver [ADR-030](./docs/DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)
   y [docs/LYRICS.md §15](./docs/LYRICS.md#15-netease-fase-2c3).
-- Próximo (orden acordado con Bryan 2026-06-18): **(1) quick wins** — smart
-  playlists (drag & drop ✓ + history persistente ✓ + export M3U ✓ hechos);
+- Próximo (orden acordado con Bryan 2026-06-18): quick wins **cerrados** (drag
+  & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓).
   **(2) calidad/plataforma** — testing Windows/Linux,
   validar `pnpm tauri build`, tests + CI. **Features grandes al final**: Lyrics
   2.c.4 → karaoke real, Karaoke Fase B-E, Identification Fase 3.

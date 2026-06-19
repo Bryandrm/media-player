@@ -93,7 +93,7 @@ cd src-tauri && cargo test --lib           # tests Rust (audio::cleanup, etc)
 Documentos fuente de verdad:
 - [docs/PLAN-reproductor-brutalist.md](docs/PLAN-reproductor-brutalist.md) — visión, scope, roadmap
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — arquitectura técnica, contratos Tauri, pipeline de audio, lyrics
-- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 34 ADRs al 2026-06-18
+- [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs (decisiones técnicas con razón) — 35 ADRs al 2026-06-18
 - [docs/LYRICS.md](docs/LYRICS.md) — plan por fases del sub-sistema de letras
 - [docs/IDENTIFICATION.md](docs/IDENTIFICATION.md) — sub-sistema de identificación (AcoustID + Chromaprint)
 - [docs/KARAOKE.md](docs/KARAOKE.md) — sub-sistema de karaoke (forced alignment + futuras Fases B-E)
@@ -101,7 +101,7 @@ Documentos fuente de verdad:
 
 ## Estado actual
 
-**Fase 0 — Setup** ✓ · **Fase 1 — MVP funcional** ✓ (cerrada 2026-05-02 al 100%) · **AcoustID Fase 1+2** ✓ · **Lyrics 2.a** ✓ · **Karaoke Fase A** ✓ (revertido a fake, ver abajo) · **Lyrics 2.c.1 — manual edit** ✓ · **EQ 10 bandas** ✓ · **Playlists** ✓ · **Descarga de listas + dedup + cookies** ✓ · **Gapless switch** ✓ · **Lyrics 2.c.3 — NetEase** ✓ · **Descargas: historial persistente + cancelar** ✓ · **Drag & drop import** ✓ · **Export M3U** ✓ (al 2026-06-18)
+**Fase 0 — Setup** ✓ · **Fase 1 — MVP funcional** ✓ (cerrada 2026-05-02 al 100%) · **AcoustID Fase 1+2** ✓ · **Lyrics 2.a** ✓ · **Karaoke Fase A** ✓ (revertido a fake, ver abajo) · **Lyrics 2.c.1 — manual edit** ✓ · **EQ 10 bandas** ✓ · **Playlists** ✓ · **Descarga de listas + dedup + cookies** ✓ · **Gapless switch** ✓ · **Lyrics 2.c.3 — NetEase** ✓ · **Descargas: historial persistente + cancelar** ✓ · **Drag & drop import** ✓ · **Export M3U** ✓ · **Smart playlists** ✓ (al 2026-06-18)
 
 Funcionando hoy:
 - **Player**: play/pause con fade gradual, seek, volume (GainNode), mute, prev/next, shuffle con historial (cap 64), crossfade configurable (off/3/6/12s) entre tracks.
@@ -113,13 +113,14 @@ Funcionando hoy:
 - **Karaoke Fase A** (infraestructura): forced alignment via WhisperX en align-only mode + parser A2 + botón AUTO-ALIGN. **Actualmente revertido a fake karaoke** (interpolación uniforme dentro de línea) porque WhisperX hereda los mismatches del LRC. Volverá cuando mejore el LRC base — 2.c.3 (NetEase) ✓ sumó cobertura synced; falta 2.c.4 (auto-fallback por confidence + auto-detect de mismatch). Ver [docs/KARAOKE.md §13](docs/KARAOKE.md#13-lecciones-aprendidas-fase-a).
 - **Lyrics manual edit (2.c.1)**: botón EDIT en LyricsView → modal con textareas synced + plain. Guarda vía `lyrics_save_manual_edit`, sobreescribe `original_synced_lyrics` (preserva la edición a través de RE-ALIGNs) y resetea offset/speedRatio. Escalera de emergencia para usuario técnico, no flujo seamless aún.
 - **Equalizer 10 bandas**: `BiquadFilterNode` chain ISO estándar (lowshelf + 8 peaking + highshelf), ±12dB, tab EQ con sliders verticales, BYPASS preserva preset, double-click resetea banda. Insertado entre `preMasterGain` y `masterGain` → el visualizer tapea pre-EQ (independiente). Ver [ADR-023](docs/DECISIONS.md#adr-023).
-- **Playlists**: CRUD + add/remove tracks + sidebar UI + rename inline (doble-click) + reorder por drag & drop + **export a M3U** (botón M3U en hover → save dialog → extended M3U con rutas absolutas). `getQueue()` lee de la playlist seleccionada → NEXT/PREV/shuffle navegan dentro de ella. La vista de playlist se mantiene en sync con la library (identify/clean/scan/letras refrescan ambas). Smart playlists quedan para polish.
+- **Playlists**: CRUD + add/remove tracks + sidebar UI + rename inline (doble-click) + reorder por drag & drop + **export a M3U** (botón M3U en hover → save dialog → extended M3U con rutas absolutas). `getQueue()` lee de la playlist seleccionada → NEXT/PREV/shuffle navegan dentro de ella. La vista de playlist se mantiene en sync con la library (identify/clean/scan/letras refrescan ambas).
+- **Smart playlists**: motor multi-regla (AND/OR) sobre genre/year/artist/album/play_count/added/played. Botón `+ SMART ⚡` → editor de condiciones; membresía derivada de reglas (read-only), recalculada por query builder con whitelist + binds (cero inyección). Export M3U + navegación de cola funcionan igual que en una playlist normal. Ver [ADR-034](docs/DECISIONS.md#adr-034--smart-playlists-motor-multi-regla-con-query-builder-dinámico).
 - **Toggle visualizer ↔ lyrics** dentro del split, persistido.
 - **Persistencia**: último track + posición entre sesiones (sin auto-play). Volume/mute/shuffle/crossfade/preset/split/autoCycle/paneMode via Zustand `persist`.
 - **Media keys**: F7/F8/F9 + AirPods + lock screen + Now Playing widget (MediaSession API). Probado en macOS, pendiente Windows.
 - **Keyboard shortcuts**: Space, ←/→, ↑/↓, M, N, P, S, V, F.
 
-**Próximo (orden acordado 2026-06-18)**: (1) quick wins restantes — **smart playlists** (drag & drop ✓ + history persistente ✓ + export M3U ✓ hechos); (2) calidad/plataforma — testing Windows/Linux (MPRIS), validar `pnpm tauri build`, tests + CI; (3) features grandes al final — Lyrics 2.c.4 (auto-fallback por confidence + auto-detect de mismatch) → karaoke real, Karaoke Fase B-E, Identification Fase 3.
+**Próximo (orden acordado 2026-06-18)**: quick wins **cerrados** (drag & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓). (2) calidad/plataforma — testing Windows/Linux (MPRIS), validar `pnpm tauri build`, tests + CI; (3) features grandes al final — Lyrics 2.c.4 (auto-fallback por confidence + auto-detect de mismatch) → karaoke real, Karaoke Fase B-E, Identification Fase 3.
 
 Ver [PLAN §6](docs/PLAN-reproductor-brutalist.md#6-roadmap-por-fases) para el plan completo.
 

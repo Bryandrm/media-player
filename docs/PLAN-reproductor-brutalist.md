@@ -426,7 +426,7 @@ Post-descarga, usar `lofty-rs` en Rust para leer los tags embebidos y poblar la 
 - [x] **Equalizer básico** ✓ (2026-06-14) — 10 bandas ISO (32, 64, 125, 250, 500, 1k, 2k, 4k, 8k, 16k Hz) con `BiquadFilterNode` (lowshelf + 8 peaking + highshelf), ±12dB, BYPASS toggle, RESET, double-click reset por banda. Insertado entre `preMasterGain` y `masterGain` para que el visualizer (tap pre-EQ) sea independiente de la EQ del usuario. Persistido. Ver [ADR-023](DECISIONS.md#adr-023).
 - [x] **Descarga de listas + dedup + cookies** ✓ (2026-06-16) — toggle FULL PLAYLIST baja una lista completa y la guarda como playlist (idempotente, además de "all tracks"); dedup por path + fingerprint Chromaprint exacto evita re-descargas duplicadas; cookies del navegador (`--cookies-from-browser`) para listas privadas / age-restricted. Ver [ADR-024](DECISIONS.md#adr-024), [ADR-025](DECISIONS.md#adr-025).
 - [x] **Switch gapless en selección manual** ✓ (2026-06-16) — clickear un track (o NEXT/PREV) con algo sonando carga en el canal inactivo y swappea cuando está listo, enmascarando el delay de carga (sin gap de silencio). Ver [ADR-026](DECISIONS.md#adr-026).
-- [ ] Smart playlists / auto-queue basado en género, año, o recientemente agregado.
+- [x] **Smart playlists** ✓ (2026-06-18) — motor multi-regla (AND/OR) sobre genre/year/artist/album/play_count/added/played. Reglas en JSON (`is_smart` + `rules` en `playlists`), membresía derivada por query builder con whitelist + binds. Ver [ADR-034](DECISIONS.md#adr-034--smart-playlists-motor-multi-regla-con-query-builder-dinámico).
 - [x] **Drag & drop de archivos para agregar a biblioteca** ✓ (2026-06-18) — drag-drop nativo de Tauri, comando `library_import_paths`. Ver [ADR-033](DECISIONS.md#adr-033--import-por-drag--drop-via-drag-drop-nativo-de-tauri).
 - [ ] MPRIS en Linux para integración con panel del sistema.
 - [x] **Exportar playlists a M3U** ✓ (2026-06-18) — botón M3U en hover del sidebar; save dialog nativo → comando `playlist_export_m3u` escribe extended M3U (rutas absolutas, `#EXTINF:<seg>,<artista> - <título>`).
@@ -596,9 +596,10 @@ brutalist-player/
 - Lyrics Fase 2.c.3 — **NetEase** provider synced (free, keyless) ✓ 2026-06-18 ([ADR-030](DECISIONS.md#adr-030--netease-como-tercer-provider-free-keyless)). Reemplazó el plan de Musixmatch (de pago).
 - Descargas: **historial persistente + fecha + listas expandibles + cancelar** ✓ 2026-06-18 ([ADR-031](DECISIONS.md#adr-031--history-de-descargas-persistente--reconcile-de-huérfanas), [ADR-032](DECISIONS.md#adr-032--cancelar-descarga-conservando-parciales)). Cierra el chunk 2 de ADR-011.
 - **Export M3U** ✓ 2026-06-18 — botón M3U en el sidebar → save dialog → `playlist_export_m3u` (extended M3U, rutas absolutas).
+- **Smart playlists** ✓ 2026-06-18 — motor multi-regla (AND/OR), query builder con whitelist + binds ([ADR-034](DECISIONS.md#adr-034--smart-playlists-motor-multi-regla-con-query-builder-dinámico)). Cierra los quick wins.
 
 **Próximo (orden acordado 2026-06-18):**
-1. **Quick wins** — smart playlists. (Drag & drop ✓ + history persistente ✓ + export M3U ✓ hechos.)
+1. ~~**Quick wins**~~ — cerrados (drag & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓).
 2. **Calidad / plataforma** — testing en Windows (media keys + flujo general) + Linux (MPRIS), validar `pnpm tauri build` (binario distribuible), tests de frontend/integración + CI.
 3. **Features grandes al final** — Lyrics 2.c.4 (auto-fallback por confidence + auto-detect de mismatch via whisperx score) → **karaoke real** (revertir el fake), Karaoke Fase B-E, Identification Fase 3, Genius (4to provider → trait `LyricsProvider`).
 

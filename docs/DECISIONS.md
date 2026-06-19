@@ -44,6 +44,7 @@
 | ADR-031 | History de descargas persistente + reconcile de huérfanas | Accepted |
 | ADR-032 | Cancelar descarga conservando parciales | Accepted |
 | ADR-033 | Import por drag & drop via drag-drop nativo de Tauri | Accepted |
+| ADR-034 | Smart playlists: motor multi-regla con query builder dinámico | Accepted |
 
 ---
 
@@ -882,3 +883,27 @@ Usar el **drag-drop nativo de Tauri** (`getCurrentWebview().onDragDropEvent`), q
 - **Pro:** cero fricción para sumar música; idempotente (re-soltar = SKIPPED, no duplica); funciona desde cualquier tab.
 - **Contra:** el `ScanReport` (FOUND/NEW) sólo es visible en el toolbar de LIBRARY; un drop desde otra tab importa "en silencio" (el overlay confirma el drop).
 - Requiere `core:default` en capabilities (ya estaba) para los eventos del webview.
+
+## ADR-034 — Smart playlists: motor multi-regla con query builder dinámico
+
+**Fecha:** 2026-06-18 · **Estado:** Accepted
+
+### Contexto
+Las smart playlists (último quick win de playlists) muestran tracks que matchean criterios en vez de una lista manual. Decisión de alcance acordada con Bryan: **motor multi-regla (AND/OR)**, no presets fijos ni una sola condición. Hay que (a) modelar y persistir reglas arbitrarias, (b) traducirlas a SQL sin abrir superficie de inyección, (c) integrarlas con la infra de playlists existente (sidebar, queue, export M3U) sin duplicar todo.
+
+### Decisión
+- **Schema:** dos columnas en `playlists` — `is_smart INTEGER DEFAULT 0` + `rules TEXT` (JSON). Una smart playlist **no tiene filas en `playlist_tracks`**; su membresía se recalcula corriendo una query cada vez. (Vs una tabla `smart_playlists` aparte: reusa todo lo de `playlists` — sidebar, rename, delete, `playlist_get_tracks`, export M3U — con un branch mínimo.)
+- **Shape de reglas:** `{"match":"all"|"any","conditions":[{"field","op","value"}]}`. Campos: `title/artist/album/genre` (text), `year/play_count` (numérico), `added_within_days/played_within_days` (fecha relativa).
+- **Query builder ([db/smart.rs](../src-tauri/src/db/smart.rs)):** `sqlx::QueryBuilder` arma el WHERE dinámico. **Whitelist estricta**: el nombre de columna sale de un `match` contra literales conocidos; los valores del usuario **siempre** van por `push_bind` (`?`), nunca interpolados. Una condición con field/op no soportado o número no parseable se **descarta**; si no queda ninguna válida, la query devuelve `WHERE 1=0` (0 filas, no toda la library).
+- **Integración:** `list_tracks` ramifica — si `is_smart`, evalúa reglas; si no, el JOIN manual de siempre. `getQueue()` (NEXT/PREV/shuffle) y `playlist_export_m3u` pasan por `list_tracks` → funcionan en smart sin cambios. El count del sidebar evalúa las reglas (N+1 queries, aceptable en una library personal).
+- **UI:** botón `+ SMART ⚡` en el sidebar abre `SmartPlaylistModal` (editor de condiciones: match all/any + filas field·op·value). Marcador ⚡ + acción EDIT en las filas smart. `LibraryTable` deshabilita reorder y la columna +/− (membresía read-only); el popover "add to playlist" filtra las smart.
+
+### Razón
+- Reusar `playlists` minimiza el código nuevo y mantiene una sola noción de "playlist" en el resto de la app.
+- Whitelist + binds: aunque el JSON venga del usuario (y mañana de un import), no hay inyección posible. Cubierto con unit tests del SQL generado (sin tocar la DB).
+- Descartar condiciones inválidas en vez de fallar evita que una regla rota tumbe toda la playlist.
+
+### Consecuencias
+- **Pro:** filtros potentes y siempre actualizados; export M3U y navegación de cola gratis.
+- **Contra:** el count del sidebar hace una query por smart playlist (no escala a cientos, pero no es el caso de uso); el editor es funcional-brutalist, no drag-and-drop de reglas.
+- Migración `20260618000003_smart_playlists.sql` aditiva (las playlists existentes quedan `is_smart=0`).
