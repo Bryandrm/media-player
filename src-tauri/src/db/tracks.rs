@@ -381,3 +381,37 @@ pub async fn update_identification_status(
     .await?;
     Ok(())
 }
+
+/// Trae el detalle completo de un track para el panel DETAILS del sidebar.
+/// Same shape que `Track.lyrics_status` para que el frontend reuse el CASE.
+/// **No** llena `file_size_bytes` — el caller (commands/library.rs) lo lee
+/// del filesystem after the fact, porque `tokio::fs::metadata` no encaja en
+/// un FromRow puro sin hacer ramificaciones raras.
+pub async fn get_details(
+    pool: &SqlitePool,
+    track_id: i64,
+) -> AppResult<Option<crate::contracts::TrackDetails>> {
+    let row = sqlx::query_as::<_, crate::contracts::TrackDetails>(
+        "SELECT t.id, t.file_path, t.title, t.artist, t.album, t.duration_ms, \
+                t.track_number, t.year, t.genre, t.cover_art_path, \
+                t.bitrate, t.sample_rate, t.format, t.play_count, \
+                t.last_played_at, t.added_at, t.source_type, t.source_url, \
+                t.mbid_recording, t.acoustid_id, t.acoustid_score, \
+                t.identification_status, \
+                CASE \
+                    WHEN l.track_id IS NULL THEN NULL \
+                    WHEN l.status = 'not_found' THEN 'not_found' \
+                    WHEN l.synced_lyrics IS NOT NULL THEN 'synced' \
+                    WHEN l.plain_lyrics IS NOT NULL THEN 'plain' \
+                    ELSE 'instrumental' \
+                END AS lyrics_status, \
+                NULL AS file_size_bytes \
+         FROM tracks t \
+         LEFT JOIN lyrics l ON l.track_id = t.id \
+         WHERE t.id = ?",
+    )
+    .bind(track_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}

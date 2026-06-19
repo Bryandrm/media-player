@@ -54,6 +54,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::library::library_scan_directory,
+            commands::library::library_get_track_details,
             commands::library::library_import_paths,
             commands::library::library_list_tracks,
             commands::library::library_backfill_covers,

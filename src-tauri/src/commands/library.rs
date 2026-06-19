@@ -11,7 +11,7 @@ use tokio::time::Instant;
 use walkdir::WalkDir;
 
 use crate::audio;
-use crate::contracts::{ScanReport, Track};
+use crate::contracts::{ScanReport, Track, TrackDetails};
 use crate::db;
 use crate::errors::{AppError, AppResult};
 use crate::identification::{coverartarchive, musicbrainz};
@@ -183,6 +183,29 @@ pub async fn library_import_paths(
 #[tauri::command]
 pub async fn library_list_tracks(pool: State<'_, SqlitePool>) -> AppResult<Vec<Track>> {
     db::tracks::list_all(&pool).await
+}
+
+/// Detalle completo de un track para el panel DETAILS del sidebar. Trae todo
+/// el row de DB + `file_size_bytes` leído del filesystem (`tokio::fs::metadata`).
+/// Si el archivo se movió/borró, `file_size_bytes` queda None y NO falla la
+/// query — el resto de la metadata (ya cacheada en DB) sigue útil para mostrar.
+#[tauri::command]
+pub async fn library_get_track_details(
+    track_id: i64,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<Option<TrackDetails>> {
+    let Some(mut details) = db::tracks::get_details(&pool, track_id).await? else {
+        return Ok(None);
+    };
+
+    // Best-effort file size — si el archivo no existe, dejamos None y el frontend
+    // muestra "—". Síntoma típico: archivo movido fuera del player sin re-scan.
+    details.file_size_bytes = tokio::fs::metadata(&details.file_path)
+        .await
+        .ok()
+        .map(|m| m.len() as i64);
+
+    Ok(Some(details))
 }
 
 /// Para tracks ya en DB que no tienen `cover_art_path` (típicamente tracks

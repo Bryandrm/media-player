@@ -82,6 +82,40 @@ export type Playlist = {
   rules: string | null;
 };
 
+/** Detalle completo de un track para el panel DETAILS del sidebar. Trae todo
+ *  el row de DB + `fileSizeBytes` leído del filesystem. */
+export type TrackDetails = {
+  id: number;
+  filePath: string;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  durationMs: number;
+  trackNumber: number | null;
+  year: number | null;
+  genre: string | null;
+  coverArtPath: string | null;
+  /** kbps (lofty ya lo devuelve así). */
+  bitrate: number | null;
+  /** Hz (44100, 48000, …). */
+  sampleRate: number | null;
+  format: string | null;
+  playCount: number;
+  /** ISO 8601 string. `null` si nunca se reprodujo. Hoy SIEMPRE null — el
+   *  tracking no se incrementa al reproducir (gap pendiente, ver Gotcha #11). */
+  lastPlayedAt: string | null;
+  addedAt: string;
+  sourceType: string;
+  sourceUrl: string | null;
+  mbidRecording: string | null;
+  acoustidId: string | null;
+  acoustidScore: number | null;
+  identificationStatus: string | null;
+  /** `null` si el archivo no se pudo leer (movido/borrado desde el último scan). */
+  fileSizeBytes: number | null;
+  lyricsStatus: TrackLyricsStatus | null;
+};
+
 // Smart playlists: motor de reglas. Una condición compara un campo del track
 // contra un valor con un operador; las condiciones se combinan con AND ("all")
 // u OR ("any"). El backend (db::smart) tiene la whitelist autoritativa de

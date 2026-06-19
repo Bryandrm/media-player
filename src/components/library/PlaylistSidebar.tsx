@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
 import { usePlaylistStore } from "../../stores/playlistStore";
+import { useUiStore, type SidebarTab } from "../../stores/uiStore";
 import type { Playlist } from "../../types";
 import { Button } from "../ui/Button";
 import { SmartPlaylistModal } from "./SmartPlaylistModal";
+import { TrackDetailsPanel } from "./TrackDetailsPanel";
 
 // Sidebar de playlists en la library view. Items:
 //   - ALL TRACKS (default, selectedId=null) — muestra la library completa.
@@ -91,12 +93,20 @@ export function PlaylistSidebar() {
     await remove(id);
   };
 
+  const sidebarTab = useUiStore((s) => s.sidebarTab);
+  const setSidebarTab = useUiStore((s) => s.setSidebarTab);
+
   return (
     <aside className="w-56 shrink-0 border-r-2 border-fg flex flex-col">
-      <div className="shrink-0 px-4 py-3 border-b-2 border-fg text-xs uppercase tracking-wider text-muted font-bold">
-        PLAYLISTS
-      </div>
+      <SidebarTabs active={sidebarTab} onChange={setSidebarTab} />
 
+      {/* DETAILS tab: panel separado, no comparte estructura con playlists. */}
+      {sidebarTab === "details" && <TrackDetailsPanel />}
+
+      {/* PLAYLISTS tab: lista + footer de create. Mantenemos el SmartModal
+          montado siempre (es un overlay; el tab no lo afecta). */}
+      {sidebarTab === "playlists" && (
+      <>
       <div className="flex-1 overflow-auto">
         {/* ALL TRACKS pseudo-row */}
         <SidebarRow
@@ -208,6 +218,8 @@ export function PlaylistSidebar() {
           </div>
         )}
       </div>
+      </>
+      )}
 
       <SmartPlaylistModal
         open={smartModalOpen}
@@ -215,6 +227,41 @@ export function PlaylistSidebar() {
         onClose={() => setSmartModalOpen(false)}
       />
     </aside>
+  );
+}
+
+/** Tab bar arriba del sidebar — PLAYLISTS / DETAILS. Mismo look que las tabs
+ *  globales del header (border 2px, hover invert, active = bg-fg). */
+function SidebarTabs({
+  active,
+  onChange,
+}: {
+  active: SidebarTab;
+  onChange: (t: SidebarTab) => void;
+}) {
+  const TABS: { id: SidebarTab; label: string }[] = [
+    { id: "playlists", label: "PLAYLISTS" },
+    { id: "details", label: "DETAILS" },
+  ];
+  return (
+    <div className="shrink-0 flex border-b-2 border-fg">
+      {TABS.map((t) => {
+        const isActive = active === t.id;
+        return (
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            className={`flex-1 px-3 py-2 text-[10px] font-bold tracking-wider uppercase border-r-2 border-fg last:border-r-0 transition-colors duration-100 ease-out ${
+              isActive
+                ? "bg-fg text-bg"
+                : "bg-bg text-fg hover:bg-accent hover:text-bg"
+            }`}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

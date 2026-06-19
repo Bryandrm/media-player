@@ -55,6 +55,49 @@ pub struct Track {
     pub acoustid_score: Option<f64>,
 }
 
+/// Detalle completo de un track para el panel "DETAILS" del sidebar. Trae
+/// **todo** el row de DB más `file_size_bytes` calculado on-demand del
+/// filesystem. No se devuelve en `list_tracks` (sería overhead inútil para
+/// la tabla); se pide por id con `library_get_track_details`.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackDetails {
+    pub id: i64,
+    pub file_path: String,
+    pub title: String,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub duration_ms: i64,
+    pub track_number: Option<i64>,
+    pub year: Option<i64>,
+    pub genre: Option<String>,
+    pub cover_art_path: Option<String>,
+    /// Bitrate en kbps (sí, ya está en kbps en la columna; lofty lo expone así).
+    pub bitrate: Option<i64>,
+    /// Sample rate en Hz (44100, 48000, etc.).
+    pub sample_rate: Option<i64>,
+    pub format: Option<String>,
+    pub play_count: i64,
+    /// ISO 8601 string. `None` si nunca se reprodujo. (Hoy SIEMPRE None — el
+    /// tracking de play_count/last_played_at todavía no se implementó; ver
+    /// PLAN + ADR-034 caveat).
+    pub last_played_at: Option<String>,
+    pub added_at: String,
+    /// `"local"` (importado/escaneado) o `"downloaded"` (vino del downloader).
+    pub source_type: String,
+    pub source_url: Option<String>,
+    pub mbid_recording: Option<String>,
+    pub acoustid_id: Option<String>,
+    pub acoustid_score: Option<f64>,
+    pub identification_status: Option<String>,
+    /// Tamaño del archivo en bytes, leído del filesystem. `None` si el archivo
+    /// se movió/borró desde el último scan (no fail-eamos por eso).
+    #[sqlx(default)]
+    pub file_size_bytes: Option<i64>,
+    /// Estado de letras derivado (mismo CASE que `Track.lyrics_status`).
+    pub lyrics_status: Option<String>,
+}
+
 /// Reporte de un scan de directorio.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
