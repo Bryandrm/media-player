@@ -907,3 +907,19 @@ Las smart playlists (último quick win de playlists) muestran tracks que matchea
 - **Pro:** filtros potentes y siempre actualizados; export M3U y navegación de cola gratis.
 - **Contra:** el count del sidebar hace una query por smart playlist (no escala a cientos, pero no es el caso de uso); el editor es funcional-brutalist, no drag-and-drop de reglas.
 - Migración `20260618000003_smart_playlists.sql` aditiva (las playlists existentes quedan `is_smart=0`).
+
+### Caveat de datos (hallazgos 2026-06-18, al probar el feature)
+El motor anda; la utilidad de cada campo depende de cuán poblado esté en la
+library. Dos campos hoy **no son útiles** en una library bajada de YouTube:
+- **`genre`**: yt-dlp escribe la *categoría* de YT ("Music", "People & Blogs"),
+  no el género musical → casi todo queda `genre="Music"`. Una regla
+  `genre is Electronic` matchea 0 tracks (correctamente). Para que sirva hay
+  que taggear a mano o con una fuente real. Ver Gotcha #11.
+- **`play_count` / `last_played_at`**: **nunca se incrementan** — reproducir un
+  track no hace el `UPDATE` correspondiente (gap pendiente, ver PLAN). Hasta que
+  se implemente, las reglas `play_count` y `played_within_days` quedan muertas
+  (todo en 0). Es lo que habilitaría un "Most Played" real.
+
+Los campos que **sí** funcionan con datos de YT: `artist`, `title`, `year`
+(viene del upload date / metadata) y `added_within_days` (lo seteamos nosotros
+al importar).

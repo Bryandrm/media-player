@@ -423,6 +423,14 @@ matchear tracks que las heurísticas no alcanzan, ahora tenemos AcoustID
 ([identification/](src-tauri/src/identification/)) que pisa la metadata
 con la canónica de MusicBrainz cuando hay match con score alto.
 
+**`genre` es especialmente inútil:** yt-dlp escribe ahí la *categoría* del
+video de YouTube ("Music", "People & Blogs", "Gaming"), no el género musical.
+En una library bajada de YT casi todo queda `genre="Music"`. Consecuencia
+práctica: las **smart playlists** (ADR-034) por `genre` no filtran nada útil
+hasta que el campo se tague a mano o con una fuente real. Las heurísticas de
+cleanup **no** tocan genre (no hay forma confiable de derivar el género real
+del título). Hallazgo del 2026-06-18 al probar smart playlists.
+
 ### 12. LRCLIB **no** acepta lookup por MBID
 Asunción que se pagó: el plan original de identification proponía hacer
 `/api/get?track_mbid=<uuid>` para letras exactas vía MusicBrainz ID.
