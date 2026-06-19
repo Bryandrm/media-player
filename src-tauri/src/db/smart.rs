@@ -64,6 +64,74 @@ pub fn build_count_query(rules: &SmartRules) -> QueryBuilder<'_, Sqlite> {
     qb
 }
 
+/// Query que devuelve los valores distintos de un campo, filtrados por las
+/// reglas del prefilter. Excluye condiciones que apuntan al mismo campo (el
+/// usuario está editando ESE field — no queremos restringir las opciones a
+/// lo que ya seleccionó).
+///
+/// Devuelve valores como string para que el caller no tenga que ramificar por
+/// tipo — `year`/`play_count` se castean a TEXT en SQLite implícitamente al
+/// hacer SELECT del integer.
+///
+/// `field` se valida contra la whitelist. Si el field no es soportado, devuelve
+/// un QueryBuilder que produce 0 filas (`SELECT '' WHERE 1=0`).
+pub fn build_distinct_values_query<'a>(
+    field: &'a str,
+    prefilter: &'a SmartRules,
+) -> QueryBuilder<'a, Sqlite> {
+    let col = match field {
+        "title" | "artist" | "album" | "genre" | "year" | "play_count" => field,
+        _ => {
+            // Field no soportado para distinct — devolver query estéril.
+            return QueryBuilder::new("SELECT '' WHERE 1=0");
+        }
+    };
+
+    let mut qb = QueryBuilder::new("SELECT DISTINCT t.");
+    qb.push(col)
+        .push(" AS v FROM tracks t WHERE t.")
+        .push(col)
+        .push(" IS NOT NULL AND t.")
+        .push(col)
+        .push(" != ''");
+
+    // Aplicar el prefilter pero **excluyendo** condiciones del mismo campo
+    // (para no restringir el picker a lo que el usuario ya seleccionó).
+    let same_field_filtered: SmartRules = SmartRules {
+        match_mode: prefilter.match_mode.clone(),
+        conditions: prefilter
+            .conditions
+            .iter()
+            .filter(|c| c.field != col)
+            .filter(|c| is_supported(&c.field, &c.op, &c.value))
+            .map(|c| Condition {
+                field: c.field.clone(),
+                op: c.op.clone(),
+                value: c.value.clone(),
+            })
+            .collect(),
+    };
+
+    if !same_field_filtered.conditions.is_empty() {
+        let joiner = if same_field_filtered.match_mode == "any" {
+            " OR "
+        } else {
+            " AND "
+        };
+        qb.push(" AND (");
+        for (i, c) in same_field_filtered.conditions.iter().enumerate() {
+            if i > 0 {
+                qb.push(joiner);
+            }
+            append_condition(&mut qb, c);
+        }
+        qb.push(")");
+    }
+
+    qb.push(" ORDER BY v COLLATE NOCASE");
+    qb
+}
+
 fn append_where(qb: &mut QueryBuilder<Sqlite>, rules: &SmartRules) {
     let valid: Vec<&Condition> = rules
         .conditions
@@ -87,17 +155,61 @@ fn append_where(qb: &mut QueryBuilder<Sqlite>, rules: &SmartRules) {
 /// ¿Es una combinación field+op (y valor, para numéricos/fecha) que sabemos
 /// traducir a SQL? Se usa para filtrar condiciones inválidas antes de armar la
 /// query — así una sola condición rota no tumba toda la playlist.
+///
+/// El operador `in` acepta una lista JSON (`["foo","bar"]` para text,
+/// `[1990, 2000]` para numérico) o un valor único. Para que pase la
+/// validación, el valor debe parsear a un array JSON no-vacío con elementos
+/// del tipo correcto.
 fn is_supported(field: &str, op: &str, value: &str) -> bool {
     match field {
-        "title" | "artist" | "album" | "genre" => {
-            matches!(op, "is" | "is_not" | "contains" | "not_contains")
-        }
-        "year" | "play_count" => {
-            matches!(op, "is" | "gt" | "lt" | "gte" | "lte") && value.trim().parse::<i64>().is_ok()
-        }
+        "title" | "artist" | "album" | "genre" => match op {
+            "is" | "is_not" | "contains" | "not_contains" => true,
+            "in" | "not_in" => parse_string_list(value).map_or(false, |v| !v.is_empty()),
+            _ => false,
+        },
+        "year" | "play_count" => match op {
+            "is" | "gt" | "lt" | "gte" | "lte" => value.trim().parse::<i64>().is_ok(),
+            "in" | "not_in" => parse_int_list(value).map_or(false, |v| !v.is_empty()),
+            _ => false,
+        },
         "added_within_days" | "played_within_days" => value.trim().parse::<i64>().is_ok(),
         _ => false,
     }
+}
+
+/// Parse de `value` como JSON `Vec<String>`. Si la string viene como un
+/// escalar `"foo"` (sin brackets), también la acepta como lista de 1. Strings
+/// vacías o whitespace-only se filtran.
+fn parse_string_list(value: &str) -> Option<Vec<String>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Caso array JSON: ["foo","bar"]
+    if let Ok(parsed) = serde_json::from_str::<Vec<String>>(trimmed) {
+        let clean: Vec<String> = parsed
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        return Some(clean);
+    }
+    // Caso escalar: lo tratamos como lista de un elemento (defensivo, no es
+    // el path principal — el frontend siempre manda array para op `in`).
+    Some(vec![trimmed.to_string()])
+}
+
+/// Parse de `value` como JSON `Vec<i64>`. Mismas reglas que `parse_string_list`.
+fn parse_int_list(value: &str) -> Option<Vec<i64>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(parsed) = serde_json::from_str::<Vec<i64>>(trimmed) {
+        return Some(parsed);
+    }
+    // Escalar numérico → lista de uno (defensivo).
+    trimmed.parse::<i64>().ok().map(|n| vec![n])
 }
 
 fn append_condition(qb: &mut QueryBuilder<Sqlite>, c: &Condition) {
@@ -126,6 +238,24 @@ fn append_condition(qb: &mut QueryBuilder<Sqlite>, c: &Condition) {
                         .push(" NOT LIKE ")
                         .push_bind(format!("%{}%", c.value));
                 }
+                "in" | "not_in" => {
+                    let values = parse_string_list(&c.value).unwrap_or_default();
+                    // is_supported ya garantizó que values no está vacío,
+                    // pero defensivo (race entre call sites): si vacío, 1=0.
+                    if values.is_empty() {
+                        qb.push("1=0");
+                        return;
+                    }
+                    let negate = c.op == "not_in";
+                    qb.push("t.")
+                        .push(col)
+                        .push(if negate { " NOT IN (" } else { " IN (" });
+                    let mut sep = qb.separated(", ");
+                    for v in &values {
+                        sep.push_bind(v.clone());
+                    }
+                    qb.push(") COLLATE NOCASE");
+                }
                 _ => {
                     qb.push("1=0");
                 }
@@ -133,22 +263,43 @@ fn append_condition(qb: &mut QueryBuilder<Sqlite>, c: &Condition) {
         }
         "year" | "play_count" => {
             let col = c.field.as_str();
-            // is_supported ya garantizó que parsea.
-            let n: i64 = c.value.trim().parse().unwrap_or(0);
-            let sql_op = match c.op.as_str() {
-                "is" => "=",
-                "gt" => ">",
-                "lt" => "<",
-                "gte" => ">=",
-                "lte" => "<=",
-                _ => "=",
-            };
-            qb.push("t.")
-                .push(col)
-                .push(" ")
-                .push(sql_op)
-                .push(" ")
-                .push_bind(n);
+            match c.op.as_str() {
+                "in" | "not_in" => {
+                    let values = parse_int_list(&c.value).unwrap_or_default();
+                    if values.is_empty() {
+                        qb.push("1=0");
+                        return;
+                    }
+                    let negate = c.op == "not_in";
+                    qb.push("t.")
+                        .push(col)
+                        .push(if negate { " NOT IN (" } else { " IN (" });
+                    let mut sep = qb.separated(", ");
+                    for v in &values {
+                        sep.push_bind(*v);
+                    }
+                    qb.push(")");
+                }
+                _ => {
+                    // Operadores escalares (is/gt/lt/gte/lte) — is_supported ya
+                    // garantizó que parsea.
+                    let n: i64 = c.value.trim().parse().unwrap_or(0);
+                    let sql_op = match c.op.as_str() {
+                        "is" => "=",
+                        "gt" => ">",
+                        "lt" => "<",
+                        "gte" => ">=",
+                        "lte" => "<=",
+                        _ => "=",
+                    };
+                    qb.push("t.")
+                        .push(col)
+                        .push(" ")
+                        .push(sql_op)
+                        .push(" ")
+                        .push_bind(n);
+                }
+            }
         }
         "added_within_days" | "played_within_days" => {
             let col = if c.field == "added_within_days" {

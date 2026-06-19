@@ -25,6 +25,7 @@ import { FileDropOverlay } from "./components/library/FileDropOverlay";
 function App() {
   const loadTracks = useLibraryStore((s) => s.loadTracks);
   const backfillCovers = useLibraryStore((s) => s.backfillCovers);
+  const initMbBackfillEvents = useLibraryStore((s) => s.initMbBackfillEvents);
   const error = useLibraryStore((s) => s.error);
   const checkDependencies = useDownloadStore((s) => s.checkDependencies);
   const loadDownloadHistory = useDownloadStore((s) => s.loadHistory);
@@ -62,6 +63,18 @@ function App() {
     loadPlaylists,
     loadDownloadHistory,
   ]);
+
+  // Listener de eventos mb-backfill-* — efectivamente global. El backend
+  // emite progress/completed; el store los routea a su state.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    initMbBackfillEvents().then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, [initMbBackfillEvents]);
 
   useEffect(() => {
     if (view === "visualizer") setVisualizerVisited(true);

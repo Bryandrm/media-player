@@ -105,7 +105,12 @@ export type SmartOp =
   | "gt"
   | "lt"
   | "gte"
-  | "lte";
+  | "lte"
+  /** Multi-valor: matchea cualquiera de los valores listados. El `value` de
+   *  la condición es un JSON array stringificado: `["grunge","electronic"]`. */
+  | "in"
+  /** Negación de `in`: matchea cuando el campo NO está en la lista. */
+  | "not_in";
 
 export type SmartCondition = {
   field: SmartField;

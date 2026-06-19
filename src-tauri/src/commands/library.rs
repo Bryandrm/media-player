@@ -1,14 +1,20 @@
 //! Comandos Tauri de la biblioteca: scan de directorios + listado.
 
+use serde::Serialize;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager, State};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::time::Instant;
 use walkdir::WalkDir;
 
 use crate::audio;
 use crate::contracts::{ScanReport, Track};
 use crate::db;
 use crate::errors::{AppError, AppResult};
+use crate::identification::{coverartarchive, musicbrainz};
 
 /// Importa un único archivo de audio: extrae metadata, inserta en `tracks`
 /// (idempotente por `file_path`), y materializa el cover art si es nuevo.
@@ -320,4 +326,244 @@ pub async fn library_backfill_metadata(pool: State<'_, SqlitePool>) -> AppResult
         total_candidates, updated
     );
     Ok(updated)
+}
+
+
+// ============================================================================
+// MB metadata backfill — genre + year + album (+ cover via Cover Art Archive)
+// ============================================================================
+
+/// Throttle conservador para MusicBrainz. Cap anonymous = 1 req/seg estricto;
+/// 1.05s = 0.95 rps nos deja margen para no chocar el cap. La fetch del cover
+/// via Cover Art Archive ocurre DENTRO del mismo intervalo (cuando aplica)
+/// — CAA es un endpoint distinto pero no queremos pasarles de ~1 req/s combinado.
+const MB_BACKFILL_MIN_INTERVAL: Duration = Duration::from_millis(1050);
+
+#[derive(Default)]
+pub struct BulkMbBackfillState {
+    pub running: Arc<AtomicBool>,
+    pub cancel: Arc<AtomicBool>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MbBackfillProgress {
+    done: usize,
+    total: usize,
+    current_track_id: i64,
+    /// "updated" (algún campo MB cambió) | "no_data" (MB devolvió todo None) |
+    /// "error" — para que la UI muestre el outcome del último track.
+    last_status: String,
+}
+
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct MbBackfillCompleted {
+    total: usize,
+    /// Tracks donde al menos un campo MB se actualizó (genre, year o album).
+    updated: usize,
+    /// Tracks donde MB devolvió toda la metadata en None — no había nada útil.
+    no_data: usize,
+    /// Tracks que recibieron cover desde Cover Art Archive (subset de updated
+    /// + casos donde sólo cambió cover sin tocar metadata).
+    covers_updated: usize,
+    error: usize,
+    cancelled: bool,
+}
+
+/// Backfill de metadata via MusicBrainz para tracks identificados (con MBID).
+/// Trae genre + year + album en una sola request; cuando el track no tiene
+/// cover_art_path y la fetch MB devolvió un release_group_mbid, también
+/// intenta descargar la portada frontal desde Cover Art Archive.
+///
+/// Fire-and-forget: spawneamos un task que emite `mb-backfill-progress` y
+/// `mb-backfill-completed`. Throttle ~0.95 rps respetando MB anonymous (1 rps);
+/// la llamada a CAA cuenta dentro del mismo intervalo (no la doblamos).
+#[tauri::command]
+pub async fn library_backfill_mb_metadata(
+    app: AppHandle,
+    pool: State<'_, SqlitePool>,
+    http: State<'_, reqwest::Client>,
+    bulk: State<'_, BulkMbBackfillState>,
+) -> AppResult<()> {
+    if bulk.running.load(Ordering::SeqCst) {
+        return Err(AppError::InvalidInput(
+            "mb backfill already running".into(),
+        ));
+    }
+
+    let candidates = db::tracks::list_for_mb_backfill(&pool).await?;
+    let total = candidates.len();
+
+    if total == 0 {
+        let _ = app.emit("mb-backfill-completed", MbBackfillCompleted::default());
+        return Ok(());
+    }
+
+    bulk.running.store(true, Ordering::SeqCst);
+    bulk.cancel.store(false, Ordering::SeqCst);
+
+    let pool_clone = pool.inner().clone();
+    let http_clone = http.inner().clone();
+    let cancel_flag = bulk.cancel.clone();
+    let running_flag = bulk.running.clone();
+    let app_handle = app.clone();
+    // Cache dir lazy: lo pedimos sólo si vamos a guardar al menos un cover.
+    let cache_dir = app.path().app_cache_dir().ok();
+
+    tauri::async_runtime::spawn(async move {
+        let mut counts = MbBackfillCompleted {
+            total,
+            ..MbBackfillCompleted::default()
+        };
+        let mut last_request: Option<Instant> = None;
+
+        for (i, (track_id, mbid, existing_cover)) in candidates.iter().enumerate() {
+            if cancel_flag.load(Ordering::SeqCst) {
+                counts.cancelled = true;
+                break;
+            }
+
+            // Throttle MB.
+            if let Some(prev) = last_request {
+                let elapsed = prev.elapsed();
+                if elapsed < MB_BACKFILL_MIN_INTERVAL {
+                    tokio::time::sleep(MB_BACKFILL_MIN_INTERVAL - elapsed).await;
+                }
+            }
+            last_request = Some(Instant::now());
+
+            // Fetch metadata (un solo request → genre + year + album +
+            // release_group_mbid).
+            let mb_meta = match musicbrainz::fetch_recording_metadata(&http_clone, mbid).await {
+                Ok(meta) => meta,
+                Err(e) => {
+                    eprintln!("[mb backfill] mb lookup failed for {track_id}: {e}");
+                    counts.error += 1;
+                    let _ = app_handle.emit(
+                        "mb-backfill-progress",
+                        MbBackfillProgress {
+                            done: i + 1,
+                            total,
+                            current_track_id: *track_id,
+                            last_status: "error".into(),
+                        },
+                    );
+                    continue;
+                }
+            };
+
+            let any_metadata = mb_meta.genre.is_some()
+                || mb_meta.year.is_some()
+                || mb_meta.album.is_some();
+
+            // Guardar metadata si MB devolvió al menos un campo. set_mb_metadata
+            // ya respeta los campos que el usuario tenía (no pisa con None/empty).
+            if any_metadata {
+                if let Err(e) = db::tracks::set_mb_metadata(
+                    &pool_clone,
+                    *track_id,
+                    mb_meta.genre.as_deref(),
+                    mb_meta.year,
+                    mb_meta.album.as_deref(),
+                )
+                .await
+                {
+                    eprintln!("[mb backfill] db write failed for {track_id}: {e}");
+                    counts.error += 1;
+                    let _ = app_handle.emit(
+                        "mb-backfill-progress",
+                        MbBackfillProgress {
+                            done: i + 1,
+                            total,
+                            current_track_id: *track_id,
+                            last_status: "error".into(),
+                        },
+                    );
+                    continue;
+                }
+            }
+
+            // Cover art via CAA — sólo si no tenía cover Y MB devolvió un
+            // release-group ganador. Best-effort: si CAA 404/falla, NO contamos
+            // error a nivel del track (la metadata principal ya quedó).
+            let mut cover_updated = false;
+            if existing_cover.is_none() {
+                if let (Some(rg_mbid), Some(cache_root)) = (
+                    mb_meta.release_group_mbid.as_deref(),
+                    cache_dir.as_deref(),
+                ) {
+                    match coverartarchive::fetch_front_cover(&http_clone, rg_mbid).await {
+                        Ok(Some(cover)) => {
+                            let thumbs = cache_root.join("thumbnails");
+                            if let Err(e) = std::fs::create_dir_all(&thumbs) {
+                                eprintln!("[mb backfill] mkdir thumbs failed: {e}");
+                            } else {
+                                let out_path =
+                                    thumbs.join(format!("{}.{}", track_id, cover.ext));
+                                match std::fs::write(&out_path, &cover.bytes) {
+                                    Ok(()) => {
+                                        if let Err(e) = db::tracks::set_cover_art(
+                                            &pool_clone,
+                                            *track_id,
+                                            Some(&out_path),
+                                        )
+                                        .await
+                                        {
+                                            eprintln!(
+                                                "[mb backfill] cover db write failed for {track_id}: {e}"
+                                            );
+                                        } else {
+                                            cover_updated = true;
+                                            counts.covers_updated += 1;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!(
+                                            "[mb backfill] cover save failed for {track_id}: {e}"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        Ok(None) => {} // 404, sin cover en CAA — silent.
+                        Err(e) => {
+                            eprintln!("[mb backfill] caa fetch failed for {track_id}: {e}");
+                        }
+                    }
+                }
+            }
+
+            let status = if any_metadata || cover_updated {
+                counts.updated += 1;
+                "updated"
+            } else {
+                counts.no_data += 1;
+                "no_data"
+            };
+
+            let _ = app_handle.emit(
+                "mb-backfill-progress",
+                MbBackfillProgress {
+                    done: i + 1,
+                    total,
+                    current_track_id: *track_id,
+                    last_status: status.into(),
+                },
+            );
+        }
+
+        running_flag.store(false, Ordering::SeqCst);
+        let _ = app_handle.emit("mb-backfill-completed", counts);
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn library_cancel_mb_backfill(
+    bulk: State<'_, BulkMbBackfillState>,
+) -> AppResult<()> {
+    bulk.cancel.store(true, Ordering::SeqCst);
+    Ok(())
 }

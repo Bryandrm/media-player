@@ -229,10 +229,18 @@ pub async fn save_identification(
     canonical_title: &str,
     canonical_artist: &str,
     score: f64,
+    genre: Option<&str>,
+    year: Option<i64>,
+    album: Option<&str>,
 ) -> AppResult<()> {
-    // Hacemos el update en una sola query con CASE expressions:
-    //   - title/artist: pisamos sólo si canonical_* no está vacío.
-    //   - original_*: poblamos sólo si todavía es NULL (primer identify).
+    // Pisamos title/artist/genre/album si vienen con valor no vacío. `year`
+    // sólo se pisa si vino Some — usamos sentinel -1 en la query: el bind
+    // numérico nullable es awkward con sqlx + CASE, así que -1=mantener.
+    // original_*: poblamos sólo si todavía es NULL (primer identify).
+    let genre_for_bind = genre.unwrap_or("").to_string();
+    let album_for_bind = album.unwrap_or("").to_string();
+    let year_for_bind = year.unwrap_or(-1);
+
     sqlx::query(
         "UPDATE tracks SET \
             acoustid_id = ?, \
@@ -243,7 +251,10 @@ pub async fn save_identification(
             original_title = CASE WHEN original_title IS NULL THEN title ELSE original_title END, \
             original_artist = CASE WHEN original_artist IS NULL THEN artist ELSE original_artist END, \
             title = CASE WHEN ? != '' THEN ? ELSE title END, \
-            artist = CASE WHEN ? != '' THEN ? ELSE artist END \
+            artist = CASE WHEN ? != '' THEN ? ELSE artist END, \
+            genre = CASE WHEN ? != '' THEN ? ELSE genre END, \
+            album = CASE WHEN ? != '' THEN ? ELSE album END, \
+            year = CASE WHEN ? >= 0 THEN ? ELSE year END \
          WHERE id = ?",
     )
     .bind(acoustid_id)
@@ -253,10 +264,79 @@ pub async fn save_identification(
     .bind(canonical_title)
     .bind(canonical_artist)
     .bind(canonical_artist)
+    .bind(&genre_for_bind)
+    .bind(&genre_for_bind)
+    .bind(&album_for_bind)
+    .bind(&album_for_bind)
+    .bind(year_for_bind)
+    .bind(year_for_bind)
     .bind(track_id)
     .execute(pool)
     .await?;
     Ok(())
+}
+
+/// Helper para el backfill de MB metadata. Pisa cada campo SOLO si el caller
+/// pasó Some con valor no vacío. Mismo principio que save_identification:
+/// nunca descartamos lo que el usuario tenía si MB no devuelve nada para ese
+/// campo.
+pub async fn set_mb_metadata(
+    pool: &SqlitePool,
+    track_id: i64,
+    genre: Option<&str>,
+    year: Option<i64>,
+    album: Option<&str>,
+) -> AppResult<()> {
+    let genre_for_bind = genre.unwrap_or("").to_string();
+    let album_for_bind = album.unwrap_or("").to_string();
+    let year_for_bind = year.unwrap_or(-1);
+
+    sqlx::query(
+        "UPDATE tracks SET \
+            genre = CASE WHEN ? != '' THEN ? ELSE genre END, \
+            album = CASE WHEN ? != '' THEN ? ELSE album END, \
+            year = CASE WHEN ? >= 0 THEN ? ELSE year END \
+         WHERE id = ?",
+    )
+    .bind(&genre_for_bind)
+    .bind(&genre_for_bind)
+    .bind(&album_for_bind)
+    .bind(&album_for_bind)
+    .bind(year_for_bind)
+    .bind(year_for_bind)
+    .bind(track_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Lista los tracks candidatos al backfill de MB metadata: identificados
+/// (con `mbid_recording` populado) Y con AL MENOS UNO de los campos MB
+/// faltante o sospechoso:
+///   - genre NULL/empty/"Music" (categoría YT default)
+///   - year NULL
+///   - album NULL/empty
+///   - cover_art_path NULL
+///
+/// Tracks con TODOS los campos OK se omiten — evitan re-hit MB innecesario.
+/// Devuelve `(id, mbid, cover_art_path)` — el cover indica si hace falta CAA.
+pub async fn list_for_mb_backfill(
+    pool: &SqlitePool,
+) -> AppResult<Vec<(i64, String, Option<String>)>> {
+    let rows: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, mbid_recording, cover_art_path FROM tracks \
+         WHERE mbid_recording IS NOT NULL AND mbid_recording != '' \
+         AND ( \
+            genre IS NULL OR genre = '' OR genre = 'Music' \
+            OR year IS NULL \
+            OR album IS NULL OR album = '' \
+            OR cover_art_path IS NULL \
+         ) \
+         ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }
 
 /// Lista los track IDs candidatos para el bulk identify: nunca intentados

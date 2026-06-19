@@ -14,7 +14,9 @@
 //! Ver docs/IDENTIFICATION.md para el plan completo.
 
 pub mod acoustid;
+pub mod coverartarchive;
 pub mod fpcalc;
+pub mod musicbrainz;
 
 use std::path::Path;
 
@@ -154,6 +156,25 @@ pub async fn identify_track(
                 "[identify] identified track {} as '{}' / '{}' (mbid={}, score={:.3})",
                 track_id, m.title, m.artist, m.mbid, m.score
             );
+
+            // 5. MusicBrainz metadata lookup (best-effort): genre + year +
+            //    album + release_group_mbid (este último alimenta CAA).
+            //    MB anonymous cap = 1 req/seg; en single-track no throttleamos.
+            //    Si falla, no abortamos — el identify principal ya tuvo éxito.
+            let mb_meta = match musicbrainz::fetch_recording_metadata(http, &m.mbid).await {
+                Ok(meta) => meta,
+                Err(e) => {
+                    eprintln!(
+                        "[identify] mb metadata lookup failed for track {track_id}: {e}"
+                    );
+                    musicbrainz::MbRecordingMetadata::default()
+                }
+            };
+            eprintln!(
+                "[identify] mb track {track_id} → genre={:?} year={:?} album={:?}",
+                mb_meta.genre, mb_meta.year, mb_meta.album
+            );
+
             db::tracks::save_identification(
                 pool,
                 track_id,
@@ -162,6 +183,9 @@ pub async fn identify_track(
                 &m.title,
                 &m.artist,
                 m.score,
+                mb_meta.genre.as_deref(),
+                mb_meta.year,
+                mb_meta.album.as_deref(),
             )
             .await?;
             Ok(IdentificationResult {

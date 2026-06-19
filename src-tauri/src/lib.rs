@@ -38,6 +38,7 @@ pub fn run() {
             // Estado del bulk identify (running + cancel flags). Compartido
             // entre el comando que lanza el task y el que cancela.
             app.manage(commands::identification::BulkIdentifyState::default());
+            app.manage(commands::library::BulkMbBackfillState::default());
 
             // Registro de descargas en curso para poder cancelarlas.
             app.manage(commands::downloader::DownloadCancels::default());
@@ -57,6 +58,9 @@ pub fn run() {
             commands::library::library_list_tracks,
             commands::library::library_backfill_covers,
             commands::library::library_backfill_metadata,
+            commands::library::library_backfill_mb_metadata,
+            commands::library::library_cancel_mb_backfill,
+            commands::playlists::playlist_smart_distinct_values,
             commands::system::check_dependencies,
             commands::downloader::download_track,
             commands::downloader::download_list_history,

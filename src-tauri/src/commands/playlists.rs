@@ -162,3 +162,37 @@ fn build_m3u(tracks: &[Track]) -> String {
     }
     out
 }
+
+// ============================================================================
+// Distinct values picker (smart playlist UX)
+// ============================================================================
+
+/// Devuelve los valores distintos de un campo de `tracks`, optimente filtrados
+/// por las reglas que el usuario ya configuró en otras condiciones (cascading
+/// prefilter). El frontend lo usa para poblar el MultiSelectPicker en el modal
+/// de smart playlists.
+///
+/// `prefilter_rules_json`: string JSON con la misma shape que `playlists.rules`.
+/// Si viene `None` o JSON inválido, se trata como "sin prefilter" → devuelve
+/// todos los valores únicos del campo.
+///
+/// Excluye condiciones del prefilter que apuntan al mismo `field` solicitado
+/// (el usuario está editando ESE campo).
+#[tauri::command]
+pub async fn playlist_smart_distinct_values(
+    field: String,
+    prefilter_rules_json: Option<String>,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<Vec<String>> {
+    let prefilter: crate::db::smart::SmartRules = prefilter_rules_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| crate::db::smart::SmartRules {
+            match_mode: "all".to_string(),
+            conditions: Vec::new(),
+        });
+
+    let mut qb = crate::db::smart::build_distinct_values_query(&field, &prefilter);
+    let rows: Vec<(String,)> = qb.build_query_as().fetch_all(pool.inner()).await?;
+    Ok(rows.into_iter().map(|(v,)| v).filter(|s| !s.is_empty()).collect())
+}
