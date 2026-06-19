@@ -128,6 +128,15 @@ src-tauri/resources/scripts/
   IDENTIFY + bulk IDENTIFY ALL. Pisa metadata sucia con canónica de
   MusicBrainz. **`[ID]` ⊥ `[L]`**: identificación y disponibilidad de
   letras son independientes. Ver [docs/IDENTIFICATION.md](./docs/IDENTIFICATION.md).
+- **MB metadata expansion + Cover Art Archive** ✓ (2026-06-18) — el cascade
+  de identify ahora trae **genre + year + album + release_group_mbid** desde
+  MusicBrainz en un solo request adicional (`inc=tags+genres+releases+release-groups`).
+  Lógica de selección de release-group: prefiere Album, earliest first-release;
+  dedup por id. **Cover Art Archive**: durante el backfill, descarga el front
+  cover canónico por release_group_mbid si el track no tenía portada. Mismo
+  throttle 1 req/seg (MB + CAA dentro del mismo intervalo). Botón **MB BACKFILL**
+  en la library toolbar; criterio amplio (genre malo, year null, album null o
+  cover null). Ver [ADR-035](./docs/DECISIONS.md#adr-035--identify-extendido-mb-metadata-genre--year--album--cover-art-archive).
 - **Lyrics Fase 2.a** ✓ (2026-05-03) — drift correction (`speedRatio`) +
   SET OFFSET HERE (botón ALIGN) + RESET extendido + auto-baseline por
   duration ratio.
@@ -178,7 +187,14 @@ src-tauri/resources/scripts/
   ramifica smart vs JOIN normal → `getQueue()` + `playlist_export_m3u`
   funcionan en smart sin cambios. UI: botón `+ SMART ⚡` → `SmartPlaylistModal`,
   marcador ⚡ + EDIT en el sidebar; `LibraryTable` deshabilita reorder y +/−
-  (read-only). Ver [ADR-034](./docs/DECISIONS.md#adr-034--smart-playlists-motor-multi-regla-con-query-builder-dinámico).
+  (read-only). **Picker cascadante** ✓ (2026-06-18) — operadores `in`/`not_in`
+  (value JSON array), comando `playlist_smart_distinct_values` con prefilter
+  por reglas hermanas excluyendo el mismo field; `MultiSelectPicker` brutalist
+  con search + checkboxes custom. Default op `in` para text/numeric; cascade
+  activa en modo `all` (AND), inerte en `any` (OR). Orphan values (seleccionados
+  pero fuera del prefilter actual) renderizados arriba con marker `?`. Ver
+  [ADR-034](./docs/DECISIONS.md#adr-034--smart-playlists-motor-multi-regla-con-query-builder-dinámico)
+  + [ADR-036](./docs/DECISIONS.md#adr-036--smart-playlists-picker-cascadante--operador-innot_in).
 - **Descarga de listas** ✓ (2026-06-16) — toggle **FULL PLAYLIST** en el
   DownloadForm (default OFF = `--no-playlist`, un solo video; ON =
   `--yes-playlist`). `run_yt_dlp` devuelve `Vec<DownloadedEntry>` (multi-file)
@@ -423,13 +439,15 @@ matchear tracks que las heurísticas no alcanzan, ahora tenemos AcoustID
 ([identification/](src-tauri/src/identification/)) que pisa la metadata
 con la canónica de MusicBrainz cuando hay match con score alto.
 
-**`genre` es especialmente inútil:** yt-dlp escribe ahí la *categoría* del
-video de YouTube ("Music", "People & Blogs", "Gaming"), no el género musical.
-En una library bajada de YT casi todo queda `genre="Music"`. Consecuencia
-práctica: las **smart playlists** (ADR-034) por `genre` no filtran nada útil
-hasta que el campo se tague a mano o con una fuente real. Las heurísticas de
-cleanup **no** tocan genre (no hay forma confiable de derivar el género real
-del título). Hallazgo del 2026-06-18 al probar smart playlists.
+**`genre` es especialmente inútil (resuelto parcial 2026-06-18):** yt-dlp
+escribe ahí la *categoría* del video de YouTube ("Music", "People & Blogs",
+"Gaming"), no el género musical. En una library bajada de YT casi todo queda
+`genre="Music"`. Las heurísticas de cleanup **no** tocan genre (no hay forma
+confiable de derivar el género real del título). **Fix actual ([ADR-035](docs/DECISIONS.md#adr-035--identify-extendido-mb-metadata-genre--year--album--cover-art-archive)):**
+para tracks identificados (con `mbid_recording`), el botón **MB BACKFILL**
+trae genre real desde MusicBrainz (tags + genres curados). Tracks
+no-identificados siguen necesitando tagging manual. Cobertura observada
+~70-80% en mainstream.
 
 ### 12. LRCLIB **no** acepta lookup por MBID
 Asunción que se pagó: el plan original de identification proponía hacer

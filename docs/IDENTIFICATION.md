@@ -7,6 +7,7 @@
 
 - **Fase 1** ✓ cerrada 2026-05-02 — single-track on-demand. Match rate observado ~58% en library mixta (mainstream + J-pop + indie + DJ sets); ~95%+ esperado para mainstream occidental puro.
 - **Fase 2** ✓ cerrada 2026-05-02 — bulk backfill con throttle 2.85 rps, cancelable, summary inline. Comando `identification_identify_all` + eventos `identification-progress` / `identification-completed`.
+- **MB metadata expansion** ✓ cerrada 2026-06-18 — después de AcoustID, el cascade ahora pega a MusicBrainz directo para traer **genre + year + album + release_group_mbid** en un solo request (`inc=tags+genres+releases+release-groups`). Además, durante el backfill, descarga el front cover canónico via **Cover Art Archive** cuando el track no tiene portada. Botón **MB BACKFILL** dedicado en la library toolbar; eventos `mb-backfill-progress` / `mb-backfill-completed`. Ver [ADR-035](./DECISIONS.md#adr-035--identify-extendido-mb-metadata-genre--year--album--cover-art-archive).
 - **Fase 3** — no iniciada. Se evalúa según uso real.
 
 ---

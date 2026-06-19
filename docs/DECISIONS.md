@@ -45,6 +45,8 @@
 | ADR-032 | Cancelar descarga conservando parciales | Accepted |
 | ADR-033 | Import por drag & drop via drag-drop nativo de Tauri | Accepted |
 | ADR-034 | Smart playlists: motor multi-regla con query builder dinámico | Accepted |
+| ADR-035 | Identify extendido: MB metadata (genre + year + album) + Cover Art Archive | Accepted |
+| ADR-036 | Smart playlists: picker cascadante + operador `in`/`not_in` | Accepted |
 
 ---
 
@@ -913,8 +915,11 @@ El motor anda; la utilidad de cada campo depende de cuán poblado esté en la
 library. Dos campos hoy **no son útiles** en una library bajada de YouTube:
 - **`genre`**: yt-dlp escribe la *categoría* de YT ("Music", "People & Blogs"),
   no el género musical → casi todo queda `genre="Music"`. Una regla
-  `genre is Electronic` matchea 0 tracks (correctamente). Para que sirva hay
-  que taggear a mano o con una fuente real. Ver Gotcha #11.
+  `genre is Electronic` matchea 0 tracks (correctamente). **Resuelto parcial
+  (2026-06-18) en [ADR-035](#adr-035--identify-extendido-mb-metadata-genre--year--album--cover-art-archive)**:
+  para tracks identificados (con MBID), MB BACKFILL pega a MusicBrainz y
+  trae genre real desde tags + genres curados. Tracks no-identificados
+  siguen necesitando tagging manual. Ver Gotcha #11.
 - **`play_count` / `last_played_at`**: **nunca se incrementan** — reproducir un
   track no hace el `UPDATE` correspondiente (gap pendiente, ver PLAN). Hasta que
   se implemente, las reglas `play_count` y `played_within_days` quedan muertas
@@ -923,3 +928,113 @@ library. Dos campos hoy **no son útiles** en una library bajada de YouTube:
 Los campos que **sí** funcionan con datos de YT: `artist`, `title`, `year`
 (viene del upload date / metadata) y `added_within_days` (lo seteamos nosotros
 al importar).
+
+---
+
+## ADR-035 — Identify extendido: MB metadata (genre + year + album) + Cover Art Archive
+
+**Fecha:** 2026-06-18 · **Estado:** Accepted
+
+### Contexto
+El identify cascade (AcoustID → fingerprint → MBID) traía sólo title + artist canónicos. El resto de metadata (`genre`, `year`, `album`, `cover_art_path`) seguía contaminado de yt-dlp:
+- `genre` = categoría de YouTube ("Music", "People & Blogs") — inútil para smart playlists ([ADR-034 caveat](#adr-034--smart-playlists-motor-multi-regla-con-query-builder-dinámico)).
+- `year` = upload date del video, no fecha de release.
+- `album` = vacío en la mayoría de descargas yt-dlp.
+- `cover_art_path` = embedded del archivo (a veces es el thumbnail del video, no la portada del álbum) o NULL.
+
+AcoustID/MusicBrainz tienen toda esta data. AcoustID expone `meta=tags` pero los tags via AcoustID son sparse; **MusicBrainz directo** (con el MBID que ya tenemos) tiene tags + genres curados + releases + release-groups en una sola request.
+
+### Decisión
+Después de AcoustID, hacer **un segundo request a MusicBrainz** (`GET /ws/2/recording/{mbid}?inc=tags+genres+releases+release-groups&fmt=json`) que devuelve genre + year + album + release_group_mbid en un solo round-trip. Si el track no tiene cover, hacer un **tercer request a Cover Art Archive** (`GET https://coverartarchive.org/release-group/{mbid}/front`) para descargar la portada frontal canónica.
+
+Estructura nueva: `MbRecordingMetadata { genre, year, album, release_group_mbid }` en [musicbrainz.rs](../src-tauri/src/identification/musicbrainz.rs); módulo aparte [coverartarchive.rs](../src-tauri/src/identification/coverartarchive.rs) para CAA.
+
+### Lógica de selección del release-group "canónico"
+Un recording suele estar en N releases (singles, álbum, compilados, soundtracks, ediciones especiales). Conservador:
+1. Filtrar release-groups con `primary-type = "Album"`.
+2. Si hay → el de `first-release-date` más temprano gana.
+3. Si no hay (track que sólo existió como single) → caer al earliest de cualquier tipo.
+4. Dedup por release-group id antes de elegir (mismo álbum reaparece en N releases).
+5. Year = primer 4 chars del `first-release-date` con sanity `1900..=2100`.
+
+### Lógica de selección de género
+1. Preferir `genres` curados de MB (post-2018, lista limpia).
+2. Caer a `tags` (folksonomic) filtrando stopwords (`favorite`, `lol`, `memories`...) + décadas (`90s`, `1990s`...).
+3. Top por `count`, lowercase.
+
+### Throttle conjunto MB + CAA
+MusicBrainz anonymous = 1 req/seg estricto. CAA no documenta cap pero pide no agredir. El backfill **hace MB + CAA dentro del mismo intervalo de 1.05s** — no duplicamos el rate. Bulk de 100 tracks ≈ 1m45s.
+
+### Backfill: criterio amplio
+`list_for_mb_backfill` filtra tracks con MBID set Y al menos uno de:
+- `genre` NULL / vacío / `'Music'`
+- `year` NULL
+- `album` NULL / vacío
+- `cover_art_path` NULL
+
+Tracks con TODO ya bien populado se omiten — re-runs son rápidos. set_mb_metadata respeta los campos que el usuario tenía (CASE WHEN != ''): si MB devuelve None/empty, dejamos el valor existente.
+
+### Razón
+- Una sola request MB cubre tres campos vs hacer una por campo.
+- CAA aprovecha el `release_group_mbid` ganador para portada canónica sin esfuerzo extra de selección.
+- Throttle conjunto evita over-engineering de doble pool con cap distinto.
+- Conservador: si MB no tiene el dato, no pisamos lo que estaba (importante para tracks taggeados a mano).
+
+### Consecuencias
+- **Pro:** `genre` empieza a funcionar para smart playlists; `year` real (release vs upload); `album` poblado; covers canónicos donde el embedded era el thumbnail YT.
+- **Pro:** 9 tests unitarios en [musicbrainz.rs](../src-tauri/src/identification/musicbrainz.rs) cubren las branches de la selección.
+- **Contra:** cada identify ahora hace ~2 requests extra (MB + CAA). Para single-track es invisible; para bulk añade ~1s/track adicional (el cap MB es lo dominante de todas formas).
+- **Contra:** cobertura desigual — covers CAA ~50-60% (depende de uploads voluntarios), genre ~70-80% para mainstream, album ~80-90%. No es solución 100%.
+- Botón GENRE BACKFILL → renombrado a **MB BACKFILL**; eventos `genre-backfill-*` → `mb-backfill-*`.
+
+### Edge cases manejados
+- MB 404 (recording mergeada/borrada) → `MbRecordingMetadata::default()`, identify principal no se cae.
+- CAA 404 (sin portada en archive) → silencioso, métrica `no_data`.
+- Release sin `first-release-date` → year=None, album sigue persistiéndose si hay título.
+- Recording sin releases (raro pero MB lo permite) → genre puede venir igual, año/álbum quedan None.
+- Cover Content-Type → `.png` si PNG, `.jpg` para todo lo demás (default conservador).
+
+---
+
+## ADR-036 — Smart playlists: picker cascadante + operador `in`/`not_in`
+
+**Fecha:** 2026-06-18 · **Estado:** Accepted
+
+### Contexto
+El editor de smart playlists ([ADR-034](#adr-034--smart-playlists-motor-multi-regla-con-query-builder-dinámico)) usaba inputs de texto libre. Problemas observados:
+- El usuario tenía que **escribir literal** el valor — "Electronica" vs "electronic" rompe el match aunque visualmente parezca lo mismo.
+- No había forma de seleccionar **múltiples valores** sin armar N reglas (`artist=A OR artist=B OR artist=C` requería 3 condiciones, cada una con su sin/conjunción).
+- Sin descubrimiento de qué valores **realmente existen** en la library — el usuario adivinaba.
+
+Una típica intención del usuario era **componer por niveles**: "tracks con genre `electronica` o `dance` Y artist en {Daft Punk, Justice}". Hoy era engorroso; armaba 5 reglas y rezaba.
+
+### Decisión
+1. **Operador nuevo `in` / `not_in`** en el smart engine. El value es JSON array (`["grunge","electronic"]` para text, `[1990, 2000]` para numérico). SQL: `t.{col} IN (?, ?, ?)` con `push_bind` por valor. `1=0` cuando array vacío.
+
+2. **Componente `MultiSelectPicker`** brutalist: search input + scrollable checkboxes + counter "X / Y SELECTED" + CLEAR. Sin `<input type="checkbox">` nativo — cuadrado 12×12 con borde (consistencia visual).
+
+3. **Comando `playlist_smart_distinct_values(field, prefilter_rules_json)`**: devuelve los valores únicos de un campo, opcionalmente filtrados por reglas previas (cascade). Excluye condiciones del mismo `field` (el usuario está editando ESE field, no querés auto-restringir).
+
+4. **Cascade en modo `all` (AND)**: el picker de la condición N hace prefilter con las condiciones `0..N-1`. En modo `any` (OR), no hay prefilter (cada regla es independiente — restringir sería incorrecto semánticamente). Hint visible en el header cuando aplica.
+
+5. **Default `op = in`** para text y numeric fields. Operadores libres (`contains`, `is`, `gt`, etc.) siguen disponibles cambiando el select — útil para substring match o valores no listados (genre raros, typos intencionales).
+
+### Razón
+- Picker > input libre por **descoverabilidad**: el usuario ve qué hay sin tener que recordar.
+- Cascade aprovecha la naturaleza de `AND`: si ya filtraste por género, el picker de artist te muestra **solo los artistas relevantes a esos géneros** → workflow natural "first I pick the area, then I refine".
+- `in` operator evita N reglas para "uno de varios" — semántica más clara que `OR` anidado.
+- Conservar text-libre da escape hatch: para `title contains "remix"` o casos edge.
+
+### Whitelist + binds: ¿sigue seguro?
+Sí. El nuevo `in` op usa `push_bind` por cada elemento del array, igual que el resto del engine. La whitelist de campos no cambió. JSON inválido en `value` → 0 elementos → `1=0`. Imposible inyectar SQL.
+
+### Consecuencias
+- **Pro:** smart playlists complejas son fáciles ahora — el flujo del modal acompaña el pensamiento del usuario.
+- **Pro:** el picker poblado con datos reales sirve también de **explorador de la library**: si tu picker de `artist` muestra 200 nombres, podés ver la diversidad. Si solo muestra 5, sabés que tu library es chica en ese ángulo.
+- **Pro:** el cascade es coherente con la semántica AND/OR — sin sorpresas.
+- **Contra:** el picker hace un request por cada condición que abre. Con N condiciones tipo `in`, son N requests al modal abrir. Cacheado por `(field + prefilter_json)` en frontend → cambiar una sola condición invalida solo lo que comparte el prefilter.
+- **Contra:** orphan values (valor seleccionado que ya no aparece en el prefilter actual) se renderizan al tope con marker `?` — para que el usuario los vea y pueda destildarlos. Sin esto, valores "ocultos" silenciosamente arruinaban la intuición.
+
+### Compatibilidad con smart playlists existentes
+Editar una playlist creada con el formato viejo (`op=is`, value escalar) sigue funcionando. El modal arranca con la condición tal cual quedó persistida; el usuario puede cambiarla a `in` si quiere expandir.
+
