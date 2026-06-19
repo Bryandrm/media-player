@@ -11,15 +11,16 @@ env:
 
 jobs:
   check-backend:
-    name: Rust (check + test)
-    runs-on: windows-latest
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust (stable MSVC)
+      - name: Install Rust (stable)
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
