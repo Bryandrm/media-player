@@ -630,6 +630,34 @@ incluidos) y nuestro reader (`from_utf8_lossy`) lo decodifica bien. Las tags
 internas del mp3 nunca se vieron afectadas (la metadata mostrada sale de ahí,
 no del filename).
 
+### 23. AirPods Pro multipoint Mac↔iPhone — handoff corta el audio (bug abierto)
+**Reportado 2026-06-19, pendiente investigar.** AirPods Pro con multipoint
+emparejados entre Mac (este player) y iPhone. Al reproducir música en el
+player y luego empezar audio en el iPhone, el handoff **no es limpio** —
+el audio se entrecorta en vez de "Mac pausa + iPhone arranca".
+
+Hipótesis ordenadas por probabilidad (sin verificar todavía):
+1. **MediaSession no recibe `pause`** al perder foco → el `<audio>` element
+   sigue empujando datos al sink viejo mientras AirPods se mueven al
+   iPhone.
+2. **`navigator.mediaDevices.ondevicechange` no se escucha** → cuando el
+   output device cambia, no lo detectamos para auto-pausar.
+3. **Sample rate negotiation** 48kHz (Mac) ↔ 44.1kHz (iPhone) durante el
+   handoff causa buffer underrun.
+4. **Heurística del firmware AirPods** oscila entre los dos devices porque
+   ambos están "activos" simultáneamente.
+
+**Camino de investigación recomendado** (~10 min para descartar #1):
+1. En [src/hooks/useMediaSession.ts](src/hooks/useMediaSession.ts) agregar
+   `console.log("MediaSession pause")` en el handler de pause.
+2. Reproducir en Mac, switchear a iPhone, mirar DevTools.
+3. Si dispara → handler existente debería pausar el `<audio>`; ajustarlo.
+4. Si no dispara → la API no nos avisa, pasamos a hipótesis #2 (escuchar
+   `mediaDevices.devicechange`).
+
+Detalle completo + memoria persistente en
+`~/.claude/projects/-Users-bryan-Documents-projects-00-various-media-player/memory/project_airpods_handoff_bug.md`.
+
 ---
 
 ## Disclaimer legal (recordatorio)
