@@ -382,6 +382,20 @@ pub async fn update_identification_status(
     Ok(())
 }
 
+/// Incrementa `play_count` y actualiza `last_played_at` a NOW.
+pub async fn record_play(pool: &SqlitePool, track_id: i64) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE tracks SET \
+            play_count = play_count + 1, \
+            last_played_at = CURRENT_TIMESTAMP \
+         WHERE id = ?",
+    )
+    .bind(track_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Trae el detalle completo de un track para el panel DETAILS del sidebar.
 /// Same shape que `Track.lyrics_status` para que el frontend reuse el CASE.
 /// **No** llena `file_size_bytes` — el caller (commands/library.rs) lo lee
@@ -414,4 +428,129 @@ pub async fn get_details(
     .fetch_optional(pool)
     .await?;
     Ok(row)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db;
+
+    fn test_meta(title: &str, artist: Option<&str>) -> TrackMetadata {
+        TrackMetadata {
+            title: title.to_string(),
+            artist: artist.map(str::to_string),
+            album: None,
+            duration_ms: 180_000,
+            track_number: None,
+            year: None,
+            genre: None,
+            bitrate: None,
+            sample_rate: None,
+            format: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_and_list() {
+        let pool = db::test_pool().await;
+        let id = insert_from_metadata(
+            &pool,
+            Path::new("/tmp/test.mp3"),
+            test_meta("Test Song", Some("Test Artist")),
+            "local",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(id.is_some());
+
+        let tracks = list_all(&pool).await.unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].title, "Test Song");
+        assert_eq!(tracks[0].artist.as_deref(), Some("Test Artist"));
+    }
+
+    #[tokio::test]
+    async fn insert_is_idempotent() {
+        let pool = db::test_pool().await;
+        let id1 = insert_from_metadata(
+            &pool,
+            Path::new("/tmp/same.mp3"),
+            test_meta("Song", Some("Artist")),
+            "local",
+            None,
+        )
+        .await
+        .unwrap();
+        let id2 = insert_from_metadata(
+            &pool,
+            Path::new("/tmp/same.mp3"),
+            test_meta("Song v2", Some("Artist v2")),
+            "local",
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(id1.is_some());
+        assert!(id2.is_none());
+
+        let tracks = list_all(&pool).await.unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].title, "Song");
+    }
+
+    #[tokio::test]
+    async fn record_play_increments() {
+        let pool = db::test_pool().await;
+        let id = insert_from_metadata(
+            &pool,
+            Path::new("/tmp/play.mp3"),
+            test_meta("Play Me", None),
+            "local",
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        let details = get_details(&pool, id).await.unwrap().unwrap();
+        assert_eq!(details.play_count, 0);
+        assert!(details.last_played_at.is_none());
+
+        record_play(&pool, id).await.unwrap();
+        let details = get_details(&pool, id).await.unwrap().unwrap();
+        assert_eq!(details.play_count, 1);
+        assert!(details.last_played_at.is_some());
+
+        record_play(&pool, id).await.unwrap();
+        record_play(&pool, id).await.unwrap();
+        let details = get_details(&pool, id).await.unwrap().unwrap();
+        assert_eq!(details.play_count, 3);
+    }
+
+    #[tokio::test]
+    async fn find_by_path() {
+        let pool = db::test_pool().await;
+        let path = Path::new("/tmp/find_me.mp3");
+        assert!(find_id_by_path(&pool, path).await.unwrap().is_none());
+
+        let id = insert_from_metadata(
+            &pool,
+            path,
+            test_meta("Find Me", None),
+            "local",
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(find_id_by_path(&pool, path).await.unwrap(), Some(id));
+    }
+
+    #[tokio::test]
+    async fn get_details_returns_none_for_missing() {
+        let pool = db::test_pool().await;
+        assert!(get_details(&pool, 999).await.unwrap().is_none());
+    }
 }

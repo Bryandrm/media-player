@@ -14,6 +14,26 @@ use std::time::Duration;
 
 pub type DbError = Box<dyn std::error::Error>;
 
+/// Pool SQLite en un directorio temporal con migraciones aplicadas. Para tests.
+#[cfg(test)]
+pub async fn test_pool() -> SqlitePool {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let db_path = dir.path().join("test.db");
+    let options = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .create_if_missing(true)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .expect("test pool");
+    sqlx::migrate!("./migrations").run(&pool).await.expect("migrations");
+    // Leak the tempdir so it lives as long as the pool.
+    std::mem::forget(dir);
+    pool
+}
+
 pub async fn init(data_dir: &Path) -> Result<SqlitePool, DbError> {
     std::fs::create_dir_all(data_dir)?;
 

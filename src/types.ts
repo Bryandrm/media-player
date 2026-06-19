@@ -101,8 +101,7 @@ export type TrackDetails = {
   sampleRate: number | null;
   format: string | null;
   playCount: number;
-  /** ISO 8601 string. `null` si nunca se reprodujo. Hoy SIEMPRE null — el
-   *  tracking no se incrementa al reproducir (gap pendiente, ver Gotcha #11). */
+  /** ISO 8601 string. `null` si nunca se reprodujo. */
   lastPlayedAt: string | null;
   addedAt: string;
   sourceType: string;

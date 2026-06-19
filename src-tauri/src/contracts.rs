@@ -78,9 +78,6 @@ pub struct TrackDetails {
     pub sample_rate: Option<i64>,
     pub format: Option<String>,
     pub play_count: i64,
-    /// ISO 8601 string. `None` si nunca se reprodujo. (Hoy SIEMPRE None — el
-    /// tracking de play_count/last_played_at todavía no se implementó; ver
-    /// PLAN + ADR-034 caveat).
     pub last_played_at: Option<String>,
     pub added_at: String,
     /// `"local"` (importado/escaneado) o `"downloaded"` (vino del downloader).

@@ -57,6 +57,7 @@ pub fn run() {
             commands::library::library_get_track_details,
             commands::library::library_import_paths,
             commands::library::library_list_tracks,
+            commands::library::library_record_play,
             commands::library::library_backfill_covers,
             commands::library::library_backfill_metadata,
             commands::library::library_backfill_mb_metadata,

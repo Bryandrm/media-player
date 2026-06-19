@@ -208,6 +208,15 @@ pub async fn library_get_track_details(
     Ok(Some(details))
 }
 
+/// Registra una reproducción: incrementa play_count y actualiza last_played_at.
+#[tauri::command]
+pub async fn library_record_play(
+    track_id: i64,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<()> {
+    db::tracks::record_play(&pool, track_id).await
+}
+
 /// Para tracks ya en DB que no tienen `cover_art_path` (típicamente tracks
 /// agregados antes de que existiera el feature de cover art), intenta extraer
 /// cover ahora. Devuelve la cantidad de tracks que se actualizaron.

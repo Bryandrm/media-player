@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
   getAudioElement,
   getActiveChannelId,
@@ -56,6 +56,9 @@ type PlayerState = {
    *  `prev` en modo shuffle te lleve al track previo real, no a otro random.
    *  No se persiste — un reload reinicia el stack. */
   playHistory: number[];
+  /** True once this track's play has been recorded (threshold met). Resets on
+   *  track change. Ephemeral — not persisted. */
+  _playRecorded: boolean;
 
   playTrack: (track: Track) => void;
   /** Carga un track + hace seek a `positionMs` PERO no reproduce. Pensado para
@@ -188,12 +191,9 @@ export const usePlayerStore = create<PlayerState>()(
         cancelPendingSwap();
         const audio = getAudioElement();
         audio.src = convertFileSrc(track.filePath);
-        set({ currentTrackId: track.id, currentTime: 0, duration: 0 });
+        set({ currentTrackId: track.id, currentTime: 0, duration: 0, _playRecorded: false });
         audio.play().catch(ignoreAbort);
         ensureGraphRunning();
-        // Fade-in 0→1 (o desde valor actual si veníamos de un fade-out a
-        // medio camino). En el caso normal de auto-advance entre tracks
-        // (gain ya en 1), es no-op porque ramp 1→1 no hace nada.
         fadeInPlayPause();
       };
 
@@ -240,8 +240,8 @@ export const usePlayerStore = create<PlayerState>()(
             currentTrackId: track.id,
             currentTime: 0,
             duration: newChannel.audio.duration || 0,
+            _playRecorded: false,
           });
-          // Pausar + limpiar el viejo para dejarlo listo para el próximo uso.
           oldChannel.audio.pause();
           oldChannel.audio.removeAttribute("src");
           oldChannel.audio.load();
@@ -361,6 +361,7 @@ export const usePlayerStore = create<PlayerState>()(
           currentTrackId: nextTrack.id,
           currentTime: 0,
           duration: 0,
+          _playRecorded: false,
         });
 
         // Programa el cleanup. setTimeout corre en wall-clock; los ramps en
@@ -384,6 +385,7 @@ export const usePlayerStore = create<PlayerState>()(
         eqEnabled: false,
         _isCrossfading: false,
         playHistory: [],
+        _playRecorded: false,
 
         playTrack: (track) => {
           // Antes de cambiar, archivamos el track actual al historial. Si
@@ -417,6 +419,7 @@ export const usePlayerStore = create<PlayerState>()(
             currentTrackId: track.id,
             currentTime: seconds,
             duration: 0,
+            _playRecorded: false,
           });
           // Setear `audio.currentTime` antes de que la metadata cargue puede
           // ser ignorado o quedar pendiente — esperamos a `loadedmetadata` y
@@ -600,11 +603,25 @@ export const usePlayerStore = create<PlayerState>()(
 
         _onTimeUpdate: (t) => {
           set({ currentTime: t });
-          // Auto-trigger del crossfade. Sólo dispara en el canal activo
-          // (useAudioPlayer ya filtró por isActive). _isCrossfading es el
-          // gate principal — una vez disparado, no re-dispara hasta que
-          // finishCrossfade limpie el flag.
-          const { crossfadeMs, _isCrossfading, duration } = get();
+
+          // Record play: 30s mínimo AND (50% of duration OR 4min, whichever
+          // is less). Standard scrobble threshold (Last.fm convention).
+          const { currentTrackId, _playRecorded, duration } = get();
+          if (
+            !_playRecorded &&
+            currentTrackId !== null &&
+            t >= 30 &&
+            duration > 0 &&
+            t >= Math.min(duration * 0.5, 240)
+          ) {
+            set({ _playRecorded: true });
+            invoke("library_record_play", { trackId: currentTrackId })
+              .then(() => usePlaylistStore.getState().reloadSelectedTracks())
+              .catch(() => {});
+          }
+
+          // Auto-trigger del crossfade.
+          const { crossfadeMs, _isCrossfading } = get();
           if (
             crossfadeMs > 0 &&
             !_isCrossfading &&

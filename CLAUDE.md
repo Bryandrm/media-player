@@ -284,13 +284,24 @@ src-tauri/resources/scripts/
   `file_size_bytes` (leído del filesystem on-demand con
   `tokio::fs::metadata`); comando dedicado `library_get_track_details` —
   intencionalmente fuera de `list_tracks` para no engrosar el listado.
-  Race-guard en el fetch del frontend. **Caveat:** PLAY COUNT siempre 0
-  y LAST PLAYED siempre NEVER hasta que se implemente el tracking de
-  reproducciones (gap conocido).
+  Race-guard en el fetch del frontend.
+- **Play count tracking** ✓ (2026-06-19) — `library_record_play` incrementa
+  `play_count` + `last_played_at` en DB. Threshold estándar de scrobbling
+  (30s mínimo AND 50% de duración OR 4min, lo que sea menor). Flag
+  `_playRecorded` en playerStore previene duplicados; se resetea en cada
+  cambio de track (loadAndPlay, gaplessSwitch, crossfade, resume).
+- **Tests + CI** ✓ (2026-06-19) — tests de DB con SQLite temporal real
+  (`tempfile` + `sqlx::migrate!`, cero mocks). 5 tests en `db/tracks.rs`
+  (insert, idempotencia, record_play, find_by_path, get_details None).
+  Helper `db::test_pool()` reutilizable. **GitHub Actions CI** en
+  `.github/workflows/ci.yml`: Rust job (Windows, `cargo check` + `cargo
+  test` + cache) + Frontend job (Ubuntu, `tsc --noEmit` + `pnpm build`).
+  Se ejecuta en push a main y PRs. **Build de producción validado** en
+  Windows (`pnpm tauri build` → MSI + NSIS funcionando).
 - Próximo (orden acordado con Bryan 2026-06-18): quick wins **cerrados** (drag
   & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓).
-  **(2) calidad/plataforma** — testing Windows/Linux,
-  validar `pnpm tauri build`, tests + CI. **Features grandes al final**: Lyrics
+  **(2) calidad/plataforma** — ✓ testing Windows, ✓ `pnpm tauri build`,
+  ✓ tests + CI. **Features grandes al final**: Lyrics
   2.c.4 → karaoke real, Karaoke Fase B-E, Identification Fase 3.
 
 ---
