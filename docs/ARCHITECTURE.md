@@ -243,7 +243,8 @@ src-tauri/src/
 │   └── lrclib.rs           # try_lrclib: /api/get con field fallback + /api/search fallback
 ├── identification/         # AcoustID + Chromaprint (forced fingerprinting → MBID)
 │   ├── mod.rs              # identify_track cascade, IdentificationResult, threshold 0.80
-│   ├── fpcalc.rs           # spawn fpcalc -json + parse output
+│   ├── fpcalc.rs           # spawn fpcalc -json + parse output (binary bundleado
+│   │                       # en resources/bin/, resuelto vía resolve_binary_or_bundled)
 │   └── acoustid.rs         # HTTP a AcoustID API + parse response
 ├── karaoke/                # Forced alignment de lyrics via WhisperX
 │   ├── mod.rs              # align_track cascade, parse_lrc_lines, build_segments
@@ -264,10 +265,15 @@ src-tauri/src/
     │                       # identification_cancel_all
     ├── karaoke.rs          # karaoke_auto_align (resuelve script vía Tauri resource API)
     └── system.rs           # check_dependencies (yt-dlp, ffmpeg, fpcalc, whisperx);
-                            # resolve_binary helper con fallback PATH
+                            # resolve_binary (system PATH + fallback) +
+                            # resolve_binary_or_bundled (Tauri resources first)
 
-src-tauri/resources/scripts/
-└── karaoke_align.py        # Wrapper Python (~80 líneas) que usa whisperx.align()
+src-tauri/resources/
+├── bin/
+│   └── fpcalc(.exe)        # Chromaprint 1.5.1 bundleado (.gitignore-ado).
+│                           # Resuelto vía resolve_binary_or_bundled().
+└── scripts/
+    └── karaoke_align.py    # Wrapper Python (~80 líneas) que usa whisperx.align()
                             # Python API en modo align-only. Shippeado vía Tauri
                             # bundle.resources. Spawn con el python del venv pipx.
 ```

@@ -10,9 +10,10 @@
 - **Audio:** dos singletons `<audio>` (canales A/B fuera del JSX) → channelGains → preMasterGain (vis tap) → masterGain (volume) → playPauseGain (fades) → destination. Butterchurn tapea preMasterGain.
 - **Visualizer:** Butterchurn 2.6 + butterchurn-presets 2.4 (~100 presets base, auto-cycle 5–10s, persistent mount)
 - **Lyrics:** cascade Embedded (USLT) → LRCLIB → NetEase (synced, free, sin key), parser LRC + A2 (per-word timestamps), panel sincronizado con rAF, drift correction (`speedRatio` + offset + ALIGN mode)
-- **Identification:** `fpcalc` (Chromaprint) + AcoustID API → MBID de MusicBrainz; pisa metadata sucia con canónica
+- **Identification:** `fpcalc` (Chromaprint, bundleado) + AcoustID API → MBID de MusicBrainz; pisa metadata sucia con canónica
 - **Karaoke:** WhisperX en align-only mode via wrapper Python para forced alignment per-palabra
-- **Externos:** `yt-dlp`, `ffmpeg`, `fpcalc`, `whisperx` como deps del sistema (no bundled, opt-in según feature)
+- **Bundled:** `fpcalc` 1.5.1 (Chromaprint) como Tauri resource
+- **Externos:** `yt-dlp`, `ffmpeg`, `whisperx` como deps del sistema (no bundled, opt-in según feature)
 
 ## Prerequisitos
 
@@ -30,10 +31,11 @@
 |---|---|---|
 | yt-dlp | Downloads de URLs | `brew install yt-dlp` |
 | ffmpeg | Re-encoding usado por yt-dlp | `brew install ffmpeg` |
-| fpcalc (Chromaprint) | Identification AcoustID | `brew install chromaprint` + [registrar app en AcoustID](https://acoustid.org/new-application) |
 | WhisperX (~2GB) | Forced alignment de letras (karaoke) | `brew install pipx python@3.11`, `pipx ensurepath`, restart shell, `pipx install --python python3.11 whisperx` |
 
-La app detecta cada dep al boot y desactiva la feature correspondiente si falta. **Sin ninguna de las opcionales, el player core (reproducción + library + visualizer + lyrics text-only) funciona idéntico.**
+`fpcalc` (Chromaprint) viene **bundleado** — no requiere instalación. La identification con AcoustID solo necesita [registrar una app](https://acoustid.org/new-application) y pegar la API key.
+
+La app detecta cada dep al boot y desactiva la feature correspondiente si falta. **Sin ninguna de las opcionales, el player core (reproducción + library + visualizer + lyrics text-only + identification) funciona idéntico.**
 
 ## Desarrollo
 

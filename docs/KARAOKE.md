@@ -19,7 +19,7 @@
 
 Resuelve la limitación documentada en [LYRICS.md Fase 3](./LYRICS.md#fase-3--avanzado): el LRC estándar sólo da timestamps por línea, lo cual asume tempo uniforme dentro de cada línea. Falla en rap, screams, secciones rítmicamente irregulares.
 
-- **Tooling shippeado:** `whisperx` (Python 3.11 + PyTorch + Whisper + wav2vec2) como dep del sistema vía `pipx install whisperx`. ~2GB total después del primer download de modelos. Mismo patrón conceptual que yt-dlp/ffmpeg/fpcalc.
+- **Tooling shippeado:** `whisperx` (Python 3.11 + PyTorch + Whisper + wav2vec2) como dep del sistema vía `pipx install whisperx`. ~2GB total después del primer download de modelos. Mismo patrón conceptual que yt-dlp/ffmpeg (fpcalc ya se bundlea como Tauri resource).
 - **Modo de uso:** `align-only` — pasamos la letra del LRC + bounds de cada línea a `whisperx.align()` Python API. **No** transcribimos el audio. Sólo forced alignment de fonemas dentro de los bounds.
 - **Backend:** [`src-tauri/src/karaoke/whisperx.rs`](../src-tauri/src/karaoke/whisperx.rs) spawnea [`resources/scripts/karaoke_align.py`](../src-tauri/resources/scripts/karaoke_align.py) (~80 líneas) y consume su JSON output. El cascade en [`mod.rs`](../src-tauri/src/karaoke/mod.rs) parsea el LRC original, construye segmentos, y serializa el resultado a A2 LRC.
 - **Persistencia:** sobreescribimos `lyrics.synced_lyrics` con A2. **`lyrics.original_synced_lyrics` guarda el LRC raw** para que re-aligns no se basen en datos ya alineados (bug del round-trip — ver §13.4).
@@ -240,12 +240,12 @@ Patrón mirror de `identification/`: módulo separado, uso opt-in via comando de
 
 ```rust
 // commands/system.rs (extender)
-pub fn check_dependencies() -> DependencyStatus {
+pub fn check_dependencies(app: AppHandle) -> DependencyStatus {
     DependencyStatus {
-        yt_dlp: which::which("yt-dlp").is_ok(),
-        ffmpeg: which::which("ffmpeg").is_ok(),
-        fpcalc: which::which("fpcalc").is_ok(),
-        whisperx: which::which("whisperx").is_ok(), // NEW
+        yt_dlp: resolve_binary("yt-dlp").is_some(),
+        ffmpeg: resolve_binary("ffmpeg").is_some(),
+        fpcalc: resolve_binary_or_bundled("fpcalc", &app).is_some(),
+        whisperx: resolve_binary("whisperx").is_some(),
     }
 }
 ```

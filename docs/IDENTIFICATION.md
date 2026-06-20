@@ -20,7 +20,7 @@ Tres fases. Cada una se desbloquea sólo cuando la anterior lleva al menos una s
 
 Caso minimal: el usuario hace click en la celda **ID** sobre un track de la library, la app calcula el fingerprint, lo manda a AcoustID, recibe un MBID + metadata canónica, lo persiste, y borra la cache de lyrics para que el siguiente fetch corra con la metadata limpia.
 
-- **Tooling:** `fpcalc` (Chromaprint) como dep del sistema, mismo patrón que yt-dlp/ffmpeg.
+- **Tooling:** `fpcalc` (Chromaprint 1.5.1, **bundleado** como Tauri resource en `resources/bin/`). Resuelto vía `resolve_binary_or_bundled` (bundled first, fallback a system PATH).
 - **Backend:** dos `async fn` libres en `src-tauri/src/identification/` (`fpcalc.rs` + `acoustid.rs`) + cascade en `mod.rs`. Sin trait, sin resolver pattern (mismo principio que Lyrics Fase 1).
 - **API key AcoustID:** en `settings` table (no env, no bundlear). Modal one-shot al primer click si falta.
 - **Schema:** migración aditiva sobre `tracks` (7 columnas — fingerprint + acoustid_id + mbid + status + attempted_at + original_title + original_artist).
@@ -76,7 +76,12 @@ AcoustID resuelve los tres casos porque identifica el **audio**, no la metadata.
 
 - **No re-encodear ni mover archivos.** AcoustID nos da metadata canónica, no toca el archivo. Las columnas `title`/`artist` de la DB sí se actualizan; los tags ID3 del archivo no (esa es responsabilidad de un tag editor, fuera de scope).
 - **No usar AcoustID para buscar covers.** Existe la opción vía MusicBrainz Cover Art Archive, pero ya tenemos cover via lofty + sibling fallback. Quedaría como mejora opcional Fase 3.
-- **No bundlear `fpcalc`** en el binario. Mismo razonamiento que yt-dlp/ffmpeg — el usuario instala con `brew install chromaprint` (macOS) / `apt install libchromaprint-tools` (Debian) / portable binary (Windows).
+- ~~**No bundlear `fpcalc`**~~ **Resuelto (2026-06-20):** `fpcalc` ahora se
+  bundlea como Tauri resource en `src-tauri/resources/bin/`. El binario se
+  descarga de [Chromaprint releases](https://github.com/acoustid/chromaprint/releases)
+  por developer (`.gitignore`-ado). `resolve_binary_or_bundled` busca primero
+  el resource bundleado, luego cae a system PATH. El usuario final no necesita
+  instalar nada para identification.
 
 ### 1.4 `[ID]` ⊥ `[L]` — son independientes
 
@@ -372,23 +377,20 @@ struct FpcalcOutput {
     fingerprint: String,
 }
 
-pub async fn compute(path: &Path) -> AppResult<(String, f32)> {
-    let output = Command::new("fpcalc")
+// fpcalc_bin = ruta resuelta vía resolve_binary_or_bundled("fpcalc", &app)
+pub async fn compute(fpcalc_bin: &Path, path: &Path) -> AppResult<Fingerprint> {
+    let output = Command::new(fpcalc_bin)
         .arg("-json")
         .arg(path)
         .output()
-        .await
-        .map_err(AppError::FpcalcSpawn)?;
+        .await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::FpcalcFailed(stderr.into_owned()));
+        return Err(AppError::FpcalcFailed(stderr.trim().to_string()));
     }
 
-    let parsed: FpcalcOutput = serde_json::from_slice(&output.stdout)
-        .map_err(|e| AppError::FpcalcParse(e.to_string()))?;
-
-    Ok((parsed.fingerprint, parsed.duration))
+    parse_output(&output.stdout)
 }
 ```
 
@@ -542,19 +544,25 @@ Persistir nada — `identifying` es runtime, `apiKey` ya queda en `settings` tab
 
 ### 5.5 Detect-and-banner para fpcalc
 
-`check_dependencies` ya verifica yt-dlp + ffmpeg. Extender para incluir `fpcalc`:
+`check_dependencies` verifica yt-dlp + ffmpeg + fpcalc + whisperx. Para fpcalc,
+usa `resolve_binary_or_bundled` que busca primero en los resources bundleados
+de Tauri (`bin/fpcalc.exe` en Windows, `bin/fpcalc` en Unix) y cae a system
+PATH si no está bundleado:
 
 ```rust
-pub fn check_dependencies() -> Dependencies {
-    Dependencies {
-        yt_dlp: which::which("yt-dlp").is_ok(),
-        ffmpeg: which::which("ffmpeg").is_ok(),
-        fpcalc: which::which("fpcalc").is_ok(),  // NEW
+pub fn check_dependencies(app: AppHandle) -> DependencyStatus {
+    DependencyStatus {
+        yt_dlp: resolve_binary("yt-dlp").is_some(),
+        ffmpeg: resolve_binary("ffmpeg").is_some(),
+        fpcalc: resolve_binary_or_bundled("fpcalc", &app).is_some(),
+        whisperx: resolve_binary("whisperx").is_some(),
     }
 }
 ```
 
-Si falta `fpcalc`, el `DependencyBanner` lo muestra junto con yt-dlp/ffmpeg. La feature de identification queda gris/disabled hasta que se instale.
+Con fpcalc bundleado, el banner para fpcalc ya no debería aparecer en
+producción. En desarrollo, el developer necesita descargar el binario a
+`src-tauri/resources/bin/` o tenerlo en PATH.
 
 ---
 
@@ -637,7 +645,7 @@ Crítico — esto es portfolio-piece compartible. Si bundleamos la key del autor
 - AcoustID nos puede revocar la key por uso compartido.
 - Es trivial extraerla del binario con `strings`.
 
-Patrón: el usuario instala fpcalc + se registra en AcoustID + pega su key. Mismo nivel de friction que yt-dlp + ffmpeg, ya aceptado.
+Patrón: fpcalc viene bundleado (cero friction) + el usuario se registra en AcoustID + pega su key.
 
 ---
 
@@ -645,7 +653,7 @@ Patrón: el usuario instala fpcalc + se registra en AcoustID + pega su key. Mism
 
 | Riesgo | Probabilidad | Mitigación | Fase |
 |---|---|---|---|
-| Usuario olvida instalar `fpcalc` | Alta | DependencyBanner + IDENTIFY button disabled. | 1 |
+| ~~Usuario olvida instalar `fpcalc`~~ | ~~Alta~~ | **Resuelto:** fpcalc bundleado como Tauri resource (2026-06-20). | 1 |
 | AcoustID rate limit (3 req/seg) | Alta en Fase 2 | Throttle backend con `tokio::sync::Semaphore`. | 2 |
 | AcoustID devuelve match incorrecto con score alto | Baja | Threshold 0.80 (activo) + (Fase 3) ambiguity picker para casos cercanos. Si vemos falsos positivos, subir a 0.85. | 1 / 3 |
 | API key del usuario se filtra | Media | Plain text en SQLite local; no syncamos config. Disclaimer visible. | 1 |
@@ -668,7 +676,7 @@ Patrón: el usuario instala fpcalc + se registra en AcoustID + pega su key. Mism
 
 A cerrar al implementar Fase 1:
 
-5. **`fpcalc` en macOS Apple Silicon:** verificar que `brew install chromaprint` instala arm64 nativo. Si sólo hay x86_64 vía Rosetta, agregar a la guía de instalación.
+5. **`fpcalc` en macOS Apple Silicon:** verificar que el binario bundleado de Chromaprint funciona en arm64. Descargar el build correcto de [Chromaprint releases](https://github.com/acoustid/chromaprint/releases) y colocarlo en `src-tauri/resources/bin/fpcalc`.
 
 A cerrar al implementar **Fase 2**:
 

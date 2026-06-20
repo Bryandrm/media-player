@@ -39,8 +39,9 @@ Documentos fuente de verdad:
   con soporte A2 (per-word timestamps) + trailing markers. Auto-fetch on
   track change para poblar el indicador `L` en la library. Drift correction
   via `speedRatio` + `offset_ms` + ALIGN mode.
-- **Identification:** `fpcalc` (Chromaprint) + AcoustID API. Pisa metadata
-  sucia con canónica de MusicBrainz. API key del usuario en `settings`.
+- **Identification:** `fpcalc` (Chromaprint, **bundleado** como Tauri resource
+  en `resources/bin/`) + AcoustID API. Pisa metadata sucia con canónica de
+  MusicBrainz. API key del usuario en `settings`.
 - **Karaoke:** `whisperx` (Python + PyTorch + wav2vec2) en align-only mode
   via wrapper Python shippeado como Tauri resource. Genera A2 LRC con
   per-word timestamps. Forced alignment con bounds tight del LRC.
@@ -49,8 +50,11 @@ Documentos fuente de verdad:
   y transcripción a fonemas IPA vía `phonemizer` (espeak), y compara con
   Levenshtein normalizado por línea. Botón CHECK QUALITY en el panel de
   lyrics.
+- **Bundled como Tauri resources:** `fpcalc` 1.5.1 (Chromaprint, identification)
+  en `resources/bin/`. Resuelto vía `resolve_binary_or_bundled` (bundled first,
+  fallback a system PATH).
 - **Externos como deps del sistema** (no bundled): `yt-dlp` + `ffmpeg`
-  (downloader), `fpcalc` (identification), `whisperx` via pipx (karaoke),
+  (downloader), `whisperx` via pipx (karaoke),
   `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng` (mismatch
   detection). Cada uno detect-and-banner si falta. `lofty-rs` para tags +
   cover art + USLT. `reqwest` con `rustls-tls` (sin OpenSSL).
@@ -126,10 +130,14 @@ src-tauri/src/
 ├── contracts.rs            tipos serializados a TS
 └── errors.rs               AppError + AppResult
 
-src-tauri/resources/scripts/
-├── karaoke_align.py        whisperx Python API en align-only mode (~80 líneas);
-│                           shippeado vía Tauri bundle.resources
-└── mismatch_detect.py      whisperx transcribe + phonemizer (IPA) +
+src-tauri/resources/
+├── bin/
+│   └── fpcalc.exe          Chromaprint 1.5.1 (bundleado, .gitignore-ado);
+│                           resuelto vía resolve_binary_or_bundled()
+└── scripts/
+    ├── karaoke_align.py    whisperx Python API en align-only mode (~80 líneas);
+    │                       shippeado vía Tauri bundle.resources
+    └── mismatch_detect.py  whisperx transcribe + phonemizer (IPA) +
                             Levenshtein per-line; mismatch detection Nivel 2
 ```
 
@@ -417,8 +425,13 @@ en macOS) y **`node` ≥22** (runtime de JS que yt-dlp usa para resolver el
 challenge de YouTube — ver Gotcha #20; alternativa: `deno`). La app verifica
 al boot vía `check_dependencies` y muestra un banner si faltan.
 
+**Bundled** (incluido en el binario, no requiere instalación):
+- `fpcalc` 1.5.1 (Chromaprint) — identification (AcoustID). Bundleado como
+  Tauri resource en `src-tauri/resources/bin/`. `.gitignore`-ado (binario
+  platform-specific, no va al repo). El developer lo descarga de
+  [Chromaprint releases](https://github.com/acoustid/chromaprint/releases).
+
 **Deps opcionales** (features específicas, sin banner — disabled silencioso):
-- `fpcalc` — identification (AcoustID + Chromaprint).
 - `whisperx` (`pipx install whisperx`) — forced alignment (AUTO-ALIGN).
 - `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng` (sistema)
   — mismatch detection (CHECK QUALITY). Si `phonemizer` no está, el script
