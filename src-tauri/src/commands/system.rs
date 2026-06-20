@@ -19,12 +19,19 @@ pub fn resolve_binary(name: &str) -> Option<PathBuf> {
     if let Ok(p) = which::which(name) {
         return Some(p);
     }
-    let home = std::env::var("HOME").ok()?;
-    let candidates = [
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()?;
+    let mut candidates = vec![
         format!("{}/.local/bin/{}", home, name),
         "/usr/local/bin".to_string() + "/" + name,
         "/opt/homebrew/bin".to_string() + "/" + name,
     ];
+    #[cfg(windows)]
+    {
+        candidates.push(format!("{}\\.local\\bin\\{}.exe", home, name));
+        candidates.push(format!("{}\\AppData\\Local\\Microsoft\\WinGet\\Packages\\espeak-ng\\espeak-ng.exe", home));
+    }
     candidates
         .iter()
         .map(PathBuf::from)

@@ -68,23 +68,42 @@ fn find_python_for_whisperx() -> AppResult<std::path::PathBuf> {
         .ok_or(AppError::WhisperxMissing)?;
     // canonicalize sigue symlinks. Útil en pipx donde ~/.local/bin/whisperx
     // típicamente apunta a ~/.local/pipx/venvs/whisperx/bin/whisperx.
-    let resolved = std::fs::canonicalize(&whisperx_bin).unwrap_or(whisperx_bin);
+    let resolved = std::fs::canonicalize(&whisperx_bin).unwrap_or(whisperx_bin.clone());
     let bin_dir = resolved
         .parent()
         .ok_or_else(|| AppError::Other("whisperx path has no parent".into()))?;
-    let python = bin_dir.join("python");
-    if !python.exists() {
-        // Algunos layouts tienen `python3` en vez de `python`.
-        let python3 = bin_dir.join("python3");
-        if python3.exists() {
-            return Ok(python3);
+
+    // 1) Buscar python en el mismo dir que el binario resuelto (layout Unix
+    //    de pipx: ~/.local/pipx/venvs/whisperx/bin/python).
+    for name in ["python", "python.exe", "python3", "python3.exe"] {
+        let p = bin_dir.join(name);
+        if p.exists() {
+            return Ok(p);
         }
-        return Err(AppError::Other(format!(
-            "no python in whisperx venv bin dir: {}",
-            bin_dir.display()
-        )));
     }
-    Ok(python)
+
+    // 2) Windows pipx: el wrapper está en ~/.local/bin/whisperx.exe pero el
+    //    venv con python.exe está en ~/pipx/venvs/whisperx/Scripts/ o
+    //    ~/.local/pipx/venvs/whisperx/Scripts/.
+    if let Ok(home) = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")) {
+        let candidates = [
+            format!("{}/pipx/venvs/whisperx/Scripts/python.exe", home),
+            format!("{}/.local/pipx/venvs/whisperx/Scripts/python.exe", home),
+            format!("{}/pipx/venvs/whisperx/bin/python", home),
+            format!("{}/.local/pipx/venvs/whisperx/bin/python", home),
+        ];
+        for c in &candidates {
+            let p = std::path::PathBuf::from(c);
+            if p.exists() {
+                return Ok(p);
+            }
+        }
+    }
+
+    Err(AppError::Other(format!(
+        "no python in whisperx venv bin dir: {}",
+        bin_dir.display()
+    )))
 }
 
 /// Llama al wrapper Python y devuelve los word timings.

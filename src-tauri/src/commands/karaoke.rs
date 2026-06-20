@@ -10,10 +10,14 @@ use serde::Serialize;
 use crate::errors::{AppError, AppResult};
 use crate::karaoke;
 
-/// Default language. Por ahora hardcoded a inglés porque la library del
-/// autor es mayormente EN. Cuando agreguemos detección de idioma o un
-/// setting per-track, se mueve a parámetro.
-const DEFAULT_LANGUAGE: &str = "en";
+/// Default language para forced alignment. WhisperX necesita el idioma para
+/// cargar el modelo de alignment correcto (wav2vec2 por idioma).
+const DEFAULT_ALIGN_LANGUAGE: &str = "en";
+
+/// Language para mismatch detection (transcripción). "auto" deja que whisperx
+/// detecte el idioma del audio automáticamente — crucial para libraries
+/// multilingües donde un hardcode a "en" produciría transcripciones basura.
+const MISMATCH_LANGUAGE: &str = "auto";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,7 +66,7 @@ pub async fn karaoke_auto_align(
     }
 
     let result =
-        karaoke::align_track(pool.inner(), track_id, DEFAULT_LANGUAGE, &script_path).await?;
+        karaoke::align_track(pool.inner(), track_id, DEFAULT_ALIGN_LANGUAGE, &script_path).await?;
     Ok(AlignResponse {
         alignment_score: result.alignment_score,
     })
@@ -90,7 +94,7 @@ pub async fn karaoke_detect_mismatch(
     }
 
     let result =
-        karaoke::detect_mismatch(pool.inner(), track_id, DEFAULT_LANGUAGE, &script_path)
+        karaoke::detect_mismatch(pool.inner(), track_id, MISMATCH_LANGUAGE, &script_path)
             .await?;
 
     Ok(MismatchResponse {

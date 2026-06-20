@@ -24,3 +24,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python (accidental venv/pip in project root from broken Python 3.13)
+Lib/
+Scripts/
+pyvenv.cfg
+__pycache__/

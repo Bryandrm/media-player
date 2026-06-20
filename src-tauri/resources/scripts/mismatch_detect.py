@@ -39,9 +39,18 @@ Errors go to stderr. Exit != 0 on failure.
 """
 
 import json
+import os
 import re
 import sys
 import traceback
+
+# Windows: phonemizer needs the espeak-ng shared library, not the CLI exe.
+# Set PHONEMIZER_ESPEAK_LIBRARY to the DLL path before importing phonemizer.
+if sys.platform == "win32" and "PHONEMIZER_ESPEAK_LIBRARY" not in os.environ:
+    _dll = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
+                        "eSpeak NG", "libespeak-ng.dll")
+    if os.path.isfile(_dll):
+        os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = _dll
 
 
 def parse_lrc_lines(lrc_text):
@@ -83,25 +92,67 @@ def parse_timestamp(ts):
 
 
 def match_lines_to_segments(lrc_lines, segments):
-    """Match each LRC line to the best-overlapping transcribed segment.
+    """Match each LRC line to the overlapping transcribed text.
 
-    Returns list of (lrc_line, transcribed_text) pairs.
+    Uses word-level timestamps when available (whisperx provides them).
+    Falls back to proportional text slicing from the overlapping segment.
     """
+    # Flatten word-level timings if available
+    words = []
+    for seg in segments:
+        if "words" in seg:
+            for w in seg["words"]:
+                if "start" in w and "word" in w:
+                    words.append(w)
+        elif "word_segments" in seg:
+            for w in seg["word_segments"]:
+                if "start" in w and "word" in w:
+                    words.append(w)
+
     pairs = []
-    for lrc in lrc_lines:
+    for i, lrc in enumerate(lrc_lines):
         lrc_start = lrc["timestamp_ms"] / 1000.0
-        best_seg = None
-        best_overlap = -1
-        for seg in segments:
-            seg_start = seg.get("start", 0)
-            seg_end = seg.get("end", seg_start)
-            overlap_start = max(lrc_start, seg_start)
-            overlap_end = min(lrc_start + 10, seg_end)
-            overlap = max(0, overlap_end - overlap_start)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_seg = seg
-        transcribed = best_seg["text"].strip() if best_seg and best_overlap > 0 else ""
+        # Use next line's timestamp as end, or +10s for last line
+        if i + 1 < len(lrc_lines):
+            lrc_end = lrc_lines[i + 1]["timestamp_ms"] / 1000.0
+        else:
+            lrc_end = lrc_start + 10.0
+
+        if words:
+            # Word-level matching: collect words within this line's time range
+            line_words = [
+                w["word"] for w in words
+                if w.get("start", 0) >= lrc_start - 0.3
+                and w.get("start", 0) < lrc_end + 0.3
+            ]
+            transcribed = " ".join(line_words).strip()
+        else:
+            # Segment-level: find overlapping segments and extract proportional text
+            collected = []
+            for seg in segments:
+                seg_start = seg.get("start", 0)
+                seg_end = seg.get("end", seg_start)
+                seg_text = seg.get("text", "").strip()
+                if not seg_text:
+                    continue
+                overlap_start = max(lrc_start, seg_start)
+                overlap_end = min(lrc_end, seg_end)
+                if overlap_end <= overlap_start:
+                    continue
+                seg_dur = seg_end - seg_start
+                if seg_dur <= 0:
+                    collected.append(seg_text)
+                    continue
+                # Proportional slice of the segment text
+                frac_start = (overlap_start - seg_start) / seg_dur
+                frac_end = (overlap_end - seg_start) / seg_dur
+                seg_words = seg_text.split()
+                n_words = len(seg_words)
+                w_start = int(frac_start * n_words)
+                w_end = max(w_start + 1, int(frac_end * n_words + 0.5))
+                collected.append(" ".join(seg_words[w_start:w_end]))
+            transcribed = " ".join(collected).strip()
+
         pairs.append((lrc, transcribed))
     return pairs
 
@@ -208,8 +259,10 @@ def main():
 
     # 1. Transcribe audio with WhisperX
     device = "cpu"
+    # language="auto" → let whisperx detect the language from audio
+    load_lang = None if language == "auto" else language
     try:
-        model = whisperx.load_model("base", device, compute_type="int8", language=language)
+        model = whisperx.load_model("base", device, compute_type="int8", language=load_lang)
     except Exception as e:
         print(f"load_model failed: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
@@ -225,17 +278,35 @@ def main():
     print("[mismatch] transcribing audio...", file=sys.stderr)
     result = model.transcribe(audio, batch_size=8)
     segments = result.get("segments", [])
-    print(f"[mismatch] transcribed {len(segments)} segments", file=sys.stderr)
+    detected_lang = result.get("language", language)
+    print(f"[mismatch] transcribed {len(segments)} segments (lang={detected_lang})", file=sys.stderr)
 
     if not segments:
         print("whisperx returned 0 segments", file=sys.stderr)
         sys.exit(8)
 
+    # Align to get word-level timestamps for better per-line matching
+    align_lang = detected_lang if language == "auto" else language
+    try:
+        align_model, align_meta = whisperx.load_align_model(
+            language_code=align_lang, device=device
+        )
+        result = whisperx.align(
+            segments, align_model, align_meta, audio, device,
+            return_char_alignments=False,
+        )
+        segments = result.get("segments", segments)
+        n_words = sum(len(s.get("words", [])) for s in segments)
+        print(f"[mismatch] aligned {n_words} words for matching", file=sys.stderr)
+    except Exception as e:
+        print(f"[mismatch] align failed, using segment-level matching: {e}", file=sys.stderr)
+
     # 2. Match LRC lines to transcribed segments
     pairs = match_lines_to_segments(lrc_lines, segments)
 
-    # 3. Convert to phonemes
-    espeak_lang = espeak_language_code(language)
+    # 3. Convert to phonemes (use detected language for phonemizer)
+    phoneme_lang = detected_lang if language == "auto" else language
+    espeak_lang = espeak_language_code(phoneme_lang)
     lrc_texts = [p[0]["text"] for p in pairs]
     transcribed_texts = [p[1] for p in pairs]
     all_texts = lrc_texts + transcribed_texts

@@ -417,6 +417,24 @@ export function LyricsView() {
               </>
             )}
           </div>
+          {whisperxAvailable && lyrics?.alignedAt && lyrics.alignmentScore !== null && lyrics.alignmentScore < 0.5 && !mismatchResult && (
+            <div className="flex items-center gap-2 mt-1 text-accent">
+              ALIGNMENT SCORE: {Math.round(lyrics.alignmentScore * 100)}% —
+              <button
+                className="underline cursor-pointer bg-transparent border-none text-accent p-0"
+                onClick={onDetectMismatch}
+                disabled={detecting}
+              >
+                CHECK QUALITY
+              </button>
+              TO FIND BAD LINES
+            </div>
+          )}
+          {whisperxAvailable && lyrics?.alignedAt && lyrics.alignmentScore !== null && lyrics.alignmentScore >= 0.5 && !mismatchResult && (
+            <div className="flex items-center gap-2 mt-1 text-muted">
+              ALIGNMENT SCORE: {Math.round(lyrics.alignmentScore * 100)}% — GOOD
+            </div>
+          )}
         </div>
         {mismatchResult && (
           <div className="shrink-0 px-6 py-2 border-t-2 border-fg text-xs uppercase tracking-wider max-h-48 overflow-y-auto">
@@ -429,6 +447,11 @@ export function LyricsView() {
                 {mismatchResult.lines.filter((l) => l.score < 0.5).length}/{mismatchResult.lines.length} MISMATCHED
               </span>
             </div>
+            {mismatchResult.lines.filter((l) => l.score < 0.5).length > 0 && (
+              <div className="mb-2 text-accent">
+                USE EDIT TO FIX BAD LINES, THEN RE-ALIGN
+              </div>
+            )}
             {mismatchResult.lines
               .filter((l) => l.score < 0.5)
               .map((l) => (

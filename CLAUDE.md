@@ -326,6 +326,14 @@ src-tauri/resources/scripts/
   el panel de lyrics → panel con score overall + líneas mismatched (<50%).
   Deps: `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng`.
   Fallback a comparación de texto raw si phonemizer no está instalado.
+  **Auto-detect de idioma** (2026-06-19): mismatch detection pasa
+  `language="auto"` a whisperx → detecta español, japonés, etc.
+  automáticamente. El alignment (AUTO-ALIGN) sigue en `"en"` por ahora
+  (wav2vec2 necesita idioma explícito). **Guía visual**: después de
+  AUTO-ALIGN muestra alignment score + link a CHECK QUALITY si <50%;
+  después de CHECK QUALITY con mismatches muestra "USE EDIT TO FIX BAD
+  LINES, THEN RE-ALIGN". Word-level matching en mismatch (alinea
+  transcripción a word timestamps antes de comparar, no bloques enteros).
 - **Cascade de lyrics resiliente** ✓ (2026-06-19) — errores de red en un
   provider (LRCLIB caído, timeout NetEase) ya no abortan el cascade. Se
   logean y se sigue al siguiente provider. Antes, un `?` propagaba el
@@ -544,9 +552,10 @@ en la terminal del usuario `which whisperx` funcione bien.
 
 **Fix:** [`commands::system::resolve_binary`](src-tauri/src/commands/system.rs)
 con fallback. Primero intenta `which`, después chequea `~/.local/bin/<name>`,
-`/usr/local/bin/<name>`, `/opt/homebrew/bin/<name>`. Detección + spawn
-ambos lo usan. Si pipx mueve sus binaries en el futuro, agregar el path
-al fallback.
+`/usr/local/bin/<name>`, `/opt/homebrew/bin/<name>`. En Windows: `USERPROFILE`
+en vez de `HOME`, y candidatos adicionales `%USERPROFILE%\.local\bin\<name>.exe`.
+Detección + spawn ambos lo usan. Si pipx mueve sus binaries en el futuro,
+agregar el path al fallback.
 
 ### 15. Forced alignment ≤ calidad del LRC
 WhisperX hace forced alignment de los fonemas del texto provisto contra
@@ -708,6 +717,40 @@ Hipótesis ordenadas por probabilidad (sin verificar todavía):
 
 Detalle completo + memoria persistente en
 `~/.claude/projects/-Users-bryan-Documents-projects-00-various-media-player/memory/project_airpods_handoff_bug.md`.
+
+### 24. Python scripts deben usar `encoding="utf-8"` en `open()` (Windows)
+En Windows, `open()` sin encoding usa el codepage del sistema (Latin-1 /
+cp1252). Cuando el JSON de segments contiene caracteres no-ASCII (letras en
+español, japonés, etc.), la lectura explota con `UnicodeDecodeError:
+'charmap' codec can't decode byte 0x90`. Mismo principio que Gotcha #22
+pero en Python en vez de yt-dlp.
+
+**Fix:** `open(path, encoding="utf-8")` en todos los `open()` de
+`karaoke_align.py` y `mismatch_detect.py` (lectura + escritura).
+
+### 25. pipx venv layout en Windows ≠ Unix
+En Unix, pipx hace `~/.local/bin/whisperx` → symlink a
+`~/.local/pipx/venvs/whisperx/bin/whisperx`. `canonicalize()` resuelve
+el symlink y `python` está al lado. En Windows: `~/.local/bin/whisperx.exe`
+es un wrapper exe (no symlink), y el Python del venv está en
+`%USERPROFILE%\pipx\venvs\whisperx\Scripts\python.exe` (path totalmente
+distinto). `canonicalize()` del wrapper devuelve el mismo path →
+`find_python_for_whisperx` buscaba `python` en `~/.local/bin/` y no lo
+encontraba.
+
+**Fix:** fallback en `find_python_for_whisperx` que chequea los paths
+estándar de pipx en Windows: `%USERPROFILE%\pipx\venvs\whisperx\Scripts\`
+y `%USERPROFILE%\.local\pipx\venvs\whisperx\Scripts\`.
+
+### 26. phonemizer en Windows necesita `PHONEMIZER_ESPEAK_LIBRARY`
+`phonemizer` busca espeak como **shared library** (`.so`/`.dll`), no
+como exe en PATH. Instalar `espeak-ng.exe` y tenerlo en PATH no alcanza.
+Síntoma: `RuntimeError: espeak not installed on your system` aunque
+`where espeak-ng` funcione.
+
+**Fix:** `mismatch_detect.py` setea `PHONEMIZER_ESPEAK_LIBRARY` a
+`%ProgramFiles%\eSpeak NG\libespeak-ng.dll` automáticamente en Windows
+si no está seteada.
 
 ---
 

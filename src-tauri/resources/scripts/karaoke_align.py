@@ -71,7 +71,7 @@ def main():
         sys.exit(3)
 
     try:
-        with open(segments_path) as f:
+        with open(segments_path, encoding="utf-8") as f:
             segments = json.load(f)
     except (OSError, json.JSONDecodeError) as e:
         print(f"failed to read segments_json_path: {e}", file=sys.stderr)
@@ -131,7 +131,7 @@ def main():
     output = {"word_segments": word_segments}
 
     try:
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(output, f)
     except OSError as e:
         print(f"failed to write output: {e}", file=sys.stderr)
