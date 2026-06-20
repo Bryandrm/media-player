@@ -41,17 +41,18 @@ struct FpcalcRawOutput {
 
 /// Spawna `fpcalc -json <path>` y devuelve el fingerprint + duración.
 ///
+/// `fpcalc_bin` es la ruta resuelta al binario (bundleado o del sistema).
+/// El caller debe resolverla vía `resolve_binary_or_bundled("fpcalc", &app)`.
+///
 /// Errores:
-///   - `Io` si el binario no está en PATH (el caller debería chequear con
-///     `which::which("fpcalc")` antes y mostrar el banner; este error es
-///     defensivo por si la dep desaparece entre el boot-check y el invoke).
+///   - `Io` si el binario no existe en la ruta dada.
 ///   - `FpcalcFailed` si `fpcalc` exiteó con status != 0 (archivo corrupto,
 ///     formato no soportado, etc.). Incluye el stderr para diagnóstico.
 ///   - `FpcalcParse` si el JSON no matchea la shape esperada (defensa
 ///     ante un upgrade futuro que cambie el formato — improbable, pero
 ///     mejor explícito que un panic).
-pub async fn compute(path: &Path) -> AppResult<Fingerprint> {
-    let output = Command::new("fpcalc")
+pub async fn compute(fpcalc_bin: &Path, path: &Path) -> AppResult<Fingerprint> {
+    let output = Command::new(fpcalc_bin)
         .arg("-json")
         .arg(path)
         .output()

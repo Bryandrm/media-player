@@ -37,7 +37,8 @@
     ],
     "resources": {
       "resources/scripts/karaoke_align.py": "scripts/karaoke_align.py",
-      "resources/scripts/mismatch_detect.py": "scripts/mismatch_detect.py"
+      "resources/scripts/mismatch_detect.py": "scripts/mismatch_detect.py",
+      "resources/bin/*": "bin/"
     }
   }
 }

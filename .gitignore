@@ -31,6 +31,9 @@ Scripts/
 pyvenv.cfg
 __pycache__/
 
+# Bundled binaries — platform-specific, downloaded per-developer
+src-tauri/resources/bin/
+
 # Pixi (dependency manager) — environments are user-local
 .pixi/
 pixi.lock

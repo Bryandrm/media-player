@@ -5,6 +5,8 @@
 
 use std::path::PathBuf;
 
+use tauri::{AppHandle, Manager};
+
 use crate::contracts::DependencyStatus;
 
 /// Resuelve la ruta a un binario externo. Primero intenta `which::which`
@@ -38,15 +40,32 @@ pub fn resolve_binary(name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// Resuelve un binario buscando primero en los resources bundleados de Tauri
+/// (`bin/<name>.exe` en Windows, `bin/<name>` en Unix) y cayendo a
+/// `resolve_binary` (system PATH + fallback locations) si no está bundleado.
+pub fn resolve_binary_or_bundled(name: &str, app: &AppHandle) -> Option<PathBuf> {
+    let bin_name = if cfg!(windows) {
+        format!("bin/{name}.exe")
+    } else {
+        format!("bin/{name}")
+    };
+    if let Ok(p) = app.path().resolve(&bin_name, tauri::path::BaseDirectory::Resource) {
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    resolve_binary(name)
+}
+
 /// Devuelve si las deps externas están disponibles. El frontend muestra
 /// un banner por cada faltante y desactiva las features que las requieren
 /// (downloader sin yt-dlp/ffmpeg, IDENTIFY sin fpcalc, AUTO-ALIGN sin whisperx).
 #[tauri::command]
-pub fn check_dependencies() -> DependencyStatus {
+pub fn check_dependencies(app: AppHandle) -> DependencyStatus {
     DependencyStatus {
         yt_dlp: resolve_binary("yt-dlp").is_some(),
         ffmpeg: resolve_binary("ffmpeg").is_some(),
-        fpcalc: resolve_binary("fpcalc").is_some(),
+        fpcalc: resolve_binary_or_bundled("fpcalc", &app).is_some(),
         whisperx: resolve_binary("whisperx").is_some(),
     }
 }

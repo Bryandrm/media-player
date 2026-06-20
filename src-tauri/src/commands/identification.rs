@@ -69,6 +69,7 @@ struct BulkCompleted {
 #[tauri::command]
 pub async fn identification_identify_track(
     track_id: i64,
+    app: AppHandle,
     pool: State<'_, SqlitePool>,
     http: State<'_, reqwest::Client>,
 ) -> AppResult<IdentificationResult> {
@@ -76,8 +77,17 @@ pub async fn identification_identify_track(
         .await?
         .ok_or(AppError::AcoustIdNoApiKey)?;
 
-    let result =
-        identification::identify_track(pool.inner(), http.inner(), track_id, &api_key).await?;
+    let fpcalc_bin = crate::commands::system::resolve_binary_or_bundled("fpcalc", &app)
+        .ok_or_else(|| AppError::Other("fpcalc not found".into()))?;
+
+    let result = identification::identify_track(
+        pool.inner(),
+        http.inner(),
+        track_id,
+        &api_key,
+        &fpcalc_bin,
+    )
+    .await?;
 
     // Si AcoustID aceptó el match, las heurísticas de lyrics que cacheamos
     // antes (con metadata sucia) ya no aplican: el track ahora tiene
@@ -141,6 +151,9 @@ pub async fn identification_identify_all(
         .await?
         .ok_or(AppError::AcoustIdNoApiKey)?;
 
+    let fpcalc_bin = crate::commands::system::resolve_binary_or_bundled("fpcalc", &app)
+        .ok_or_else(|| AppError::Other("fpcalc not found".into()))?;
+
     let track_ids = db::tracks::list_identifiable(&pool).await?;
     let total = track_ids.len();
 
@@ -162,6 +175,7 @@ pub async fn identification_identify_all(
     let cancel_flag = bulk.cancel.clone();
     let running_flag = bulk.running.clone();
     let app_handle = app.clone();
+    let fpcalc_bin_clone = fpcalc_bin.clone();
 
     tauri::async_runtime::spawn(async move {
         let mut counts = BulkCompleted {
@@ -195,6 +209,7 @@ pub async fn identification_identify_all(
                 &http_clone,
                 track_id,
                 &api_key,
+                &fpcalc_bin_clone,
             )
             .await
             {

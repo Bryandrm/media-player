@@ -76,6 +76,7 @@ pub async fn identify_track(
     http: &reqwest::Client,
     track_id: i64,
     api_key: &str,
+    fpcalc_bin: &Path,
 ) -> AppResult<IdentificationResult> {
     // 1. Leer track de DB. Si no existe, error claro (no debería pasar
     //    desde la UI — pero defensivo).
@@ -92,7 +93,7 @@ pub async fn identify_track(
             let dur = (track.duration_ms as f32) / 1000.0;
             (fp, dur)
         }
-        None => match fpcalc::compute(Path::new(&track.file_path)).await {
+        None => match fpcalc::compute(fpcalc_bin, Path::new(&track.file_path)).await {
             Ok(fp) => {
                 db::tracks::save_fingerprint(pool, track_id, &fp.fingerprint).await?;
                 (fp.fingerprint, fp.duration_seconds)

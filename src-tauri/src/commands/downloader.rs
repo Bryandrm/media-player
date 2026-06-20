@@ -359,10 +359,15 @@ async fn persist_downloaded_file(
     // Dedup nivel 2 (contenido): path nuevo, pero el audio puede ser la misma
     // grabación traída de otro upload. Fingerprint Chromaprint + match exacto.
     // Si fpcalc no está / falla, seguimos sin dedup por contenido (best-effort).
-    let fingerprint = match identification::fpcalc::compute(file_path).await {
-        Ok(fp) => Some(fp.fingerprint),
-        Err(_) => None,
-    };
+    let fingerprint =
+        match crate::commands::system::resolve_binary_or_bundled("fpcalc", app) {
+            Some(fpcalc_bin) => match identification::fpcalc::compute(&fpcalc_bin, file_path).await
+            {
+                Ok(fp) => Some(fp.fingerprint),
+                Err(_) => None,
+            },
+            None => None,
+        };
     if let Some(fp) = &fingerprint {
         if let Some(dup_id) = db::tracks::find_id_by_fingerprint(pool, fp).await? {
             // Duplicado por contenido: descartamos la copia recién bajada y
