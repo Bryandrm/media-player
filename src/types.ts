@@ -239,3 +239,18 @@ export type Lyrics = {
   alignmentScore: number | null;
   status: LyricsStatus;
 };
+
+export type MismatchLine = {
+  index: number;
+  timestampMs: number;
+  lrcText: string;
+  transcribedText: string;
+  lrcPhonemes: string;
+  transcribedPhonemes: string;
+  score: number;
+};
+
+export type MismatchResult = {
+  overallScore: number;
+  lines: MismatchLine[];
+};

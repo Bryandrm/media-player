@@ -1,6 +1,6 @@
-//! Forced alignment de letras vía WhisperX.
+//! Forced alignment de letras vía WhisperX + mismatch detection.
 //!
-//! Pipeline (Fase A):
+//! Pipeline (Fase A — alignment):
 //!   1. Leer track + lyrics actuales de DB.
 //!   2. Parsear synced_lyrics para extraer line timestamps + text.
 //!   3. Construir segmentos para whisperx (bounds line-level — limita
@@ -8,6 +8,12 @@
 //!   4. Llamar `whisperx::align()` -> `Vec<WordTiming>`.
 //!   5. Convertir a A2 LRC string preservando metadata tags originales.
 //!   6. Persistir en `lyrics.synced_lyrics` + `aligned_at`.
+//!
+//! Pipeline (2.c.4b Nivel 2 — mismatch detection):
+//!   1. WhisperX transcribe → texto real del audio.
+//!   2. phonemizer (espeak) → IPA de LRC y transcripción.
+//!   3. Levenshtein normalizado por línea → score per-line.
+//!   Deps extra: `phonemizer` (Python) + `espeak-ng` (sistema).
 //!
 //! Ver docs/KARAOKE.md.
 
@@ -464,4 +470,61 @@ mod tests {
             a2
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Mismatch detection (2.c.4b Nivel 2)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct MismatchLine {
+    pub index: usize,
+    pub timestamp_ms: u64,
+    pub lrc_text: String,
+    pub transcribed_text: String,
+    pub lrc_phonemes: String,
+    pub transcribed_phonemes: String,
+    pub score: f64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct MismatchResult {
+    pub overall_score: f64,
+    pub lines: Vec<MismatchLine>,
+}
+
+pub async fn detect_mismatch(
+    pool: &SqlitePool,
+    track_id: i64,
+    language: &str,
+    script_path: &Path,
+) -> AppResult<MismatchResult> {
+    let lyrics = db::lyrics::get_for_track(pool, track_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("lyrics for track {track_id}")))?;
+    let synced = match (lyrics.original_synced_lyrics, lyrics.synced_lyrics) {
+        (Some(orig), _) => orig,
+        (None, Some(s)) => s,
+        (None, None) => {
+            return Err(AppError::InvalidInput(
+                "no synced_lyrics available for mismatch detection".into(),
+            ));
+        }
+    };
+
+    let file_path: Option<String> =
+        sqlx::query_scalar("SELECT file_path FROM tracks WHERE id = ?")
+            .bind(track_id)
+            .fetch_optional(pool)
+            .await?;
+    let file_path =
+        file_path.ok_or_else(|| AppError::NotFound(format!("track {track_id}")))?;
+
+    whisperx::detect_mismatch(
+        Path::new(&file_path),
+        &synced,
+        language,
+        script_path,
+    )
+    .await
 }

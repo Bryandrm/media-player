@@ -80,6 +80,7 @@ pub fn run() {
             commands::identification::identification_identify_all,
             commands::identification::identification_cancel_all,
             commands::karaoke::karaoke_auto_align,
+            commands::karaoke::karaoke_detect_mismatch,
             commands::playlists::playlist_create,
             commands::playlists::playlist_create_smart,
             commands::playlists::playlist_update_smart,

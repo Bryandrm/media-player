@@ -56,6 +56,9 @@ export function LyricsView() {
   const notFound = useLyricsStore((s) => s.notFound);
   const error = useLyricsStore((s) => s.error);
   const aligning = useLyricsStore((s) => s.aligning);
+  const detecting = useLyricsStore((s) => s.detecting);
+  const mismatchResult = useLyricsStore((s) => s.mismatchResult);
+  const detectMismatch = useLyricsStore((s) => s.detectMismatch);
   const setOffset = useLyricsStore((s) => s.setOffset);
   const setSpeedRatio = useLyricsStore((s) => s.setSpeedRatio);
   const resetSync = useLyricsStore((s) => s.resetSync);
@@ -154,6 +157,11 @@ export function LyricsView() {
   const onAutoAlign = () => {
     if (trackId === null || aligning) return;
     void alignTrack(trackId);
+  };
+
+  const onDetectMismatch = () => {
+    if (trackId === null || detecting) return;
+    void detectMismatch(trackId);
   };
 
   // Escape sale del modo ALIGN sin aplicar nada.
@@ -381,25 +389,57 @@ export function LyricsView() {
                 pero el botón muestra "ALIGNING..." mientras corre. Texto
                 cambia a RE-ALIGN una vez que aligned_at está poblado. */}
             {whisperxAvailable && (
-              <Button
-                size="sm"
-                onClick={onAutoAlign}
-                disabled={aligning || trackId === null}
-                title={
-                  lyrics?.alignedAt
-                    ? `Last aligned: ${lyrics.alignedAt}`
-                    : "Run whisperx forced alignment"
-                }
-              >
-                {aligning
-                  ? "ALIGNING..."
-                  : lyrics?.alignedAt
-                    ? "RE-ALIGN"
-                    : "AUTO-ALIGN"}
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  onClick={onAutoAlign}
+                  disabled={aligning || trackId === null}
+                  title={
+                    lyrics?.alignedAt
+                      ? `Last aligned: ${lyrics.alignedAt}`
+                      : "Run whisperx forced alignment"
+                  }
+                >
+                  {aligning
+                    ? "ALIGNING..."
+                    : lyrics?.alignedAt
+                      ? "RE-ALIGN"
+                      : "AUTO-ALIGN"}
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={onDetectMismatch}
+                  disabled={detecting || trackId === null}
+                  title="Transcribe audio + compare phonetically against LRC"
+                >
+                  {detecting ? "CHECKING..." : "CHECK QUALITY"}
+                </Button>
+              </>
             )}
           </div>
         </div>
+        {mismatchResult && (
+          <div className="shrink-0 px-6 py-2 border-t-2 border-fg text-xs uppercase tracking-wider max-h-48 overflow-y-auto">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-muted">QUALITY:</span>
+              <span className={mismatchResult.overallScore < 0.5 ? "text-accent" : "text-fg"}>
+                {Math.round(mismatchResult.overallScore * 100)}%
+              </span>
+              <span className="text-muted ml-2">
+                {mismatchResult.lines.filter((l) => l.score < 0.5).length}/{mismatchResult.lines.length} MISMATCHED
+              </span>
+            </div>
+            {mismatchResult.lines
+              .filter((l) => l.score < 0.5)
+              .map((l) => (
+                <div key={l.index} className="mb-1 border-l-2 border-accent pl-2">
+                  <div className="text-fg">{l.lrcText}</div>
+                  <div className="text-muted">{l.transcribedText || "(silence)"}</div>
+                  <div className="text-accent">{Math.round(l.score * 100)}%</div>
+                </div>
+              ))}
+          </div>
+        )}
       </div>
       {editModal}
       </>

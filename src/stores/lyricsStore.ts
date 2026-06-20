@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { Lyrics } from "../types";
+import type { Lyrics, MismatchResult } from "../types";
 
 // Estado de letras del track actual. Se popula vía `useLyricsSync` cuando
 // el usuario navega a un track o al tab LYRICS. Nada se persiste — la
@@ -25,6 +25,10 @@ type LyricsState = {
    *  (no per-track) porque el flujo es one-at-a-time desde la UI — el
    *  botón AUTO-ALIGN está disabled mientras `aligning`. */
   aligning: boolean;
+  /** True mientras corre mismatch detection. */
+  detecting: boolean;
+  /** Resultado de la última detección de mismatch. */
+  mismatchResult: MismatchResult | null;
 
   /** `force` saltea el cache (incluido not_found) y re-corre el cascade —
    *  lo usa el botón REFETCH (ej: track marcado not_found antes de NetEase). */
@@ -40,6 +44,8 @@ type LyricsState = {
    *  la primera vez por download del modelo wav2vec2. Al terminar, refetcha
    *  el lyrics del backend para que el A2 nuevo entre al store. */
   alignTrack: (trackId: number) => Promise<void>;
+  /** Mismatch detection: transcribe + fonética. Tarda ~30-60s. */
+  detectMismatch: (trackId: number) => Promise<void>;
   /** Lyrics Fase 2.c — persiste edición manual del usuario. El backend
    *  sobreescribe `originalSyncedLyrics` con el nuevo synced (así un
    *  RE-ALIGN posterior parte de la versión corregida) y resetea offset,
@@ -63,6 +69,8 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
   notFound: false,
   error: null,
   aligning: false,
+  detecting: false,
+  mismatchResult: null,
 
   fetch: async (trackId, force = false) => {
     // Race-guard: si ya estamos fetch-eando para este trackId, no duplicar.
@@ -170,6 +178,20 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
     }
   },
 
+  detectMismatch: async (trackId) => {
+    if (get().detecting) return;
+    set({ detecting: true, mismatchResult: null, error: null });
+    try {
+      const result = await invoke<MismatchResult>("karaoke_detect_mismatch", { trackId });
+      console.log(`[mismatch] overall score: ${result.overallScore.toFixed(3)}, ${result.lines.length} lines`);
+      set({ mismatchResult: result, detecting: false });
+    } catch (e) {
+      const msg = String(e);
+      console.warn("karaoke_detect_mismatch failed:", msg);
+      set({ error: msg, detecting: false });
+    }
+  },
+
   saveManualEdit: async (trackId, syncedLyrics, plainLyrics) => {
     try {
       const result = await invoke<Lyrics>("lyrics_save_manual_edit", {
@@ -201,5 +223,6 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
     loading: false,
     notFound: false,
     error: null,
+    mismatchResult: null,
   }),
 }));

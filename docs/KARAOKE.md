@@ -7,7 +7,8 @@
 ## Estado
 
 - **Fase A** ✓ shippeada (2026-05-04) con caveats. Forced alignment via **WhisperX** en modo align-only + parser A2 + botón `AUTO-ALIGN`. **Funciona bien para tracks con LRC de buena calidad; mediocre para LRC con letras imperfectas** (ver §13 "Lecciones aprendidas").
-- **Alignment score** ✓ (2026-06-19). `align_track` calcula promedio de `word.score` de WhisperX y lo persiste en `lyrics.alignment_score`. Score bajo (< 0.5) = mismatch LRC↔audio. Nivel 2 pendiente: transcripción + comparación fonética para localizar líneas malas.
+- **Alignment score (Nivel 1)** ✓ (2026-06-19). `align_track` calcula promedio de `word.score` de WhisperX y lo persiste en `lyrics.alignment_score`. Score bajo (< 0.5) = mismatch LRC↔audio.
+- **Mismatch detection (Nivel 2)** ✓ (2026-06-19). Script `mismatch_detect.py`: WhisperX transcribe el audio → `phonemizer` (espeak-ng) convierte LRC + transcripción a IPA → Levenshtein normalizado por línea. Botón **CHECK QUALITY** en el panel de lyrics. Panel de resultados muestra score overall + líneas con mismatch (<50%). Deps: `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng`.
 - **Fase B–E** — futuro, sin compromiso. Karaoke mode UI, vocal removal, mic input, pitch scoring.
 
 ---

@@ -93,7 +93,7 @@ pub async fn fetch_lyrics(
     }
 
     // 2. LRCLIB — sólo si tenemos artist (sin artist el match es muy
-    //    inexacto, mejor saltar).
+    //    inexacto, mejor saltar). Errores de red no abortan el cascade.
     if let Some(artist) = query.artist {
         let lrc_query = lrclib::LrcLibQuery {
             artist,
@@ -101,39 +101,48 @@ pub async fn fetch_lyrics(
             album: query.album,
             duration_seconds: query.duration_seconds,
         };
-        if let Some(found) = lrclib::try_lrclib(http, query.track_id, &lrc_query).await? {
-            if found.synced_lyrics.is_some() {
-                let c = found.confidence.unwrap_or(0.0);
-                if c >= CONFIDENCE_THRESHOLD {
-                    db::lyrics::upsert(pool, &found).await?;
-                    return Ok(Some(found));
+        match lrclib::try_lrclib(http, query.track_id, &lrc_query).await {
+            Ok(Some(found)) => {
+                if found.synced_lyrics.is_some() {
+                    let c = found.confidence.unwrap_or(0.0);
+                    if c >= CONFIDENCE_THRESHOLD {
+                        db::lyrics::upsert(pool, &found).await?;
+                        return Ok(Some(found));
+                    }
+                    best_synced = pick_better(best_synced, found);
+                } else if best_plain.is_none() {
+                    best_plain = Some(found);
                 }
-                best_synced = pick_better(best_synced, found);
-            } else if best_plain.is_none() {
-                best_plain = Some(found);
             }
+            Ok(None) => {}
+            Err(e) => eprintln!("[lyrics] lrclib error, continuing cascade: {e}"),
         }
     }
 
     // 2.5 NetEase — siempre se intenta si hay artist y no tenemos synced
     //     de alta confidence aún. Gratis y sin key (ADR-030).
+    //     Errores de red no abortan el cascade.
     if let Some(artist) = query.artist {
         let ne_query = netease::NeteaseQuery {
             artist,
             title: query.title,
             duration_seconds: query.duration_seconds,
         };
-        if let Some(found) = netease::try_netease(http, query.track_id, &ne_query).await? {
-            if found.synced_lyrics.is_some() {
-                let c = found.confidence.unwrap_or(0.0);
-                if c >= CONFIDENCE_THRESHOLD {
-                    db::lyrics::upsert(pool, &found).await?;
-                    return Ok(Some(found));
+        match netease::try_netease(http, query.track_id, &ne_query).await {
+            Ok(Some(found)) => {
+                if found.synced_lyrics.is_some() {
+                    let c = found.confidence.unwrap_or(0.0);
+                    if c >= CONFIDENCE_THRESHOLD {
+                        db::lyrics::upsert(pool, &found).await?;
+                        return Ok(Some(found));
+                    }
+                    best_synced = pick_better(best_synced, found);
+                } else if best_plain.is_none() {
+                    best_plain = Some(found);
                 }
-                best_synced = pick_better(best_synced, found);
-            } else if best_plain.is_none() {
-                best_plain = Some(found);
             }
+            Ok(None) => {}
+            Err(e) => eprintln!("[lyrics] netease error, continuing cascade: {e}"),
         }
     }
 

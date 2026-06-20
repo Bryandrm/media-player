@@ -155,3 +155,59 @@ pub async fn align(
     eprintln!("[karaoke] received {} word timings", parsed.word_segments.len());
     Ok(parsed.word_segments)
 }
+
+/// Llama al script `mismatch_detect.py` — transcribe + fonética + scoring.
+pub async fn detect_mismatch(
+    audio_path: &Path,
+    lrc_text: &str,
+    language: &str,
+    script_path: &Path,
+) -> AppResult<super::MismatchResult> {
+    let python_bin = find_python_for_whisperx()?;
+
+    let tmpdir = tempfile::tempdir()
+        .map_err(|e| AppError::Other(format!("tempdir: {e}")))?;
+    let lrc_path = tmpdir.path().join("lyrics.lrc");
+    let output_path = tmpdir.path().join("mismatch.json");
+
+    std::fs::write(&lrc_path, lrc_text)?;
+
+    eprintln!(
+        "[mismatch] detecting via {} (lang={})",
+        script_path.display(),
+        language
+    );
+
+    let output = Command::new(&python_bin)
+        .arg(script_path)
+        .arg(audio_path)
+        .arg(&lrc_path)
+        .arg(&output_path)
+        .arg(language)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        eprintln!("[mismatch] stderr:\n{}", stderr.trim());
+    }
+
+    if !output.status.success() {
+        return Err(AppError::WhisperxFailed(
+            format!("mismatch_detect failed: {}", stderr.trim()),
+        ));
+    }
+
+    let json = std::fs::read_to_string(&output_path)?;
+    let result: super::MismatchResult = serde_json::from_str(&json)
+        .map_err(|e| AppError::WhisperxParse(format!("mismatch output: {e}")))?;
+
+    eprintln!(
+        "[mismatch] overall_score={:.3}, {} lines",
+        result.overall_score,
+        result.lines.len()
+    );
+    Ok(result)
+}

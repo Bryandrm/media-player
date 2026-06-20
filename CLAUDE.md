@@ -43,10 +43,16 @@ Documentos fuente de verdad:
 - **Karaoke:** `whisperx` (Python + PyTorch + wav2vec2) en align-only mode
   via wrapper Python shippeado como Tauri resource. Genera A2 LRC con
   per-word timestamps. Forced alignment con bounds tight del LRC.
+  **Mismatch detection (Nivel 2):** segundo script Python
+  (`mismatch_detect.py`) transcribe el audio con WhisperX, convierte LRC
+  y transcripción a fonemas IPA vía `phonemizer` (espeak), y compara con
+  Levenshtein normalizado por línea. Botón CHECK QUALITY en el panel de
+  lyrics.
 - **Externos como deps del sistema** (no bundled): `yt-dlp` + `ffmpeg`
-  (downloader), `fpcalc` (identification), `whisperx` via pipx (karaoke).
-  Cada uno detect-and-banner si falta. `lofty-rs` para tags + cover art
-  + USLT. `reqwest` con `rustls-tls` (sin OpenSSL).
+  (downloader), `fpcalc` (identification), `whisperx` via pipx (karaoke),
+  `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng` (mismatch
+  detection). Cada uno detect-and-banner si falta. `lofty-rs` para tags +
+  cover art + USLT. `reqwest` con `rustls-tls` (sin OpenSSL).
 
 ---
 
@@ -113,14 +119,17 @@ src-tauri/src/
 │                           lrclib.rs (get + search fallback)
 ├── identification/         fpcalc.rs (Chromaprint binary wrapper) +
 │                           acoustid.rs (HTTP client) + mod.rs (cascade)
-├── karaoke/                whisperx.rs (Python wrapper subprocess) +
-│                           mod.rs (cascade + LRC parser + A2 serializer)
+├── karaoke/                whisperx.rs (Python wrapper: align + mismatch) +
+│                           mod.rs (cascade + LRC parser + A2 serializer +
+│                           mismatch detection)
 ├── contracts.rs            tipos serializados a TS
 └── errors.rs               AppError + AppResult
 
 src-tauri/resources/scripts/
-└── karaoke_align.py        whisperx Python API en align-only mode (~80 líneas);
-                            shippeado vía Tauri bundle.resources
+├── karaoke_align.py        whisperx Python API en align-only mode (~80 líneas);
+│                           shippeado vía Tauri bundle.resources
+└── mismatch_detect.py      whisperx transcribe + phonemizer (IPA) +
+                            Levenshtein per-line; mismatch detection Nivel 2
 ```
 
 **Estado actual:**
@@ -306,19 +315,27 @@ src-tauri/resources/scripts/
   Constante `CONFIDENCE_THRESHOLD` en `lyrics/mod.rs`. Escenario concreto:
   LRCLIB fuzzy match con confidence 0.3 (duración muy distinta = live
   version) ya no bloquea que NetEase devuelva un match correcto (0.85).
-- **Lyrics Fase 2.c.4b — alignment score** ✓ (2026-06-19) — `align_track`
-  calcula el promedio de `word.score` (0..1) de los word timings de
-  WhisperX y lo persiste en `lyrics.alignment_score` (migración
-  `20260619000001`). Score bajo (< 0.5) indica mismatch LRC↔audio.
-  El comando `karaoke_auto_align` devuelve `AlignResponse { alignmentScore }`
-  al frontend. Primer paso hacia auto-detect de mismatch. Nivel 2 pendiente:
-  transcribir audio + comparar fonéticamente para localizar líneas malas.
+- **Lyrics Fase 2.c.4b — alignment score + mismatch detection** ✓
+  (2026-06-19) — **Nivel 1:** `align_track` calcula el promedio de
+  `word.score` (0..1) de los word timings de WhisperX y lo persiste en
+  `lyrics.alignment_score` (migración `20260619000001`). Score bajo
+  (< 0.5) indica mismatch LRC↔audio. **Nivel 2:** script
+  `mismatch_detect.py` transcribe el audio con WhisperX, convierte ambos
+  textos (LRC + transcripción) a fonemas IPA vía `phonemizer` (espeak-ng),
+  y calcula Levenshtein normalizado por línea. Botón **CHECK QUALITY** en
+  el panel de lyrics → panel con score overall + líneas mismatched (<50%).
+  Deps: `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng`.
+  Fallback a comparación de texto raw si phonemizer no está instalado.
+- **Cascade de lyrics resiliente** ✓ (2026-06-19) — errores de red en un
+  provider (LRCLIB caído, timeout NetEase) ya no abortan el cascade. Se
+  logean y se sigue al siguiente provider. Antes, un `?` propagaba el
+  error y todo fallaba.
 - Próximo (orden acordado con Bryan 2026-06-18): quick wins **cerrados** (drag
   & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓).
   **(2) calidad/plataforma** — ✓ testing Windows, ✓ `pnpm tauri build`,
   ✓ tests + CI. **(3) lyrics/karaoke quality** — smart cascade ✓, alignment
-  score ✓. Nivel 2 (transcribe + fonética) en progreso. **Features grandes
-  al final**: Karaoke Fase B-E, Identification Fase 3.
+  score ✓, mismatch detection ✓. **Features grandes al final**: Karaoke
+  Fase B-E, Identification Fase 3.
 
 ---
 
@@ -378,6 +395,13 @@ el downloader funcione: `yt-dlp`, `ffmpeg` (`brew install yt-dlp ffmpeg`
 en macOS) y **`node` ≥22** (runtime de JS que yt-dlp usa para resolver el
 challenge de YouTube — ver Gotcha #20; alternativa: `deno`). La app verifica
 al boot vía `check_dependencies` y muestra un banner si faltan.
+
+**Deps opcionales** (features específicas, sin banner — disabled silencioso):
+- `fpcalc` — identification (AcoustID + Chromaprint).
+- `whisperx` (`pipx install whisperx`) — forced alignment (AUTO-ALIGN).
+- `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng` (sistema)
+  — mismatch detection (CHECK QUALITY). Si `phonemizer` no está, el script
+  cae a comparación de texto raw (funcional pero menos preciso).
 
 ---
 
