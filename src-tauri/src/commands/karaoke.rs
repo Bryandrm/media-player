@@ -12,7 +12,7 @@ use crate::karaoke;
 
 /// Default language para forced alignment. WhisperX necesita el idioma para
 /// cargar el modelo de alignment correcto (wav2vec2 por idioma).
-const DEFAULT_ALIGN_LANGUAGE: &str = "en";
+const DEFAULT_ALIGN_LANGUAGE: &str = "auto";
 
 /// Language para mismatch detection (transcripción). "auto" deja que whisperx
 /// detecte el idioma del audio automáticamente — crucial para libraries

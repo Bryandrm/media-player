@@ -320,20 +320,32 @@ src-tauri/resources/scripts/
   `word.score` (0..1) de los word timings de WhisperX y lo persiste en
   `lyrics.alignment_score` (migración `20260619000001`). Score bajo
   (< 0.5) indica mismatch LRC↔audio. **Nivel 2:** script
-  `mismatch_detect.py` transcribe el audio con WhisperX, convierte ambos
-  textos (LRC + transcripción) a fonemas IPA vía `phonemizer` (espeak-ng),
-  y calcula Levenshtein normalizado por línea. Botón **CHECK QUALITY** en
-  el panel de lyrics → panel con score overall + líneas mismatched (<50%).
+  `mismatch_detect.py` transcribe el audio con **faster-whisper directo**
+  (sin pipeline whisperx), convierte ambos textos (LRC + transcripción) a
+  fonemas IPA vía `phonemizer` (espeak-ng), y calcula Levenshtein
+  normalizado por línea. Botón **CHECK QUALITY** en el panel de lyrics →
+  panel con score overall + líneas mismatched (<50%).
   Deps: `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng`.
   Fallback a comparación de texto raw si phonemizer no está instalado.
-  **Auto-detect de idioma** (2026-06-19): mismatch detection pasa
-  `language="auto"` a whisperx → detecta español, japonés, etc.
-  automáticamente. El alignment (AUTO-ALIGN) sigue en `"en"` por ahora
-  (wav2vec2 necesita idioma explícito). **Guía visual**: después de
-  AUTO-ALIGN muestra alignment score + link a CHECK QUALITY si <50%;
-  después de CHECK QUALITY con mismatches muestra "USE EDIT TO FIX BAD
-  LINES, THEN RE-ALIGN". Word-level matching en mismatch (alinea
-  transcripción a word timestamps antes de comparar, no bloques enteros).
+  **Auto-detect de idioma** (2026-06-19): tanto mismatch detection como
+  AUTO-ALIGN pasan `language="auto"` → detectan español, japonés, etc.
+  automáticamente. AUTO-ALIGN transcribe 30s del audio con whisper base
+  para detectar el idioma, luego carga el wav2vec2 correspondiente.
+  **Bypass de VAD** (2026-06-19): mismatch detection usa
+  `faster_whisper.WhisperModel.transcribe()` directamente en vez del
+  pipeline de whisperx, salteando el VAD de pyannote que filtraba ~60%
+  de voces cantadas sobre instrumentación pesada (ver Gotcha #27).
+  Modelo "small" (más preciso en no-inglés que "base").
+  **Normalización de texto** antes de fonemizar: NFC Unicode, lowercase,
+  strip puntuación, collapse whitespace. **Fix phonemizer batch**:
+  phonemizer descarta strings vacíos del batch output, rompiendo el
+  indexing — ahora se fonemizan solo textos no-vacíos y se reconstruye
+  el array completo.
+  **Guía visual**: después de AUTO-ALIGN muestra alignment score + link
+  a CHECK QUALITY si <50%; después de CHECK QUALITY con mismatches
+  muestra "USE EDIT TO FIX BAD LINES, THEN RE-ALIGN". Word-level
+  matching en mismatch (faster-whisper con `word_timestamps=True` da
+  per-word timing directamente, sin paso de alignment separado).
 - **Cascade de lyrics resiliente** ✓ (2026-06-19) — errores de red en un
   provider (LRCLIB caído, timeout NetEase) ya no abortan el cascade. Se
   logean y se sigue al siguiente provider. Antes, un `?` propagaba el
@@ -751,6 +763,36 @@ Síntoma: `RuntimeError: espeak not installed on your system` aunque
 **Fix:** `mismatch_detect.py` setea `PHONEMIZER_ESPEAK_LIBRARY` a
 `%ProgramFiles%\eSpeak NG\libespeak-ng.dll` automáticamente en Windows
 si no está seteada.
+
+### 27. pyannote VAD filtra voces cantadas sobre instrumentación pesada
+whisperx usa pyannote como VAD (Voice Activity Detection) antes de
+transcribir — decide qué regiones del audio son "habla" y solo transcribe
+esas. El modelo está entrenado en speech datasets, no en música. Para
+voces cantadas mezcladas con reggaeton / EDM / instrumentación densa, el
+VAD filtra ~60% de las voces como "no speech" — resultado: la mayoría
+de líneas del LRC no tienen transcripción contra la cual comparar.
+
+Bajar `vad_onset` de 0.5 a 0.1 apenas mejoró (8→10 segmentos) — las
+probabilidades de speech del modelo pyannote son genuinamente bajas para
+voces cantadas.
+
+**Fix:** `mismatch_detect.py` usa `faster_whisper.WhisperModel.transcribe()`
+directamente con `word_timestamps=True`, salteando el pipeline de whisperx
+(y su VAD) por completo. Whisper procesa todo el audio sin filtrado →
+cobertura completa. Puede producir hallucinations en secciones
+instrumentales, pero esas se scorean bajo contra el LRC real — no peor
+que `(silence)` y con mucha mejor cobertura en las voces.
+
+### 28. phonemizer descarta strings vacíos del batch
+`phonemize(["hola", "", "mundo"])` devuelve `["ola", "mundo"]` — 2 items
+en vez de 3. Si el input tiene N textos y M son vacíos, el output tiene
+N-M items. Esto rompe el indexing cuando se usa `zip` o slicing con
+posiciones asumidas. Síntoma: 111 líneas de LRC pero solo ~51 en el
+resultado JSON (las últimas 60 se pierden silenciosamente porque el `zip`
+trunca al iterable más corto).
+
+**Fix:** en `mismatch_detect.py`, solo se fonemizan textos no-vacíos y
+se reconstruye el array completo con `""` en las posiciones vacías.
 
 ---
 

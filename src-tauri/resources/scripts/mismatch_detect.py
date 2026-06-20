@@ -43,6 +43,7 @@ import os
 import re
 import sys
 import traceback
+import unicodedata
 
 # Windows: phonemizer needs the espeak-ng shared library, not the CLI exe.
 # Set PHONEMIZER_ESPEAK_LIBRARY to the DLL path before importing phonemizer.
@@ -214,6 +215,15 @@ def espeak_language_code(lang):
     return mapping.get(lang, lang)
 
 
+def normalize_text(text):
+    """Normalize text for fair comparison: lowercase, strip punctuation, collapse whitespace."""
+    text = unicodedata.normalize("NFC", text)
+    text = text.lower()
+    text = re.sub(r"[^\w\s]", "", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def main():
     if len(sys.argv) != 5:
         print(
@@ -257,14 +267,24 @@ def main():
 
     print(f"[mismatch] {len(lrc_lines)} LRC lines parsed", file=sys.stderr)
 
-    # 1. Transcribe audio with WhisperX
+    # 1. Transcribe audio — use faster-whisper directly, bypassing whisperx's
+    #    pyannote VAD pipeline. The VAD is trained on clean speech and filters
+    #    out ~60% of sung vocals mixed with instruments. By calling the whisper
+    #    model directly with word_timestamps=True we get full audio coverage
+    #    AND per-word timing in one pass (no separate alignment step needed).
     device = "cpu"
-    # language="auto" → let whisperx detect the language from audio
     load_lang = None if language == "auto" else language
+
     try:
-        model = whisperx.load_model("base", device, compute_type="int8", language=load_lang)
+        from faster_whisper import WhisperModel as FWModel
+    except ImportError as e:
+        print(f"faster_whisper not importable: {e}", file=sys.stderr)
+        sys.exit(3)
+
+    try:
+        fw_model = FWModel("small", device=device, compute_type="int8")
     except Exception as e:
-        print(f"load_model failed: {e}", file=sys.stderr)
+        print(f"load model failed: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         sys.exit(6)
 
@@ -275,31 +295,38 @@ def main():
         traceback.print_exc(file=sys.stderr)
         sys.exit(7)
 
-    print("[mismatch] transcribing audio...", file=sys.stderr)
-    result = model.transcribe(audio, batch_size=8)
-    segments = result.get("segments", [])
-    detected_lang = result.get("language", language)
-    print(f"[mismatch] transcribed {len(segments)} segments (lang={detected_lang})", file=sys.stderr)
-
-    if not segments:
-        print("whisperx returned 0 segments", file=sys.stderr)
+    print("[mismatch] transcribing audio (no VAD, full coverage)...", file=sys.stderr)
+    try:
+        segments_gen, info = fw_model.transcribe(
+            audio, language=load_lang, beam_size=5, word_timestamps=True,
+        )
+        raw_segments = list(segments_gen)
+    except Exception as e:
+        print(f"transcribe failed: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
         sys.exit(8)
 
-    # Align to get word-level timestamps for better per-line matching
-    align_lang = detected_lang if language == "auto" else language
-    try:
-        align_model, align_meta = whisperx.load_align_model(
-            language_code=align_lang, device=device
-        )
-        result = whisperx.align(
-            segments, align_model, align_meta, audio, device,
-            return_char_alignments=False,
-        )
-        segments = result.get("segments", segments)
-        n_words = sum(len(s.get("words", [])) for s in segments)
-        print(f"[mismatch] aligned {n_words} words for matching", file=sys.stderr)
-    except Exception as e:
-        print(f"[mismatch] align failed, using segment-level matching: {e}", file=sys.stderr)
+    detected_lang = info.language if info.language else (language if language != "auto" else "en")
+    print(f"[mismatch] transcribed {len(raw_segments)} segments (lang={detected_lang})", file=sys.stderr)
+
+    if not raw_segments:
+        print("whisper returned 0 segments", file=sys.stderr)
+        sys.exit(8)
+
+    # Convert faster-whisper Segment objects to dicts for matching
+    segments = []
+    for seg in raw_segments:
+        s = {"start": seg.start, "end": seg.end, "text": seg.text.strip()}
+        if seg.words:
+            s["words"] = [
+                {"word": w.word, "start": w.start, "end": w.end}
+                for w in seg.words
+                if w.start is not None
+            ]
+        segments.append(s)
+
+    n_words = sum(len(s.get("words", [])) for s in segments)
+    print(f"[mismatch] {n_words} words with timestamps", file=sys.stderr)
 
     # 2. Match LRC lines to transcribed segments
     pairs = match_lines_to_segments(lrc_lines, segments)
@@ -309,19 +336,32 @@ def main():
     espeak_lang = espeak_language_code(phoneme_lang)
     lrc_texts = [p[0]["text"] for p in pairs]
     transcribed_texts = [p[1] for p in pairs]
-    all_texts = lrc_texts + transcribed_texts
+    all_texts = [normalize_text(t) for t in lrc_texts + transcribed_texts]
 
-    print(f"[mismatch] converting {len(all_texts)} texts to phonemes (lang={espeak_lang})...", file=sys.stderr)
+    # phonemizer drops empty strings from batch output — phonemize only
+    # non-empty texts and map back to preserve correct indexing.
+    n = len(pairs)
+    non_empty = [(i, t) for i, t in enumerate(all_texts) if t]
+    n_empty = len(all_texts) - len(non_empty)
+    if n_empty:
+        print(f"[mismatch] {n_empty}/{len(all_texts)} texts empty after normalization", file=sys.stderr)
+
+    print(f"[mismatch] converting {len(non_empty)} non-empty texts to phonemes (lang={espeak_lang})...", file=sys.stderr)
     try:
-        all_phonemes = to_phonemes_batch(all_texts, espeak_lang)
+        if non_empty:
+            indices, texts_to_phonemize = zip(*non_empty)
+            phonemized = to_phonemes_batch(list(texts_to_phonemize), espeak_lang)
+            all_phonemes = [""] * len(all_texts)
+            for idx, ph in zip(indices, phonemized):
+                all_phonemes[idx] = ph
+        else:
+            all_phonemes = [""] * len(all_texts)
     except Exception as e:
         print(f"phonemizer failed: {e}", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
-        # Fallback: compare raw text without phonemes
         print("[mismatch] falling back to raw text comparison", file=sys.stderr)
-        all_phonemes = [t.lower() for t in all_texts]
+        all_phonemes = [t for t in all_texts]
 
-    n = len(pairs)
     lrc_phonemes = all_phonemes[:n]
     transcribed_phonemes = all_phonemes[n:]
 
@@ -356,9 +396,12 @@ def main():
         sys.exit(9)
 
     mismatched = [l for l in output_lines if l["score"] < 0.5]
+    silent = [l for l in output_lines if not l["transcribed_text"].strip()]
     print(
         f"[mismatch] done: overall={overall_score:.3f}, "
-        f"{len(mismatched)}/{n} lines below 0.5",
+        f"{len(output_lines)} lines scored, "
+        f"{len(mismatched)} below 0.5, "
+        f"{len(silent)} silent (no transcription)",
         file=sys.stderr,
     )
 

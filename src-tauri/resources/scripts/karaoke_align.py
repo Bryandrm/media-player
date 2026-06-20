@@ -93,8 +93,25 @@ def main():
         traceback.print_exc(file=sys.stderr)
         sys.exit(7)
 
+    # Auto-detect language if requested
+    if language == "auto":
+        print("auto-detecting language from audio...", file=sys.stderr)
+        try:
+            detect_model = whisperx.load_model(
+                "base", device, compute_type="int8", language=None,
+                vad_options={"vad_onset": 0.1, "vad_offset": 0.05},
+            )
+            clip = audio[: 30 * 16000]
+            detect_result = detect_model.transcribe(clip, batch_size=1)
+            language = detect_result.get("language", "en")
+            print(f"detected language: {language}", file=sys.stderr)
+            del detect_model
+        except Exception as e:
+            print(f"language detection failed, defaulting to 'en': {e}", file=sys.stderr)
+            language = "en"
+
     print(
-        f"forced alignment: {len(segments)} segments (LRC bounds, align-only mode)",
+        f"forced alignment: {len(segments)} segments, lang={language} (LRC bounds, align-only mode)",
         file=sys.stderr,
     )
 
