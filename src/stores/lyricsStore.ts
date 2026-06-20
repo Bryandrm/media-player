@@ -150,7 +150,8 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
     if (get().aligning) return;
     set({ aligning: true, error: null });
     try {
-      await invoke("karaoke_auto_align", { trackId });
+      const res = await invoke<{ alignmentScore: number }>("karaoke_auto_align", { trackId });
+      console.log(`[karaoke] alignment score: ${res.alignmentScore.toFixed(3)}`);
       // synced_lyrics fue reescrito en backend con A2. Forzamos refetch
       // limpiando el state cacheado para que el siguiente fetch lea fresh
       // de la DB (el cache-check del comando lyrics_fetch devuelve la

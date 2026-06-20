@@ -225,5 +225,9 @@ pub struct Lyrics {
     /// errores. NULL para rows pre-fix; el caller debe caer a `synced_lyrics`
     /// como fallback en ese caso.
     pub original_synced_lyrics: Option<String>,
+    /// Score promedio del forced alignment (0.0..1.0). NULL si nunca se
+    /// alineó. Score bajo (<0.5) indica que el LRC probablemente no matchea
+    /// el audio — las palabras del texto no se encontraron en la señal.
+    pub alignment_score: Option<f64>,
     pub status: String,
 }

@@ -124,6 +124,7 @@ async fn fetch_one(
             speed_ratio: 1.0,
             aligned_at: None,
             original_synced_lyrics: None,
+            alignment_score: None,
             status: "found".to_string(),
         }));
     }
@@ -148,6 +149,7 @@ async fn fetch_one(
         speed_ratio,
         aligned_at: None,
         original_synced_lyrics: None,
+        alignment_score: None,
         status: "found".to_string(),
     }))
 }
@@ -255,6 +257,7 @@ async fn search_fuzzy(
             speed_ratio,
             aligned_at: None,
             original_synced_lyrics: None,
+            alignment_score: None,
             status: "found".to_string(),
         }));
     }

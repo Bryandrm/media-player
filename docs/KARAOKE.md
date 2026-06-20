@@ -7,6 +7,7 @@
 ## Estado
 
 - **Fase A** ✓ shippeada (2026-05-04) con caveats. Forced alignment via **WhisperX** en modo align-only + parser A2 + botón `AUTO-ALIGN`. **Funciona bien para tracks con LRC de buena calidad; mediocre para LRC con letras imperfectas** (ver §13 "Lecciones aprendidas").
+- **Alignment score** ✓ (2026-06-19). `align_track` calcula promedio de `word.score` de WhisperX y lo persiste en `lyrics.alignment_score`. Score bajo (< 0.5) = mismatch LRC↔audio. Nivel 2 pendiente: transcripción + comparación fonética para localizar líneas malas.
 - **Fase B–E** — futuro, sin compromiso. Karaoke mode UI, vocal removal, mic input, pitch scoring.
 
 ---

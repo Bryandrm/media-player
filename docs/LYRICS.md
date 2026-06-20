@@ -42,12 +42,12 @@ Sub-fase 2.a (drift + intros) ✓ cerrada 2026-05-03. Sub-fase 2.b (forced align
 El manual edit modal (2.c.1) cubre el caso edge donde un usuario *técnico* corrige un LRC malo. El usuario común no va a pegar `[mm:ss.xx]text` en una textarea. Para que la corrección de drift / mismatch sea **automática** y no requiera intervención, queda este backlog priorizado por ROI:
 
 1. ✅ **Provider synced adicional gratis** (alta prioridad) — **resuelto con NetEase** (2.c.3, 2026-06-18). El plan era Musixmatch, pero su free tier es preview-only/de pago; NetEase es free + keyless. Complementa a LRCLIB en los huecos de cobertura synced.
-2. **Auto-fallback por confidence baja**. Si el cascade actual devuelve algo con `confidence < 0.7`, intentar el siguiente provider en vez de quedarnos con el match débil. Hoy nos quedamos con el primer hit.
+2. ✅ **Auto-fallback por confidence baja (2.c.4a)** — **resuelto** (2026-06-19). Smart cascade: si un provider devuelve synced con `confidence < 0.7` (constante `CONFIDENCE_THRESHOLD` en `lyrics/mod.rs`), lo retiene como candidato y sigue al siguiente provider. Al final devuelve el de mayor confidence. Ejemplo: LRCLIB fuzzy match 0.3 (live version) → antes se aceptaba, ahora sigue a NetEase → si NetEase tiene match correcto (0.85), usa ese.
 3. **Genius como fallback plain** (media prioridad). No cubre synced, pero al menos da letras para tracks que LRCLIB no tiene. Útil para indie / nicho.
-4. **Auto-detect de mismatch via WhisperX score**. Cuando corramos AUTO-ALIGN, si whisperx devuelve un score muy bajo (alignment de mala calidad → señal de que el texto no matchea el audio), automáticamente intentar refetchear de un provider distinto antes de mostrarle al usuario el resultado roto.
+4. ✅ **Alignment score desde WhisperX (2.c.4b, nivel 1)** — **resuelto parcial** (2026-06-19). `align_track` calcula promedio de `word.score` (0..1) de los word timings y lo persiste en `lyrics.alignment_score` (migración `20260619000001`). Score bajo (< 0.5) indica mismatch LRC↔audio. Nivel 2 pendiente: correr WhisperX en transcribe mode, fonetizar ambos textos (LRC + transcripción) vía `phonemizer` (espeak, 100+ idiomas), y comparar por línea con Levenshtein sobre secuencias IPA para localizar exactamente qué líneas no matchean.
 5. **Submit edits a LRCLIB**. Cuando un usuario *sí* edita manualmente y la edición resulta bien (post-AUTO-ALIGN exitoso), ofrecer botón "Contribute to LRCLIB" para que ese fix beneficie a la comunidad. Cero esfuerzo extra para el usuario, beneficio compuesto a largo plazo.
 
-**Conclusión:** el modal de 2.c.1 es escalera de emergencia, no la solución de UX. Con 2.c.3 (NetEase) shipped, los pasos restantes hacia "automático" son **auto-fallback por confidence baja** + **auto-detect de mismatch via whisperx score**.
+**Conclusión:** el modal de 2.c.1 es escalera de emergencia, no la solución de UX. Con smart cascade (2.c.4a) + alignment score (2.c.4b nivel 1) shipped, el paso restante hacia "automático" es el **nivel 2 de mismatch detection** (transcribe + fonética) para localizar líneas malas y actuar (refetch o flag al usuario).
 
 ### Fase 3 — Avanzado
 

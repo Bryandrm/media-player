@@ -46,6 +46,7 @@ pub fn try_embedded(track_id: i64, file_path: &Path) -> AppResult<Option<Lyrics>
         speed_ratio: 1.0, // embedded = mismo audio = sin drift por definición
         aligned_at: None,
         original_synced_lyrics: None,
+        alignment_score: None,
         status: "found".to_string(),
     }))
 }

@@ -8,6 +8,8 @@
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Manager, State};
 
+use serde::Serialize;
+
 use crate::errors::{AppError, AppResult};
 use crate::karaoke;
 
@@ -16,14 +18,18 @@ use crate::karaoke;
 /// setting per-track, se mueve a parámetro.
 const DEFAULT_LANGUAGE: &str = "en";
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlignResponse {
+    pub alignment_score: f64,
+}
+
 #[tauri::command]
 pub async fn karaoke_auto_align(
     track_id: i64,
     app: AppHandle,
     pool: State<'_, SqlitePool>,
-) -> AppResult<()> {
-    // Resolver el path del wrapper Python en los Tauri resources.
-    // Layout en bundle: <resource_dir>/scripts/karaoke_align.py
+) -> AppResult<AlignResponse> {
     let script_path = app
         .path()
         .resolve(
@@ -39,6 +45,9 @@ pub async fn karaoke_auto_align(
         )));
     }
 
-    karaoke::align_track(pool.inner(), track_id, DEFAULT_LANGUAGE, &script_path).await?;
-    Ok(())
+    let result =
+        karaoke::align_track(pool.inner(), track_id, DEFAULT_LANGUAGE, &script_path).await?;
+    Ok(AlignResponse {
+        alignment_score: result.alignment_score,
+    })
 }

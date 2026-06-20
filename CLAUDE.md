@@ -294,15 +294,31 @@ src-tauri/resources/scripts/
   (`tempfile` + `sqlx::migrate!`, cero mocks). 5 tests en `db/tracks.rs`
   (insert, idempotencia, record_play, find_by_path, get_details None).
   Helper `db::test_pool()` reutilizable. **GitHub Actions CI** en
-  `.github/workflows/ci.yml`: Rust job (Windows, `cargo check` + `cargo
-  test` + cache) + Frontend job (Ubuntu, `tsc --noEmit` + `pnpm build`).
-  Se ejecuta en push a main y PRs. **Build de producción validado** en
-  Windows (`pnpm tauri build` → MSI + NSIS funcionando).
+  `.github/workflows/ci.yml`: Rust job (Windows + macOS matrix, `cargo
+  check` + `cargo test` + cache) + Frontend job (Ubuntu, `tsc --noEmit` +
+  `pnpm build`). Se ejecuta en push a main y PRs. **Build de producción
+  validado** en Windows (`pnpm tauri build` → MSI + NSIS funcionando).
+- **Lyrics Fase 2.c.4a — smart cascade** ✓ (2026-06-19) — el cascade de
+  providers ya NO para en el primer synced que encuentra. Si un provider
+  devuelve synced con `confidence < 0.7`, lo retiene como candidato y sigue
+  al siguiente provider — al final devuelve el de mayor confidence. Synced
+  con confidence >= 0.7 sigue siendo fast-path (retorno inmediato).
+  Constante `CONFIDENCE_THRESHOLD` en `lyrics/mod.rs`. Escenario concreto:
+  LRCLIB fuzzy match con confidence 0.3 (duración muy distinta = live
+  version) ya no bloquea que NetEase devuelva un match correcto (0.85).
+- **Lyrics Fase 2.c.4b — alignment score** ✓ (2026-06-19) — `align_track`
+  calcula el promedio de `word.score` (0..1) de los word timings de
+  WhisperX y lo persiste en `lyrics.alignment_score` (migración
+  `20260619000001`). Score bajo (< 0.5) indica mismatch LRC↔audio.
+  El comando `karaoke_auto_align` devuelve `AlignResponse { alignmentScore }`
+  al frontend. Primer paso hacia auto-detect de mismatch. Nivel 2 pendiente:
+  transcribir audio + comparar fonéticamente para localizar líneas malas.
 - Próximo (orden acordado con Bryan 2026-06-18): quick wins **cerrados** (drag
   & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓).
   **(2) calidad/plataforma** — ✓ testing Windows, ✓ `pnpm tauri build`,
-  ✓ tests + CI. **Features grandes al final**: Lyrics
-  2.c.4 → karaoke real, Karaoke Fase B-E, Identification Fase 3.
+  ✓ tests + CI. **(3) lyrics/karaoke quality** — smart cascade ✓, alignment
+  score ✓. Nivel 2 (transcribe + fonética) en progreso. **Features grandes
+  al final**: Karaoke Fase B-E, Identification Fase 3.
 
 ---
 

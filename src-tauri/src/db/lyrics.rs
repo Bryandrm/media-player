@@ -16,7 +16,7 @@ pub async fn get_for_track(
     let row = sqlx::query_as::<_, Lyrics>(
         "SELECT track_id, synced_lyrics, plain_lyrics, source, source_id, \
                 confidence, offset_ms, speed_ratio, aligned_at, \
-                original_synced_lyrics, status \
+                original_synced_lyrics, alignment_score, status \
          FROM lyrics WHERE track_id = ?",
     )
     .bind(track_id)
@@ -158,16 +158,19 @@ pub async fn save_aligned(
     pool: &SqlitePool,
     track_id: i64,
     a2_lyrics: &str,
+    alignment_score: Option<f64>,
 ) -> AppResult<()> {
     sqlx::query(
         "UPDATE lyrics SET \
             synced_lyrics = ?, \
             aligned_at = CURRENT_TIMESTAMP, \
             offset_ms = 0, \
-            speed_ratio = 1.0 \
+            speed_ratio = 1.0, \
+            alignment_score = ? \
          WHERE track_id = ?",
     )
     .bind(a2_lyrics)
+    .bind(alignment_score)
     .bind(track_id)
     .execute(pool)
     .await?;

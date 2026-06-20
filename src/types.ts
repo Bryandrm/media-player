@@ -234,5 +234,8 @@ export type Lyrics = {
    *  migración 20260504. El frontend no lo usa hoy — vive en el contrato
    *  por completitud. */
   originalSyncedLyrics: string | null;
+  /** Score promedio del forced alignment (0..1). null si nunca se alineó.
+   *  Score bajo (<0.5) indica que el LRC probablemente no matchea el audio. */
+  alignmentScore: number | null;
   status: LyricsStatus;
 };

@@ -24,12 +24,17 @@ use crate::errors::{AppError, AppResult};
 ///
 /// `script_path` es la ruta al wrapper `karaoke_align.py` resuelta del
 /// Tauri resource bundle por el caller (típicamente `commands::karaoke`).
+/// Resultado del alignment: score promedio de las palabras alineadas.
+pub struct AlignResult {
+    pub alignment_score: f64,
+}
+
 pub async fn align_track(
     pool: &SqlitePool,
     track_id: i64,
     language: &str,
     script_path: &Path,
-) -> AppResult<()> {
+) -> AppResult<AlignResult> {
     // 1. Leer lyrics actuales. Para el alignment usamos `original_synced_lyrics`
     //    como fuente — es el LRC raw tal como vino de LRCLIB, sin contaminar
     //    por A2 de aligns anteriores. Si no está poblado (rows pre-fix de
@@ -84,13 +89,26 @@ pub async fn align_track(
         ));
     }
 
-    // 5. Convertir a A2 LRC.
+    // 5. Calcular score promedio del alignment.
+    let scored_words: Vec<f64> = words.iter().map(|w| w.score).collect();
+    let alignment_score = if scored_words.is_empty() {
+        0.0
+    } else {
+        scored_words.iter().sum::<f64>() / scored_words.len() as f64
+    };
+    eprintln!(
+        "[karaoke] alignment score: {:.3} ({} words)",
+        alignment_score,
+        scored_words.len()
+    );
+
+    // 6. Convertir a A2 LRC.
     let a2 = build_a2_lrc(&synced, &lines, &words);
 
-    // 6. Persistir.
-    db::lyrics::save_aligned(pool, track_id, &a2).await?;
+    // 7. Persistir.
+    db::lyrics::save_aligned(pool, track_id, &a2, Some(alignment_score)).await?;
 
-    Ok(())
+    Ok(AlignResult { alignment_score })
 }
 
 #[derive(Debug, Clone)]
