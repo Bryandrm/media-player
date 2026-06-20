@@ -47,6 +47,7 @@
 | ADR-034 | Smart playlists: motor multi-regla con query builder dinámico | Accepted |
 | ADR-035 | Identify extendido: MB metadata (genre + year + album) + Cover Art Archive | Accepted |
 | ADR-036 | Smart playlists: picker cascadante + operador `in`/`not_in` | Accepted |
+| ADR-037 | Pixi como gestor de dependencias ML/sistema | Proposed |
 
 ---
 
@@ -1037,4 +1038,224 @@ Sí. El nuevo `in` op usa `push_bind` por cada elemento del array, igual que el 
 
 ### Compatibilidad con smart playlists existentes
 Editar una playlist creada con el formato viejo (`op=is`, value escalar) sigue funcionando. El modal arranca con la condición tal cual quedó persistida; el usuario puede cambiarla a `in` si quiere expandir.
+
+---
+
+## ADR-037 — Pixi como gestor de dependencias ML/sistema
+
+**Estado: `Proposed`** · 2026-06-19
+
+### Contexto
+La app tiene 9+ dependencias del sistema repartidas en tres categorías:
+- **Core downloader**: yt-dlp, ffmpeg, node ≥22
+- **Identification**: fpcalc (Chromaprint)
+- **ML/karaoke**: whisperx, faster-whisper, phonemizer, espeak-ng, PyTorch
+
+Hoy cada dep se instala manualmente (`brew`, `pip`, `pipx`, instalador .exe)
+y la app detecta su presencia con `which` + fallback paths. El onboarding es
+pesado: un usuario nuevo necesita ~7 comandos en terminal para tener todo
+funcionando. La detección de deps es inconsistente (3 patrones distintos:
+banner, `alert()`, botones invisibles).
+
+### Opciones evaluadas
+
+| | Setup script | Conda/Miniforge | Pixi | Docker |
+|---|---|---|---|---|
+| Aislamiento | Ninguno | Env virtual | Env virtual | Container |
+| Peso base | 0 | ~100MB | ~30MB (binario) | ~4GB Docker Desktop |
+| Cross-platform | 2 scripts (ps1/sh) | 1 `environment.yml` | 1 `pixi.toml` | 1 Dockerfile |
+| Instala deps sistema | Asume admin/brew/choco | Sí (conda-forge) | Sí (conda-forge) | Sí (dentro container) |
+| Curva usuario | Baja pero frágil | Media | Baja (1 binario, 1 comando) | Alta |
+| Redistribuible | N/A | Sí (BSD) | Sí (BSD 3-Clause) | Sí |
+
+### Decisión propuesta
+**Pixi** (prefix.dev) como gestor de dependencias, invocado como sidecar
+desde Tauri. Binario único (~30MB comprimido, BSD 3-Clause), mismos paquetes
+de conda-forge que conda/mamba pero sin instalación base.
+
+Flujo propuesto para el usuario:
+1. Instala la app (MSI/DMG normal).
+2. First-run: la app detecta que no tiene el environment ML.
+3. Botón "SETUP ML FEATURES" (o wizard automático).
+4. Internamente: `pixi install` con el `pixi.toml` del proyecto.
+5. Descarga PyTorch + whisperx + deps (~2-4GB, una sola vez).
+6. Scripts corren vía `pixi run python script.py`.
+
+### Investigación: disponibilidad en conda-forge
+
+| Paquete | conda-forge | PyPI | Sección en pixi.toml |
+|---------|-------------|------|----------------------|
+| pytorch | ✅ (CPU) | ✅ | `[dependencies]` |
+| ffmpeg | ✅ | — | `[dependencies]` |
+| nodejs ≥22 | ✅ | — | `[dependencies]` |
+| libchromaprint (fpcalc) | ✅ | — | `[dependencies]` |
+| yt-dlp | ✅ | ✅ | `[dependencies]` |
+| whisperx | ❌ | ✅ | `[pypi-dependencies]` |
+| faster-whisper | ❌ | ✅ | `[pypi-dependencies]` |
+| phonemizer | Parcial (fork) | ✅ | `[pypi-dependencies]` |
+| **espeak-ng** | **❌** | **—** | **⚠️ NO CUBIERTO** |
+
+### pixi.toml borrador (con environments selectivos)
+
+El usuario elige qué features instalar. Pixi soporta environments múltiples
+en el mismo `pixi.toml` — cada uno baja solo lo necesario.
+
+```toml
+[project]
+name = "media-player-deps"
+version = "0.1.0"
+description = "ML and system dependencies for Brutalist Music Player"
+
+[feature.core.dependencies]
+ffmpeg = "*"
+yt-dlp = "*"
+nodejs = ">=22"
+libchromaprint = "*"
+# ~200MB — descarga, identificación, playback
+
+[feature.ml.dependencies]
+python = ">=3.11,<3.13"
+pytorch-cpu = "*"
+[feature.ml.pypi-dependencies]
+whisperx = { git = "https://github.com/m-bain/whisperx.git" }
+faster-whisper = "*"
+phonemizer = "*"
+# ~2-4GB — karaoke, auto-align, mismatch detection
+
+[environments]
+core = ["core"]
+full = ["core", "ml"]
+```
+
+### Wizard de first-run propuesto
+
+La app no mete texto en el instalador (MSI/DMG). El setup ocurre dentro de
+la app en un wizard de first-run:
+
+```
+SETUP FEATURES
+
+[x] CORE (required)              ~200MB
+    Downloads, identification, playback
+    yt-dlp, ffmpeg, node, fpcalc
+
+[ ] ML / KARAOKE (optional)      ~2-4GB
+    Auto-align, quality check, mismatch detection
+    whisperx, PyTorch, phonemizer
+
+         [INSTALL SELECTED]
+```
+
+El usuario elige, Pixi baja solo lo seleccionado. Si después quiere ML,
+vuelve al wizard (Settings o similar) y lo agrega incrementalmente.
+
+### Pixi como "Docker light"
+
+Pixi NO es un container — no virtualiza OS ni filesystem. Crea un ambiente
+aislado (carpeta `.pixi/`) con binarios nativos y ajusta PATH para que los
+scripts los encuentren. Sin overhead de virtualización, sin Docker Desktop.
+Borrar `.pixi/` desinstala todo limpio.
+
+### Banderas rojas
+
+1. **espeak-ng NO está en conda-forge ni en PyPI.** Es una librería C/C++
+   que necesita instalación a nivel sistema. Opciones:
+   - El wizard de la app guía al usuario para instalarlo (link al installer).
+   - Fallback: CHECK QUALITY cae a comparación de texto raw (ya funciona).
+   - Investigar si se puede compilar como recurso bundleado (espeak-ng es
+     ~2MB compilado).
+
+2. **whisperx no está en conda-forge** — hay que usar `[pypi-dependencies]`
+   con git URL, lo cual mezcla resolución conda + pip. Pixi lo soporta
+   (resuelve conda primero, luego pip), pero es un punto de fricción
+   potencial.
+
+3. **Pixi es 0.x** (v0.70.2 a junio 2026). Estable y production-ready
+   según los autores, pero sin garantía formal de estabilidad de API.
+   Cambios de formato del lockfile son posibles.
+
+4. **Peso del environment**: PyTorch CPU + whisperx + deps = ~2-4GB. Esto
+   es ineludible con cualquier solución (Docker, conda, pixi, pip). El
+   usuario necesita saberlo antes del download.
+
+5. **pixi-pack** (alternativa): puede crear archives auto-extraíbles con
+   todo pre-resuelto. Evita el download de 2-4GB en la máquina del usuario
+   si nosotros lo pre-empaquetamos. Trade-off: el archive pesa ~2-4GB y
+   hay que generarlo por plataforma (win/mac/linux × x86/arm).
+
+### Integración con Tauri
+
+El binario de pixi se redistribuye como sidecar o resource de Tauri. La
+invocación cambia de:
+```rust
+// Antes
+let python = find_python_for_whisperx()?;
+Command::new(python).arg(script_path)...
+```
+a:
+```rust
+// Después
+let pixi = resolve_pixi_binary()?;
+Command::new(pixi)
+    .args(["run", "python", script_path.to_str().unwrap()])
+    .current_dir(pixi_project_dir)...
+```
+
+`resolve_binary` para yt-dlp/ffmpeg/fpcalc/node también puede apuntar al
+environment de pixi, unificando la resolución de deps.
+
+### Consecuencias
+- **Pro:** onboarding de 7 comandos manuales → 1 click en la app.
+- **Pro:** aislamiento total — no contamina el Python del sistema.
+- **Pro:** cross-platform con un solo `pixi.toml`.
+- **Pro:** licencia BSD 3-Clause permite redistribuir el binario.
+- **Contra:** espeak-ng queda fuera — necesita solución aparte.
+- **Contra:** ~30MB extra en el bundle del instalador (el binario de pixi).
+- **Contra:** environment pesa ~2-4GB (ineludible, pero hay que comunicarlo).
+- **Contra:** Pixi es 0.x — riesgo bajo pero no nulo de breaking changes.
+
+### Resolución de banderas rojas
+
+**espeak-ng (no en conda-forge ni PyPI)** — dos acciones en paralelo:
+1. **Corto plazo: bundlear como resource de Tauri.** espeak-ng compilado
+   pesa ~2-3MB. Se shipea con la app directamente, sin pasar por pixi.
+   El script `mismatch_detect.py` ya tiene fallback: si espeak-ng no está,
+   cae a comparación de texto raw. Con el bundle, siempre está disponible.
+2. **Contribución comunitaria: crear feedstock para conda-forge.** PR a
+   `conda-forge/staged-recipes` con `meta.yaml` para compilar espeak-ng.
+   Trabajo inicial ~2-4h, después conda-forge mantiene builds automáticos
+   por plataforma. Beneficia a toda la comunidad (phonemizer, TTS, etc.).
+   Una vez aceptado, se agrega a `[dependencies]` del `pixi.toml` y se
+   elimina el bundle manual.
+
+**whisperx no en conda-forge** — se usa `[pypi-dependencies]` con git URL.
+Pixi resuelve conda primero (PyTorch, ffmpeg) y luego pip (whisperx). Esto
+funciona pero es un punto de fricción: pip puede intentar reinstalar PyTorch
+desde PyPI (CPU-only wheel) si las versiones no coinciden con lo que conda
+instaló. Mitigación: pinear `torch` en `[dependencies]` de conda para que
+pip lo vea como ya satisfecho.
+
+**Pixi 0.x** — v0.70.2 a junio 2026, production-ready según autores pero
+sin 1.0 formal. Riesgo bajo: el formato `pixi.toml` es estable, los
+lockfiles son versionados, y la comunidad (QuantCo, varios corporates) ya
+lo usa en producción. Mantener lockfile en git para reproducibilidad.
+
+### TODO antes de aceptar
+- [ ] Validar que `pixi install` con el `pixi.toml` borrador funcione en
+      Windows y macOS (crear el toml, correrlo, verificar que whisperx
+      importa y los scripts ejecutan).
+- [ ] Medir tiempo de `pixi install` cold (primera vez) y warm (cache).
+- [ ] Probar `pixi run python mismatch_detect.py` end-to-end.
+- [ ] Bundlear espeak-ng como resource de Tauri (libespeak-ng.dll /
+      libespeak-ng.dylib / libespeak-ng.so + data files).
+- [ ] Crear feedstock espeak-ng para conda-forge (PR a staged-recipes).
+- [ ] Evaluar pixi-pack como alternativa al download on-demand.
+- [ ] Verificar que pip no reinstale PyTorch dentro del env de pixi
+      (conflicto conda vs pip).
+- [ ] Medir overhead de `pixi run` por invocación (vs llamar python
+      directo). Si >1s, evaluar activar el env una vez y cachear el path.
+- [ ] Diseñar wizard de first-run con estimación de tamaño visible,
+      progress bar, y posibilidad de cancelar.
+- [ ] Probar environments selectivos (`core` vs `full`) — que instalar
+      `core` no baje PyTorch.
 

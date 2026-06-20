@@ -16,6 +16,7 @@ Documentos fuente de verdad:
 - [docs/LYRICS.md](./docs/LYRICS.md) — sub-sistema de letras (LRCLIB + USLT, drift correction, etc.).
 - [docs/IDENTIFICATION.md](./docs/IDENTIFICATION.md) — sub-sistema de identificación (AcoustID + Chromaprint).
 - [docs/KARAOKE.md](./docs/KARAOKE.md) — sub-sistema de karaoke (forced alignment + per-word timing + future fullscreen + vocal removal). No iniciado, doc-only.
+- [docs/SECURITY.md](./docs/SECURITY.md) — auditoría de seguridad, superficie de ataque, plan de hardening.
 
 ---
 
