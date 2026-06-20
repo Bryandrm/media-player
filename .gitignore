@@ -30,3 +30,7 @@ Lib/
 Scripts/
 pyvenv.cfg
 __pycache__/
+
+# Pixi (dependency manager) — environments are user-local
+.pixi/
+pixi.lock

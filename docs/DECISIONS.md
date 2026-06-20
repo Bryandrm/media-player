@@ -1075,52 +1075,78 @@ de conda-forge que conda/mamba pero sin instalación base.
 
 Flujo propuesto para el usuario:
 1. Instala la app (MSI/DMG normal).
-2. First-run: la app detecta que no tiene el environment ML.
-3. Botón "SETUP ML FEATURES" (o wizard automático).
-4. Internamente: `pixi install` con el `pixi.toml` del proyecto.
-5. Descarga PyTorch + whisperx + deps (~2-4GB, una sola vez).
-6. Scripts corren vía `pixi run python script.py`.
+2. First-run: la app detecta que no tiene el environment.
+3. Wizard "SETUP FEATURES" ofrece core (~800MB) y ML (~4-8GB).
+4. Internamente: `pixi install -e <env>` con el `pixi.toml` bundleado.
+5. Descarga deps (una sola vez por environment).
+6. Binarios/scripts se invocan directamente por path dentro de
+   `.pixi/envs/<env>/` (NO via `pixi run` — overhead ~14s inviable).
 
 ### Investigación: disponibilidad en conda-forge
 
-| Paquete | conda-forge | PyPI | Sección en pixi.toml |
-|---------|-------------|------|----------------------|
-| pytorch | ✅ (CPU) | ✅ | `[dependencies]` |
-| ffmpeg | ✅ | — | `[dependencies]` |
-| nodejs ≥22 | ✅ | — | `[dependencies]` |
-| libchromaprint (fpcalc) | ✅ | — | `[dependencies]` |
-| yt-dlp | ✅ | ✅ | `[dependencies]` |
-| whisperx | ❌ | ✅ | `[pypi-dependencies]` |
-| faster-whisper | ❌ | ✅ | `[pypi-dependencies]` |
-| phonemizer | Parcial (fork) | ✅ | `[pypi-dependencies]` |
-| **espeak-ng** | **❌** | **—** | **⚠️ NO CUBIERTO** |
+Validado el 2026-06-20. El borrador original tenía errores — la matriz
+corregida tras búsqueda real en conda-forge:
 
-### pixi.toml borrador (con environments selectivos)
+| Paquete | conda-forge | PyPI | Estrategia |
+|---------|-------------|------|------------|
+| ffmpeg | ✅ | — | `[dependencies]` |
+| yt-dlp | ✅ | ✅ | `[dependencies]` |
+| nodejs ≥22 | ✅ | — | `[dependencies]` |
+| python | ✅ | — | `[dependencies]` (requerido para pypi) |
+| pytorch-cpu | ✅ | ✅ | ~~`[dependencies]`~~ ver nota |
+| **libchromaprint (fpcalc)** | **❌** | **❌** | **Manual / bundle futuro** |
+| whisperx | ❌ | ✅ (git) | `[pypi-dependencies]` |
+| faster-whisper | ❌ | ✅ | `[pypi-dependencies]` |
+| **phonemizer** | **❌** | ✅ | `[pypi-dependencies]` |
+| **espeak-ng** | **❌** | **❌** | **Bundle Tauri / feedstock futuro** |
+
+**Correcciones vs borrador original:**
+- `libchromaprint` / `fpcalc`: **NO está en conda-forge** (búsqueda verificada).
+- `phonemizer`: **NO está en conda-forge** (el borrador decía "Parcial").
+- `pytorch-cpu` de conda causa conflicto con `torchaudio` de PyPI (ver
+  validación abajo). Solución: PyTorch entero viene de PyPI con el índice
+  CPU (`download.pytorch.org/whl/cpu`).
+
+### pixi.toml validado (con environments selectivos)
 
 El usuario elige qué features instalar. Pixi soporta environments múltiples
 en el mismo `pixi.toml` — cada uno baja solo lo necesario.
 
+**Cambios vs borrador original:** `[project]` → `[workspace]` (sintaxis pixi
+0.70.2), se requiere `channels` y `platforms`, `libchromaprint` eliminado (no
+existe en conda-forge), PyTorch movido a `[pypi-dependencies]` con índice CPU
+para evitar conflicto conda↔pip, `index-strategy = "unsafe-best-match"` para
+que uv tome la mejor versión de cualquier índice (sin esto, paquetes como
+`tqdm` del índice PyTorch bloquean la resolución).
+
 ```toml
-[project]
+[workspace]
 name = "media-player-deps"
 version = "0.1.0"
-description = "ML and system dependencies for Brutalist Music Player"
+description = "Dependencies for Brutalist Music Player"
+channels = ["conda-forge"]
+platforms = ["win-64"]
 
+# -- Core: downloads, playback (~784MB medido) --
 [feature.core.dependencies]
-ffmpeg = "*"
+ffmpeg = ">=7"
 yt-dlp = "*"
 nodejs = ">=22"
-libchromaprint = "*"
-# ~200MB — descarga, identificación, playback
 
+# -- ML: karaoke alignment, mismatch detection (~8.3GB medido con CUDA) --
 [feature.ml.dependencies]
 python = ">=3.11,<3.13"
-pytorch-cpu = "*"
+
+[feature.ml.pypi-options]
+extra-index-urls = ["https://download.pytorch.org/whl/cpu"]
+index-strategy = "unsafe-best-match"
+
 [feature.ml.pypi-dependencies]
+torch = ">=2.8,<2.9"
+torchaudio = ">=2.8,<2.9"
 whisperx = { git = "https://github.com/m-bain/whisperx.git" }
 faster-whisper = "*"
 phonemizer = "*"
-# ~2-4GB — karaoke, auto-align, mismatch detection
 
 [environments]
 core = ["core"]
@@ -1135,16 +1161,20 @@ la app en un wizard de first-run:
 ```
 SETUP FEATURES
 
-[x] CORE (required)              ~200MB
-    Downloads, identification, playback
-    yt-dlp, ffmpeg, node, fpcalc
+[x] CORE (required)              ~800MB
+    Downloads, playback
+    yt-dlp, ffmpeg, node
 
-[ ] ML / KARAOKE (optional)      ~2-4GB
+[ ] ML / KARAOKE (optional)      ~4-8GB
     Auto-align, quality check, mismatch detection
     whisperx, PyTorch, phonemizer
 
          [INSTALL SELECTED]
 ```
+
+**Tamaños actualizados tras validación (2026-06-20):** core ~784MB (ffmpeg
+trae muchos codecs como deps transitivas), full ~8.3GB con CUDA / ~4GB
+estimado con CPU. El wizard debe mostrar estos tamaños reales, no estimados.
 
 El usuario elige, Pixi baja solo lo seleccionado. Si después quiere ML,
 vuelve al wizard (Settings o similar) y lo agrega incrementalmente.
@@ -1159,34 +1189,62 @@ Borrar `.pixi/` desinstala todo limpio.
 ### Banderas rojas
 
 1. **espeak-ng NO está en conda-forge ni en PyPI.** Es una librería C/C++
-   que necesita instalación a nivel sistema. Opciones:
-   - El wizard de la app guía al usuario para instalarlo (link al installer).
-   - Fallback: CHECK QUALITY cae a comparación de texto raw (ya funciona).
-   - Investigar si se puede compilar como recurso bundleado (espeak-ng es
-     ~2MB compilado).
+   que necesita instalación a nivel sistema. Resolución: bundle como
+   resource de Tauri (corto plazo) + feedstock conda-forge (largo plazo).
 
-2. **whisperx no está en conda-forge** — hay que usar `[pypi-dependencies]`
-   con git URL, lo cual mezcla resolución conda + pip. Pixi lo soporta
-   (resuelve conda primero, luego pip), pero es un punto de fricción
-   potencial.
+2. **fpcalc / libchromaprint NO está en conda-forge** (verificado
+   2026-06-20, búsqueda de `chromaprint`, `libchromaprint`, `fpcalc`).
+   Resolución: sigue como dep manual o bundle futuro. El current
+   `resolve_binary("fpcalc")` sigue funcionando.
 
-3. **Pixi es 0.x** (v0.70.2 a junio 2026). Estable y production-ready
+3. **whisperx no está en conda-forge** — se usa `[pypi-dependencies]`
+   con git URL. Funciona (verificado), pero whisperx pinea `torch` a una
+   minor exacta (`>=2.8.0,<2.9.dev0`). Hay que mantener el pin del
+   `pixi.toml` en sync.
+
+4. **Conflicto conda PyTorch ↔ pip torchaudio** (encontrado 2026-06-20):
+   `pytorch-cpu` de conda-forge instala `torch==2.8.0` (sin tag), pero
+   `torchaudio` de PyPI es `2.8.0+cu128` que exige `torch==2.8.0+cu128`.
+   Incompatible. `torchaudio` NO está en conda-forge para esta versión.
+   **Solución:** PyTorch entero viene de PyPI con el índice CPU. Se necesita
+   `index-strategy = "unsafe-best-match"` porque el índice CPU tiene
+   versiones viejas de paquetes genéricos (tqdm 4.66 vs 4.67 requerido).
+
+5. **Pixi es 0.x** (v0.70.2 a junio 2026). Estable y production-ready
    según los autores, pero sin garantía formal de estabilidad de API.
-   Cambios de formato del lockfile son posibles.
 
-4. **Peso del environment**: PyTorch CPU + whisperx + deps = ~2-4GB. Esto
-   es ineludible con cualquier solución (Docker, conda, pixi, pip). El
-   usuario necesita saberlo antes del download.
+6. **Peso del environment** (medido, no estimado):
+   - Core: **784MB** (ffmpeg trae ~50 codecs como deps transitivas).
+   - Full con CUDA: **8.3GB** (PyTorch CUDA + librerías cu128).
+   - Full estimado con CPU: **~4GB**.
+   El wizard debe mostrar estos tamaños reales.
 
-5. **pixi-pack** (alternativa): puede crear archives auto-extraíbles con
-   todo pre-resuelto. Evita el download de 2-4GB en la máquina del usuario
-   si nosotros lo pre-empaquetamos. Trade-off: el archive pesa ~2-4GB y
-   hay que generarlo por plataforma (win/mac/linux × x86/arm).
+7. **`pixi run` overhead: ~14 segundos** por invocación (re-resuelve
+   lockfile). Totalmente inviable. Solución: invocación directa por path
+   dentro de `.pixi/envs/<env>/` (~33ms).
 
 ### Integración con Tauri
 
-El binario de pixi se redistribuye como sidecar o resource de Tauri. La
-invocación cambia de:
+**Decisión de invocación (validada 2026-06-20):** `pixi run` agrega **~14
+segundos** de overhead por invocación (re-resuelve el lockfile cada vez).
+Totalmente inviable para producción. En vez de eso, `resolve_binary` busca
+los binarios **directamente** en `.pixi/envs/<env>/` por path conocido.
+Invocación directa por path: **~33ms** (igual que un binario del sistema).
+
+**Paths verificados en Windows** (pixi 0.70.2, win-64):
+
+| Binario | Path dentro de `.pixi/envs/<env>/` |
+|---------|-------------------------------------|
+| ffmpeg | `Library/bin/ffmpeg.exe` |
+| yt-dlp | `Scripts/yt-dlp.exe` |
+| node | `node.exe` (raíz) |
+| python | `python.exe` (raíz) |
+
+El `pixi.toml` se shipea como resource de Tauri. Al first-run se copia a
+`{app_data_dir}/deps/pixi.toml`; pixi crea `.pixi/` al lado. El binario
+de pixi se redistribuye como sidecar (~30MB).
+
+La invocación cambia de:
 ```rust
 // Antes
 let python = find_python_for_whisperx()?;
@@ -1194,25 +1252,28 @@ Command::new(python).arg(script_path)...
 ```
 a:
 ```rust
-// Después
-let pixi = resolve_pixi_binary()?;
-Command::new(pixi)
-    .args(["run", "python", script_path.to_str().unwrap()])
-    .current_dir(pixi_project_dir)...
+// Después — path directo, sin pixi run
+let python = pixi_env_path("full").join("python.exe");
+Command::new(python).arg(script_path)...
 ```
 
-`resolve_binary` para yt-dlp/ffmpeg/fpcalc/node también puede apuntar al
-environment de pixi, unificando la resolución de deps.
+`pixi install` solo se invoca durante el setup (wizard). Después, todo es
+invocación directa por path.
 
 ### Consecuencias
 - **Pro:** onboarding de 7 comandos manuales → 1 click en la app.
 - **Pro:** aislamiento total — no contamina el Python del sistema.
 - **Pro:** cross-platform con un solo `pixi.toml`.
 - **Pro:** licencia BSD 3-Clause permite redistribuir el binario.
-- **Contra:** espeak-ng queda fuera — necesita solución aparte.
+- **Pro:** invocación directa por path (~33ms) = sin overhead en runtime.
+- **Contra:** espeak-ng y fpcalc quedan fuera — necesitan solución aparte.
 - **Contra:** ~30MB extra en el bundle del instalador (el binario de pixi).
-- **Contra:** environment pesa ~2-4GB (ineludible, pero hay que comunicarlo).
+- **Contra:** core ~784MB, full ~4-8GB (ineludible, hay que comunicarlo).
+- **Contra:** `pixi run` es inutilizable (~14s overhead) — solo sirve para
+  `pixi install` durante el setup.
 - **Contra:** Pixi es 0.x — riesgo bajo pero no nulo de breaking changes.
+- **Contra:** conflicto conda/pip con PyTorch requiere config cuidadosa
+  (`extra-index-urls` + `index-strategy`).
 
 ### Resolución de banderas rojas
 
@@ -1228,34 +1289,60 @@ environment de pixi, unificando la resolución de deps.
    Una vez aceptado, se agrega a `[dependencies]` del `pixi.toml` y se
    elimina el bundle manual.
 
-**whisperx no en conda-forge** — se usa `[pypi-dependencies]` con git URL.
-Pixi resuelve conda primero (PyTorch, ffmpeg) y luego pip (whisperx). Esto
-funciona pero es un punto de fricción: pip puede intentar reinstalar PyTorch
-desde PyPI (CPU-only wheel) si las versiones no coinciden con lo que conda
-instaló. Mitigación: pinear `torch` en `[dependencies]` de conda para que
-pip lo vea como ya satisfecho.
+**Conflicto conda/pip con PyTorch (resuelto 2026-06-20)** — el approach
+original (pytorch-cpu de conda + whisperx de pip) no funciona. conda instala
+`torch==2.8.0` (sin build tag); pip necesita `torchaudio==2.8.0+cu128` que
+exige `torch==2.8.0+cu128`. Solución validada: PyTorch entero viene de PyPI
+usando `extra-index-urls = ["https://download.pytorch.org/whl/cpu"]`. Se
+requiere `index-strategy = "unsafe-best-match"` para que uv considere
+versiones de todos los índices (sin esto, paquetes genéricos como `tqdm` se
+resuelven del índice PyTorch que tiene versiones viejas, bloqueando la
+resolución). **Nota:** con `unsafe-best-match`, uv puede instalar la versión
+CUDA de torch si es "mejor match" que la CPU. Para forzar CPU, investigar
+`--index` (primary) en vez de `--extra-index-urls`.
 
 **Pixi 0.x** — v0.70.2 a junio 2026, production-ready según autores pero
 sin 1.0 formal. Riesgo bajo: el formato `pixi.toml` es estable, los
 lockfiles son versionados, y la comunidad (QuantCo, varios corporates) ya
-lo usa en producción. Mantener lockfile en git para reproducibilidad.
+lo usa en producción.
+
+### Validación (2026-06-20, Windows, pixi 0.70.2)
+
+| Métrica | core | full |
+|---------|------|------|
+| `pixi install` tiempo | 13s (warm) | 4m 45s (warm) |
+| Tamaño env | 784 MB | 8.3 GB (CUDA) |
+| Binarios verificados | ffmpeg 8.1.2, yt-dlp 2026.06.09, node v26.3.1 | torch 2.8.0, whisperx ✓, faster-whisper ✓, phonemizer ✓ |
+| `pixi run` overhead | ~14s | ~18s |
+| Invocación directa por path | ~33ms | ~33ms |
+| `--manifest-path` externo | ✓ (app data) | — |
+
+**Conclusiones de la validación:**
+- Pixi funciona. Los dos environments se instalan y los binarios/imports
+  responden correctamente.
+- `pixi run` es inviable (~14s overhead). Invocación directa por path
+  dentro de `.pixi/envs/<env>/` es la alternativa (~33ms).
+- `pytorch-cpu` de conda NO es compatible con `torchaudio` de PyPI
+  (conflicto de build tags). PyTorch entero debe venir de PyPI.
+- `libchromaprint`/`fpcalc` NO está en conda-forge (el borrador original
+  decía que sí — error).
+- `phonemizer` NO está en conda-forge (el borrador decía "Parcial").
+- Core pesa ~784MB (no ~200MB como se estimó — ffmpeg trae muchos codecs).
 
 ### TODO antes de aceptar
-- [ ] Validar que `pixi install` con el `pixi.toml` borrador funcione en
-      Windows y macOS (crear el toml, correrlo, verificar que whisperx
-      importa y los scripts ejecutan).
-- [ ] Medir tiempo de `pixi install` cold (primera vez) y warm (cache).
-- [ ] Probar `pixi run python mismatch_detect.py` end-to-end.
-- [ ] Bundlear espeak-ng como resource de Tauri (libespeak-ng.dll /
-      libespeak-ng.dylib / libespeak-ng.so + data files).
-- [ ] Crear feedstock espeak-ng para conda-forge (PR a staged-recipes).
+- [x] Validar `pixi install` en Windows (core + full).
+- [x] Medir tiempos cold/warm.
+- [x] Medir overhead de `pixi run` → decisión: invocación directa.
+- [x] Verificar conflicto conda/pip con PyTorch → resuelto: todo PyPI.
+- [x] Probar environments selectivos (`core` vs `full`).
+- [x] Probar `--manifest-path` con directorio externo (app data).
+- [ ] Validar en macOS (osx-arm64).
+- [ ] Forzar PyTorch CPU (actualmente instala CUDA con `unsafe-best-match`).
+- [ ] Probar `pixi run python mismatch_detect.py` end-to-end con audio real.
+- [ ] Bundlear espeak-ng como resource de Tauri.
+- [ ] Crear feedstock espeak-ng para conda-forge.
 - [ ] Evaluar pixi-pack como alternativa al download on-demand.
-- [ ] Verificar que pip no reinstale PyTorch dentro del env de pixi
-      (conflicto conda vs pip).
-- [ ] Medir overhead de `pixi run` por invocación (vs llamar python
-      directo). Si >1s, evaluar activar el env una vez y cachear el path.
-- [ ] Diseñar wizard de first-run con estimación de tamaño visible,
-      progress bar, y posibilidad de cancelar.
-- [ ] Probar environments selectivos (`core` vs `full`) — que instalar
-      `core` no baje PyTorch.
+- [ ] Diseñar wizard de first-run (tamaños reales, progress bar, cancelar).
+- [ ] Integrar con `resolve_binary` (Phase 2).
+- [ ] Unificar los 3 patrones de detección de deps en la UI (Phase 3).
 

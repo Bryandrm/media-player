@@ -1,0 +1,32 @@
+[workspace]
+name = "media-player-deps"
+version = "0.1.0"
+description = "Dependencies for Brutalist Music Player"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+# -- Core: downloads, identification, playback --
+[feature.core.dependencies]
+ffmpeg = ">=7"
+yt-dlp = "*"
+nodejs = ">=22"
+
+# -- ML: karaoke alignment, mismatch detection --
+[feature.ml.dependencies]
+python = ">=3.11,<3.13"
+
+[feature.ml.pypi-options]
+extra-index-urls = ["https://download.pytorch.org/whl/cpu"]
+index-strategy = "unsafe-best-match"
+
+[feature.ml.pypi-dependencies]
+torch = ">=2.8,<2.9"
+torchaudio = ">=2.8,<2.9"
+whisperx = { git = "https://github.com/m-bain/whisperx.git" }
+faster-whisper = "*"
+phonemizer = "*"
+
+# -- Environments --
+[environments]
+core = ["core"]
+full = ["core", "ml"]
