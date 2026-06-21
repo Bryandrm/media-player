@@ -262,10 +262,11 @@ src-tauri/resources/
   WKWebView, Gotcha #17) y del pointer-events del reorder. Comando
   `library_import_paths` reusa `import_one_file` (idempotente). Overlay
   "DROP TO IMPORT". Ver [ADR-033](./docs/DECISIONS.md#adr-033--import-por-drag--drop-via-drag-drop-nativo-de-tauri).
-- **Hardening del downloader (Windows)** ✓ (2026-06-17) — sesión dedicada a
-  hacer la descarga de playlists robusta en Windows. Seis cambios + un
-  aprendizaje de uso (ver [ADR-028](./docs/DECISIONS.md#adr-028) + Gotchas
-  #18-22):
+- **Hardening del downloader (Windows)** ✓ (2026-06-17, extendido 2026-06-21)
+  — sesión dedicada a hacer la descarga de playlists robusta en Windows. Ocho
+  cambios + un aprendizaje de uso (ver [ADR-028](./docs/DECISIONS.md#adr-028),
+  [ADR-038](./docs/DECISIONS.md#adr-038--impersonación-de-navegador--stdin-null-en-yt-dlp)
+  + Gotchas #18-22, #29):
   1. **cookies.txt** como segunda fuente (botón COOKIES FILE, prioridad sobre
      el navegador) — Chromium en Windows lockea su DB de cookies con el
      navegador abierto (Gotcha #18).
@@ -281,6 +282,11 @@ src-tauri/resources/
   6. **`--encoding utf-8`**: yt-dlp mutilaba los paths no-ASCII (kanji, hangul,
      fullwidth) al imprimir bajo el codepage de Windows → el archivo no se
      encontraba (Gotcha #22).
+  7. **`--impersonate Chrome`** (2026-06-21): YouTube throttlea descargas sin
+     TLS fingerprint de navegador (~180KB/s vs ~4MB/s). Las descargas parecían
+     congeladas en la UI (Gotcha #29, [ADR-038](./docs/DECISIONS.md#adr-038--impersonación-de-navegador--stdin-null-en-yt-dlp)).
+  8. **`.stdin(Stdio::null())`** (2026-06-21): previene hang si yt-dlp intenta
+     prompts interactivos (consent, captcha) dentro de Tauri sin TTY.
   - **Aprendizaje de uso**: un `cookies.txt` exportado puede verse "completo"
     (cientos de cookies) pero faltarle `LOGIN_INFO` (httpOnly de YouTube) →
     "Unable to recognize playlist". `--cookies-from-browser firefox` la incluye
@@ -807,6 +813,23 @@ trunca al iterable más corto).
 
 **Fix:** en `mismatch_detect.py`, solo se fonemizan textos no-vacíos y
 se reconstruye el array completo con `""` en las posiciones vacías.
+
+### 29. YouTube throttlea descargas sin impersonación de navegador
+Sin `--impersonate`, yt-dlp hace requests como un cliente genérico. YouTube
+responde con throttling agresivo (~180 KB/s vs ~4 MB/s con impersonate) —
+suficiente para que las descargas parezcan **congeladas** en la UI. En la
+terminal el efecto es "lento"; en la app (sin TTY, sin progress visible en
+la consola) parece un hang total.
+
+**Fix:** `--impersonate Chrome` en
+[downloader/mod.rs](src-tauri/src/downloader/mod.rs). Usa `curl_cffi`
+(incluido en el exe oficial de yt-dlp) para hacer TLS fingerprinting
+idéntico a Chrome. Sin versión específica → yt-dlp elige la más reciente
+disponible.
+
+**Bonus fix:** `.stdin(Stdio::null())` en el spawn de yt-dlp. Previene
+que yt-dlp se cuelgue esperando input interactivo (consent, captcha, PO
+token prompt) cuando se ejecuta dentro de Tauri sin TTY.
 
 ---
 

@@ -385,6 +385,8 @@ Ver [LYRICS.md](./LYRICS.md) para el plan completo por fases.
      --ignore-config --no-quiet
      --encoding utf-8           ← paths Unicode correctos en el output (Gotcha #22)
      --js-runtimes node         ← resuelve el JS challenge de YT (Gotcha #20)
+     --impersonate Chrome       ← TLS fingerprint de navegador real, evita
+                                  throttling de YT (~180KB/s → ~4MB/s) (Gotcha #29)
      --extract-audio --audio-format mp3 --audio-quality 0
      --embed-metadata --embed-thumbnail
      [--no-playlist | --yes-playlist]   ← según toggle FULL PLAYLIST
@@ -396,6 +398,8 @@ Ver [LYRICS.md](./LYRICS.md) para el plan completo por fases.
    env: PYTHONUNBUFFERED=1   ← yt-dlp es Python; sin esto el stdout queda
                                 block-buffered y el progreso aparece en
                                 tandas o nunca.
+   stdin: Stdio::null()      ← previene hang si yt-dlp intenta leer input
+                                interactivo (consent, captcha) dentro de Tauri.
 5. Rust lee STDOUT y STDERR en paralelo (dos lectores de líneas → un mpsc
    channel). Crítico: yt-dlp imprime '[download] X.X% of ...' a STDERR,
    no stdout. Sólo el 'done <path>' va a stdout.
@@ -440,11 +444,10 @@ lecturas/escrituras del frontend (Gotcha #21).
 ```
 
 **TODOs abiertos:**
-- Persistir descargas a la tabla `downloads` (history). Hoy son sólo memoria.
-- Cancelación mid-download (`Child::kill()` ya lo hace `kill_on_drop(true)`, pero falta el botón en UI).
+- ~~Persistir descargas a la tabla `downloads` (history).~~ ✓ (ADR-031)
+- ~~Cancelación mid-download.~~ ✓ (ADR-032)
 - Política de paralelismo: hoy es 1-a-la-vez (cada `download_track` es una llamada `await`-eada). N concurrentes requiere queue real.
 - Reintentos automáticos en fallo de red.
-- Fetch de letras a LRCLIB en paralelo al insert de la track (Fase 1 pendiente).
 
 ---
 

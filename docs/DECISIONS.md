@@ -48,6 +48,7 @@
 | ADR-035 | Identify extendido: MB metadata (genre + year + album) + Cover Art Archive | Accepted |
 | ADR-036 | Smart playlists: picker cascadante + operador `in`/`not_in` | Accepted |
 | ADR-037 | Pixi como gestor de dependencias ML/sistema | Proposed |
+| ADR-038 | Impersonación de navegador + stdin null en yt-dlp | Accepted |
 
 ---
 
@@ -1345,4 +1346,56 @@ lo usa en producción.
 - [ ] Diseñar wizard de first-run (tamaños reales, progress bar, cancelar).
 - [ ] Integrar con `resolve_binary` (Phase 2).
 - [ ] Unificar los 3 patrones de detección de deps en la UI (Phase 3).
+
+## ADR-038 — Impersonación de navegador + stdin null en yt-dlp
+
+**Fecha:** 2026-06-21 · **Estado:** Accepted
+
+### Contexto
+
+Las descargas se congelaban en la UI: la barra de progreso avanzaba un poco y
+después se quedaba pegada indefinidamente. Diagnóstico:
+
+1. **yt-dlp desde la terminal funcionaba perfecto** — el mismo video se bajaba
+   en ~20s. yt-dlp no estaba roto, ni las cookies, ni el JS runtime.
+2. **El verbose output mostró `[pot] PO Token Providers: none`** — YouTube
+   throttlea agresivamente las conexiones sin PO token ni fingerprint de
+   navegador. El test de terminal bajó a **180 KB/s promedio** sin
+   `--impersonate`; con `--impersonate Chrome` subió a **4 MB/s** (~22x).
+3. **`stdin` heredado** — Tokio hereda stdin del padre por default. En Tauri no
+   hay TTY; si yt-dlp intenta prompts interactivos (consent, captcha) se
+   cuelga.
+
+### Decisión
+
+1. **`--impersonate Chrome`** en `run_yt_dlp`. Usa `curl_cffi` (incluido en el
+   exe oficial de yt-dlp) para TLS fingerprinting idéntico a Chrome. Sin
+   versión — yt-dlp elige la más reciente disponible.
+2. **`.stdin(Stdio::null())`** en el spawn del child process. Garantiza que
+   yt-dlp no se cuelgue esperando input.
+
+### Razón
+
+- `--impersonate` es el mecanismo oficial de yt-dlp para evadir throttling.
+  `curl_cffi` ya viene con el binario precompilado (verificado: `Optional
+  libraries: curl_cffi-0.15.0` en el verbose output).
+- `Chrome` sin versión es forward-compatible — a medida que yt-dlp agrega
+  targets nuevos, usa la más reciente automáticamente.
+- `stdin(Stdio::null())` es buena higiene para cualquier child process no
+  interactivo. Cero downside.
+
+### Consecuencias
+
+- **Pro:** descargas ~22x más rápidas. Lo que parecía congelado ahora baja en
+  segundos.
+- **Pro:** robusto frente a prompts interactivos de yt-dlp (consent pages,
+  captchas, PO token prompts).
+- **Contra:** si `curl_cffi` no estuviera instalado, `--impersonate` falla
+  silenciosamente y cae al request handler default (más lento). No es un
+  problema en la práctica porque viene con el exe oficial.
+- **Contra:** la impersonación depende de que yt-dlp mantenga los targets
+  actualizados respecto a las versiones de Chrome. Si YouTube detecta
+  fingerprints viejos, podría volver a throttlear. Mitigación: mantener
+  yt-dlp actualizado (`yt-dlp -U`).
+- Ver Gotcha #29.
 

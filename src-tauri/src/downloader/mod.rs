@@ -149,6 +149,13 @@ where
             // este flag. Ver Gotcha #20.
             "--js-runtimes",
             "node",
+            // Impersonar un navegador real via curl_cffi. Sin esto, YouTube
+            // throttlea las descargas a ~180KB/s (vs ~4MB/s con impersonate).
+            // La diferencia es suficiente para que las descargas parezcan
+            // congeladas en la UI. Requiere `curl_cffi` instalado como dep de
+            // yt-dlp (viene incluido en el exe oficial). Ver Gotcha #29.
+            "--impersonate",
+            "Chrome",
             "--extract-audio",
             "--audio-format",
             "mp3",
@@ -179,6 +186,7 @@ where
         // cuando están conectados a pipes (no-TTY) y el progreso aparece en
         // tandas grandes en vez de en tiempo real.
         .env("PYTHONUNBUFFERED", "1")
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)

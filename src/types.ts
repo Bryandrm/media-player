@@ -169,6 +169,10 @@ export type DependencyStatus = {
    *  de letras (per-word timing real). Sin él la feature AUTO-ALIGN queda
    *  disabled — el karaoke fill cae al modo linear. */
   whisperx: boolean;
+  /** espeak-ng shared library. Necesario para CHECK QUALITY con comparación
+   *  fonémica (IPA). Sin ella, CHECK QUALITY cae a texto raw (funcional pero
+   *  menos preciso en idiomas no-latinos). */
+  espeakNg: boolean;
 };
 
 export type DownloadStatus =

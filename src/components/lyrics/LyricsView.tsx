@@ -67,6 +67,7 @@ export function LyricsView() {
   const fetchLyrics = useLyricsStore((s) => s.fetch);
   const tracks = useLibraryStore((s) => s.tracks);
   const whisperxAvailable = useDownloadStore((s) => s.deps?.whisperx ?? false);
+  const espeakNgAvailable = useDownloadStore((s) => s.deps?.espeakNg ?? false);
 
   const track = useMemo(
     () => (trackId === null ? null : tracks.find((t) => t.id === trackId) ?? null),
@@ -410,7 +411,11 @@ export function LyricsView() {
                   size="sm"
                   onClick={onDetectMismatch}
                   disabled={detecting || trackId === null}
-                  title="Transcribe audio + compare phonetically against LRC"
+                  title={
+                    espeakNgAvailable
+                      ? "Transcribe audio + compare phonetically (IPA) against LRC"
+                      : "Transcribe audio + compare against LRC (install espeak-ng for phonemic IPA comparison)"
+                  }
                 >
                   {detecting ? "CHECKING..." : "CHECK QUALITY"}
                 </Button>
@@ -447,6 +452,11 @@ export function LyricsView() {
                 {mismatchResult.lines.filter((l) => l.score < 0.5).length}/{mismatchResult.lines.length} MISMATCHED
               </span>
             </div>
+            {!espeakNgAvailable && (
+              <div className="mb-2 text-muted">
+                RAW TEXT MODE — INSTALL ESPEAK-NG FOR PHONEMIC (IPA) COMPARISON
+              </div>
+            )}
             {mismatchResult.lines.filter((l) => l.score < 0.5).length > 0 && (
               <div className="mb-2 text-accent">
                 USE EDIT TO FIX BAD LINES, THEN RE-ALIGN

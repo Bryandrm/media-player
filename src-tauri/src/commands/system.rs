@@ -57,6 +57,55 @@ pub fn resolve_binary_or_bundled(name: &str, app: &AppHandle) -> Option<PathBuf>
     resolve_binary(name)
 }
 
+/// Detecta la shared library de espeak-ng que `phonemizer` necesita para
+/// convertir texto a fonemas IPA. phonemizer busca la **library** (.dll/.so),
+/// no el ejecutable CLI. En Windows la instalación estándar deja la DLL en
+/// `%ProgramFiles%\eSpeak NG\libespeak-ng.dll`. En Unix se busca en los
+/// paths estándar de shared libraries.
+pub fn resolve_espeak_ng_library() -> bool {
+    #[cfg(windows)]
+    {
+        let pf = std::env::var("ProgramFiles")
+            .unwrap_or_else(|_| r"C:\Program Files".to_string());
+        let dll = std::path::PathBuf::from(&pf)
+            .join("eSpeak NG")
+            .join("libespeak-ng.dll");
+        if dll.is_file() {
+            return true;
+        }
+        let pf86 = std::env::var("ProgramFiles(x86)")
+            .unwrap_or_else(|_| r"C:\Program Files (x86)".to_string());
+        let dll86 = std::path::PathBuf::from(&pf86)
+            .join("eSpeak NG")
+            .join("libespeak-ng.dll");
+        if dll86.is_file() {
+            return true;
+        }
+        if let Ok(env_lib) = std::env::var("PHONEMIZER_ESPEAK_LIBRARY") {
+            if std::path::PathBuf::from(&env_lib).is_file() {
+                return true;
+            }
+        }
+        false
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(env_lib) = std::env::var("PHONEMIZER_ESPEAK_LIBRARY") {
+            if std::path::PathBuf::from(&env_lib).is_file() {
+                return true;
+            }
+        }
+        let candidates = [
+            "/usr/lib/libespeak-ng.so",
+            "/usr/lib/x86_64-linux-gnu/libespeak-ng.so",
+            "/usr/local/lib/libespeak-ng.so",
+            "/opt/homebrew/lib/libespeak-ng.dylib",
+            "/usr/local/lib/libespeak-ng.dylib",
+        ];
+        candidates.iter().any(|p| std::path::Path::new(p).is_file())
+    }
+}
+
 /// Devuelve si las deps externas están disponibles. El frontend muestra
 /// un banner por cada faltante y desactiva las features que las requieren
 /// (downloader sin yt-dlp/ffmpeg, IDENTIFY sin fpcalc, AUTO-ALIGN sin whisperx).
@@ -67,5 +116,6 @@ pub fn check_dependencies(app: AppHandle) -> DependencyStatus {
         ffmpeg: resolve_binary("ffmpeg").is_some(),
         fpcalc: resolve_binary_or_bundled("fpcalc", &app).is_some(),
         whisperx: resolve_binary("whisperx").is_some(),
+        espeak_ng: resolve_espeak_ng_library(),
     }
 }

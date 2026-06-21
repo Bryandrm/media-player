@@ -142,6 +142,12 @@ pub struct DependencyStatus {
     /// AUTO-ALIGN queda disabled — las letras siguen funcionando con
     /// karaoke fill linear (interpolación dentro de la línea).
     pub whisperx: bool,
+    /// espeak-ng shared library. Necesario para CHECK QUALITY (mismatch
+    /// detection con comparación fonémica IPA). Sin él, CHECK QUALITY
+    /// sigue funcionando pero cae a comparación de texto raw (menos
+    /// preciso para idiomas no-latinos). phonemizer busca la *library*
+    /// (.dll/.so), no el CLI.
+    pub espeak_ng: bool,
 }
 
 /// Estados terminales o transitorios de una descarga, espejado en la columna
