@@ -436,25 +436,22 @@ pub async fn lookup(
         return Err(AppError::AcoustIdStatus(body.error.unwrap_or_default()));
     }
 
-    // Tomar el result con mayor score que tenga al menos un recording con MBID.
-    let best = body.results.into_iter()
-        .filter_map(|r| {
-            let rec = r.recordings.into_iter().find(|rc| !rc.id.is_empty())?;
-            Some((r.score, r.id, rec))
-        })
-        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
-
-    Ok(best.map(|(score, acoustid_id, rec)| AcoustIdMatch {
-        score,
-        acoustid_id,
-        mbid: rec.id,
-        title: rec.title.unwrap_or_default(),
-        artist: rec.artists
-            .and_then(|a| a.first().map(|x| x.name.clone()))
-            .unwrap_or_default(),
-    }))
+    // Aplanar TODAS las recordings (con MBID) de TODOS los results y elegir la
+    // que mejor coincide con la metadata existente del track (MetadataHint).
+    // OJO: un cluster de AcoustID puede agrupar grabaciones DISTINTAS
+    // (mislabels comunitarios) — NO basta con tomar la primera. El `score` es
+    // del fingerprint vs cluster, no garantiza la recording correcta.
+    // Ver CLAUDE.md Gotcha #30 + la implementación real en acoustid.rs.
+    // ...selección por (overlap con hint, luego score) + flag needs_confirmation...
 }
 ```
+
+> **Nota (2026-06-21):** este sketch original tomaba "la primera recording del
+> result de mayor score". Se descubrió que eso elegía mal cuando el cluster
+> agrupa varias grabaciones distintas (caso real: BTS Dynamite quedó como
+> "Control / Metro Station"). La implementación actual desambigua con una
+> `MetadataHint` y, si el cluster es ambiguo y nada coincide, marca
+> `low_confidence` sin pisar. Detalle en CLAUDE.md Gotcha #30.
 
 ### 4.6 Variantes nuevas en `AppError`
 

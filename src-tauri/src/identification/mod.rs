@@ -114,8 +114,18 @@ pub async fn identify_track(
         },
     };
 
-    // 3. AcoustID lookup.
-    let lookup_result = acoustid::lookup(http, api_key, &fingerprint, duration_seconds).await;
+    // 3. AcoustID lookup. Pasamos una pista de metadata para desambiguar entre
+    //    las varias grabaciones que un cluster de AcoustID puede agrupar
+    //    (ver Gotcha: BTS Dynamite venía en un cluster con "Control / Metro
+    //    Station" mislabeleada primera). Preferimos `original_title` (raw del
+    //    download/import, NO contaminado por un identify previo equivocado);
+    //    si no hay, caemos a title+artist actuales.
+    let hint = match track.original_title.as_deref() {
+        Some(ot) if !ot.trim().is_empty() => acoustid::MetadataHint::new(&[Some(ot)]),
+        _ => acoustid::MetadataHint::new(&[Some(track.title.as_str()), track.artist.as_deref()]),
+    };
+    let lookup_result =
+        acoustid::lookup(http, api_key, &fingerprint, duration_seconds, Some(&hint)).await;
 
     let best = match lookup_result {
         Ok(opt) => opt,
@@ -145,6 +155,24 @@ pub async fn identify_track(
             eprintln!(
                 "[identify] low_confidence for track {} (score={:.3})",
                 track_id, m.score
+            );
+            db::tracks::update_identification_status(pool, track_id, "low_confidence")
+                .await?;
+            let mut result = IdentificationResult::with_status(track_id, "low_confidence");
+            result.score = Some(m.score);
+            Ok(result)
+        }
+        // Safeguard: score alto PERO el cluster es ambiguo (varias grabaciones
+        // distintas) y la elegida no coincide en nada con la metadata
+        // existente → NO pisamos a ciegas. Marcamos low_confidence y dejamos la
+        // metadata original; el usuario puede revisar/confirmar manualmente.
+        // (Sin esto, BTS Dynamite quedaba como "Control / Metro Station".)
+        Some(m) if m.needs_confirmation => {
+            eprintln!(
+                "[identify] needs_confirmation for track {} — best match '{}' / '{}' \
+                 (score={:.3}) no coincide con la metadata existente; cluster ambiguo, \
+                 no se pisa. Marcado low_confidence.",
+                track_id, m.title, m.artist, m.score
             );
             db::tracks::update_identification_status(pool, track_id, "low_confidence")
                 .await?;
