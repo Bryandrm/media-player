@@ -1,0 +1,6 @@
+# Migraciones de sqlx: el binario embebe un checksum SHA-384 del contenido del
+# archivo (macro `migrate!`). En Windows, autocrlf flipea LF→CRLF al hacer
+# checkout y cambia el checksum → sqlx aborta con "migration ... was previously
+# applied but has been modified". Forzar LF mantiene el checksum estable entre
+# plataformas. Aplica a todos los .sql por las dudas.
+*.sql text eol=lf
