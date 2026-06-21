@@ -41,11 +41,13 @@ const TRACKS_SELECT: &str = "SELECT t.id, t.file_path, t.title, t.artist, t.albu
         CASE \
             WHEN l.track_id IS NULL THEN NULL \
             WHEN l.status = 'not_found' THEN 'not_found' \
+            WHEN l.aligned_at IS NOT NULL AND l.synced_lyrics IS NOT NULL THEN 'aligned' \
             WHEN l.synced_lyrics IS NOT NULL THEN 'synced' \
             WHEN l.plain_lyrics IS NOT NULL THEN 'plain' \
             ELSE 'instrumental' \
         END AS lyrics_status, \
-        t.acoustid_id, t.mbid_recording, t.identification_status, t.acoustid_score \
+        t.acoustid_id, t.mbid_recording, t.identification_status, t.acoustid_score, \
+        l.mismatch_score \
      FROM tracks t \
      LEFT JOIN lyrics l ON l.track_id = t.id";
 
@@ -361,8 +363,13 @@ mod tests {
             "any",
             &[("artist", "is", "A"), ("artist", "is", "B")],
         ));
-        assert!(s.contains(" OR "), "{s}");
-        assert!(!s.contains(" AND "), "{s}");
+        // Acotamos a la cláusula WHERE: el SELECT trae un CASE con un `AND`
+        // propio (`aligned_at IS NOT NULL AND synced_lyrics IS NOT NULL`) que
+        // no tiene nada que ver con cómo se unen las reglas. Lo que importa es
+        // que las CONDICIONES de las reglas se unan con OR, no con AND.
+        let where_clause = s.split("WHERE").nth(1).unwrap_or("");
+        assert!(where_clause.contains(" OR "), "{s}");
+        assert!(!where_clause.contains(" AND "), "{s}");
     }
 
     #[test]

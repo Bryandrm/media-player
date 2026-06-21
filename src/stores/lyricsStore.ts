@@ -184,7 +184,19 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
     try {
       const result = await invoke<MismatchResult>("karaoke_detect_mismatch", { trackId });
       console.log(`[mismatch] overall score: ${result.overallScore.toFixed(3)}, ${result.lines.length} lines`);
-      set({ mismatchResult: result, detecting: false });
+      // El backend persistió mismatch_score + checked_at. Reflejarlo optimista
+      // en `current` para que el cartel "QUALITY CHECKED" se actualice sin
+      // refetch (al reabrir el track, leerá el valor real de la DB).
+      const current = get().current;
+      const patched =
+        current && current.trackId === trackId
+          ? {
+              ...current,
+              mismatchScore: result.overallScore,
+              mismatchCheckedAt: new Date().toISOString(),
+            }
+          : current;
+      set({ mismatchResult: result, current: patched, detecting: false });
     } catch (e) {
       const msg = String(e);
       console.warn("karaoke_detect_mismatch failed:", msg);

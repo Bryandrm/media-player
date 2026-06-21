@@ -26,6 +26,33 @@ import type { LrcLine } from "../lib/lrcParser";
 // quedarse plantado en 0% para siempre.
 const TRAILING_LINE_DURATION_MS = 5000;
 
+// Umbral de confianza para el hybrid fill (Mejora 1 — calidad karaoke).
+// Palabras con `wordScores[i] < SCORE_THRESHOLD` tienen un timestamp de
+// whisperx poco confiable (wav2vec2 está entrenado en habla, no en canto):
+// usarlo directo hace que el fill SALTE. En cambio, su ventana de fill se
+// interpola linealmente (por longitud de caracteres) entre las palabras
+// confiables vecinas — el resultado fluye suave. 0.3 es el punto de partida;
+// ajustable con uso real.
+const SCORE_THRESHOLD = 0.3;
+
+// Interpolación lineal de `time` para una posición `pos` dada una lista de
+// anchors (posiciones `xs` ascendentes ↔ tiempos `ys`). Fuera de rango
+// clampea al extremo. Usado por el hybrid fill para derivar el start de
+// palabras de baja confianza desde sus vecinas confiables.
+function interpAnchor(pos: number, xs: number[], ys: number[]): number {
+  if (xs.length === 0) return 0;
+  if (pos <= xs[0]) return ys[0];
+  if (pos >= xs[xs.length - 1]) return ys[ys.length - 1];
+  let j = 1;
+  while (j < xs.length && xs[j] < pos) j++;
+  const x0 = xs[j - 1];
+  const x1 = xs[j];
+  const y0 = ys[j - 1];
+  const y1 = ys[j];
+  const t = x1 === x0 ? 0 : (pos - x0) / (x1 - x0);
+  return y0 + (y1 - y0) * t;
+}
+
 export function useSyncedLyrics(
   lines: LrcLine[],
   lrcOffsetMs: number,
@@ -85,35 +112,78 @@ export function useSyncedLyrics(
 
       const wordTs = line.wordTimestampsMs;
       if (wordTs && wordTs.length > 0) {
-        // === Modo A2 / forced-aligned ===
-        for (let i = 0; i < wordSpans.length; i++) {
-          // Bound start: timestamp de la palabra. Si por alguna razón hay
-          // menos timestamps que spans (defensivo), usar el último o
-          // line.timestampMs como fallback.
-          const rawStart = wordTs[i] ?? wordTs[wordTs.length - 1] ?? line.timestampMs;
-          const startEff = (rawStart + lrcOffsetMs) * speedRatio + userOffsetMs;
-          // Bound end:
-          //   - próxima palabra, si la hay → fill termina cuando arranca la
-          //     siguiente palabra (transición continua entre palabras).
-          //   - última palabra Y tenemos lastWordEndMs (forced alignment con
-          //     trailing end marker) → usamos el end real, palabra para de
-          //     llenarse cuando el cantante termina de cantarla. Sin esto,
-          //     la última palabra seguía rellenándose durante el silencio
-          //     hasta la próxima línea (visible al usuario como "letra
-          //     avanza durante espacio vacío").
-          //   - última palabra SIN lastWordEndMs (LRC manual / pre-fix) →
-          //     fallback a nextLineEff. Compatible con A2 viejo.
-          let endEff: number;
-          if (i + 1 < wordTs.length) {
-            endEff = (wordTs[i + 1] + lrcOffsetMs) * speedRatio + userOffsetMs;
-          } else if (line.lastWordEndMs !== undefined) {
-            endEff =
-              (line.lastWordEndMs + lrcOffsetMs) * speedRatio + userOffsetMs;
-          } else {
-            endEff = nextLineEff;
+        // === Modo A2 / forced-aligned (con hybrid fill por confianza) ===
+        const n = wordSpans.length;
+        const toEff = (raw: number) =>
+          (raw + lrcOffsetMs) * speedRatio + userOffsetMs;
+
+        // Anchor de fin de la línea (en tiempo de audio):
+        //   - lastWordEndMs (trailing marker) → end real de la última palabra.
+        //   - sino → nextLineEff. Compatible con A2 viejo / manual.
+        const lineEndEff =
+          line.lastWordEndMs !== undefined
+            ? toEff(line.lastWordEndMs)
+            : nextLineEff;
+
+        // Start "crudo" de cada palabra según whisperx + posición acumulada en
+        // caracteres (para la interpolación de las palabras de baja confianza).
+        // La longitud la tomamos del span renderizado (su textContent es la
+        // palabra exacta que se muestra). +1 por el espacio entre palabras.
+        const rawStart: number[] = new Array(n);
+        const charStart: number[] = new Array(n);
+        let acc = 0;
+        for (let i = 0; i < n; i++) {
+          const raw = wordTs[i] ?? wordTs[wordTs.length - 1] ?? line.timestampMs;
+          rawStart[i] = toEff(raw);
+          charStart[i] = acc;
+          acc += (wordSpans[i].textContent?.length ?? 1) + 1;
+        }
+        const totalChars = acc;
+
+        // Una palabra es "confiable" si no hay scores (A2 viejo → todo
+        // confiable) o su score >= umbral. La palabra 0 se trata SIEMPRE como
+        // anchor de inicio: su timestamp es el line marker que usa el cursor,
+        // así mantenemos consistencia con effectiveOf.
+        const trusted = (i: number): boolean => {
+          const s = line.wordScores?.[i];
+          return s === undefined || !Number.isFinite(s) || s >= SCORE_THRESHOLD;
+        };
+
+        // Anchors confiables: (posición en chars ↔ tiempo). Inicio = palabra 0,
+        // fin = lineEndEff. Las palabras confiables intermedias suman su anchor.
+        const anchorsPos: number[] = [0];
+        const anchorsTime: number[] = [rawStart[0]];
+        for (let i = 1; i < n; i++) {
+          if (trusted(i)) {
+            anchorsPos.push(charStart[i]);
+            anchorsTime.push(rawStart[i]);
           }
-          const span = Math.max(1, endEff - startEff);
-          const wp = Math.max(0, Math.min(1, (currentMs - startEff) / span));
+        }
+        anchorsPos.push(totalChars);
+        anchorsTime.push(lineEndEff);
+        // Forzar monotonía no-decreciente de los tiempos (un anchor confiable
+        // con timestamp ligeramente fuera de orden no debe invertir el eje).
+        for (let k = 1; k < anchorsTime.length; k++) {
+          if (anchorsTime[k] < anchorsTime[k - 1]) {
+            anchorsTime[k] = anchorsTime[k - 1];
+          }
+        }
+
+        // Start efectivo: confiable → timestamp real; baja confianza →
+        // interpolado entre anchors por su posición en caracteres.
+        const effStart: number[] = new Array(n);
+        for (let i = 0; i < n; i++) {
+          effStart[i] =
+            i === 0 || trusted(i)
+              ? rawStart[i]
+              : interpAnchor(charStart[i], anchorsPos, anchorsTime);
+        }
+
+        // Fill: end de cada palabra = start de la próxima (o fin de línea).
+        for (let i = 0; i < n; i++) {
+          const endEff = i + 1 < n ? effStart[i + 1] : lineEndEff;
+          const span = Math.max(1, endEff - effStart[i]);
+          const wp = Math.max(0, Math.min(1, (currentMs - effStart[i]) / span));
           wordSpans[i].style.setProperty("--word-progress", String(wp));
         }
       } else {

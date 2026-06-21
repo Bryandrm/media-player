@@ -1,11 +1,14 @@
 /** Status derivado de la tabla `lyrics` para mostrar el indicador en la
  *  library:
- *    - 'synced':       hay synced_lyrics → mejor experiencia
+ *    - 'aligned':      synced_lyrics + aligned_at → A2 con per-word timing
+ *                      (whisperx forced alignment corrido) → karaoke real
+ *    - 'synced':       hay synced_lyrics pero sin alinear → highlight por línea
  *    - 'plain':        sólo plain_lyrics → útil pero sin highlight
  *    - 'instrumental': LRCLIB confirmó track sin letras
  *    - 'not_found':    buscamos y nadie devolvió letras
  *    - null:           todavía no fetcheamos para este track */
 export type TrackLyricsStatus =
+  | "aligned"
   | "synced"
   | "plain"
   | "instrumental"
@@ -47,6 +50,9 @@ export type Track = {
   /** Score (0..1) que devolvió AcoustID para el match aceptado. null si
    *  no hubo identify exitoso. La UI lo muestra como tooltip en [ID]. */
   acoustidScore: number | null;
+  /** overall_score (0..1) de la última corrida de CHECK QUALITY. null = nunca
+   *  chequeado. La library muestra un marcador `Q` (acento si <0.5). */
+  mismatchScore: number | null;
 };
 
 /** Resultado del comando identification_identify_track. Los campos
@@ -241,6 +247,11 @@ export type Lyrics = {
   /** Score promedio del forced alignment (0..1). null si nunca se alineó.
    *  Score bajo (<0.5) indica que el LRC probablemente no matchea el audio. */
   alignmentScore: number | null;
+  /** overall_score (0..1) de la última corrida de CHECK QUALITY. null = nunca
+   *  chequeado. Persistido para mostrar el resultado entre sesiones. */
+  mismatchScore: number | null;
+  /** Timestamp de la última corrida de CHECK QUALITY. null = nunca. */
+  mismatchCheckedAt: string | null;
   status: LyricsStatus;
 };
 

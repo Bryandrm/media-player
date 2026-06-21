@@ -40,6 +40,18 @@ export type LrcLine = {
    *  Undefined si el LRC es A2 sin trailing marker (ediciones manuales,
    *  formatos antiguos pre-fix) o si es LRC estándar. */
   lastWordEndMs?: number;
+  /** Confianza del alignment por palabra (0..1), paralelo a `wordTimestampsMs`.
+   *  Viene del A2 extendido `<mm:ss.xx|score>word` que escribe whisperx.
+   *
+   *  Lo usa el hybrid fill (useSyncedLyrics): palabras con score bajo tienen
+   *  un timestamp poco confiable, así que su ventana de fill se interpola
+   *  linealmente entre las palabras confiables vecinas en vez de saltar.
+   *
+   *  Undefined cuando el A2 no trae scores (formatos pre-fix, ediciones
+   *  manuales) o el LRC es estándar — en ese caso todo se trata como
+   *  confiable (comportamiento previo). Cuando algunas palabras traen score
+   *  y otras no (raro), las que faltan se rellenan con 1.0 (confiable). */
+  wordScores?: number[];
 };
 
 export type LrcMetadata = {
@@ -96,10 +108,11 @@ export function parseLrc(input: string): ParsedLrc {
 
     // Detectar A2: si tiene markers `<...>` extraemos per-word timestamps;
     // si no, queda como texto plano y wordTimestampsMs queda undefined.
-    const { text, wordTimestampsMs, lastWordEndMs } = parseA2Markers(rawText);
+    const { text, wordTimestampsMs, lastWordEndMs, wordScores } =
+      parseA2Markers(rawText);
 
     for (const ts of timestamps) {
-      lines.push({ timestampMs: ts, text, wordTimestampsMs, lastWordEndMs });
+      lines.push({ timestampMs: ts, text, wordTimestampsMs, lastWordEndMs, wordScores });
     }
   }
 
@@ -173,34 +186,43 @@ function parseA2Markers(rawText: string): {
   text: string;
   wordTimestampsMs?: number[];
   lastWordEndMs?: number;
+  wordScores?: number[];
 } {
   // Quick path: sin markers, es LRC estándar.
   if (!rawText.includes("<")) {
     return { text: rawText };
   }
 
-  // Split por marker `<...>` capturando el timestamp interior. Resultado:
+  // Split por marker `<ts|score>` capturando el timestamp interior Y el score
+  // opcional. Con DOS grupos de captura el split intercala ambos, así que el
+  // stride pasa de 2 a 3. Resultado:
   //   parts[0]      = texto antes del primer marker (típicamente "")
   //   parts[1]      = primer timestamp (string sin brackets)
-  //   parts[2]      = palabra después del primer marker (hasta el próximo)
-  //   parts[3], [4] = idem para el segundo
+  //   parts[2]      = primer score (string) o undefined si el marker no lo trae
+  //   parts[3]      = palabra después del primer marker (hasta el próximo)
+  //   parts[4..6]   = idem para el segundo
   //   ...
-  // Para A2 con trailing end marker (`<00:25>word<00:26>`):
-  //   parts[N-1] = último timestamp (end de la última palabra)
+  // Para A2 con trailing end marker (`<00:25|0.9>word<00:26>`):
+  //   parts[N-2] = último timestamp (end de la última palabra)
+  //   parts[N-1] = undefined (sin score en el trailing)
   //   parts[N]   = "" (texto vacío después del trailing marker)
-  const parts = rawText.split(/<(\d+:\d+(?:[.:]\d+)?)>/);
-  if (parts.length < 3) {
+  // Backwards compat: A2 viejo sin `|score` deja el grupo de score undefined.
+  const parts = rawText.split(/<(\d+:\d+(?:[.:]\d+)?)(?:\|([\d.]+))?>/);
+  if (parts.length < 4) {
     // Tenía un `<` pero no fue marker válido (texto literal con `<`).
     return { text: rawText };
   }
 
   const wordTimestampsMs: number[] = [];
   const words: string[] = [];
+  const wordScores: number[] = [];
+  let anyScore = false;
   let lastWordEndMs: number | undefined;
 
-  for (let i = 1; i < parts.length; i += 2) {
+  for (let i = 1; i < parts.length; i += 3) {
     const tsStr = parts[i];
-    const wordText = (parts[i + 1] ?? "").trim();
+    const scoreStr = parts[i + 1];
+    const wordText = (parts[i + 2] ?? "").trim();
     const ts = parseInnerTimestamp(tsStr);
     if (ts === null) continue;
     if (!wordText) {
@@ -215,6 +237,15 @@ function parseA2Markers(rawText: string): {
     }
     wordTimestampsMs.push(ts);
     words.push(wordText);
+    // Score: si el marker lo trae lo parseamos; si no, 1.0 (confiable) para
+    // mantener `wordScores` paralelo a `wordTimestampsMs`.
+    const score = scoreStr !== undefined ? parseFloat(scoreStr) : NaN;
+    if (Number.isFinite(score)) {
+      anyScore = true;
+      wordScores.push(Math.max(0, Math.min(1, score)));
+    } else {
+      wordScores.push(1.0);
+    }
   }
 
   if (wordTimestampsMs.length === 0) {
@@ -223,7 +254,15 @@ function parseA2Markers(rawText: string): {
     return { text: rawText.replace(/<[^>]*>/g, "").trim() };
   }
 
-  return { text: words.join(" "), wordTimestampsMs, lastWordEndMs };
+  return {
+    text: words.join(" "),
+    wordTimestampsMs,
+    lastWordEndMs,
+    // Sólo exponemos wordScores si AL MENOS una palabra trajo score real.
+    // Sin esto, un A2 viejo (sin scores) tendría un array de puros 1.0 que
+    // no aporta nada — undefined es la señal de "tratá todo como confiable".
+    wordScores: anyScore ? wordScores : undefined,
+  };
 }
 
 /** Parsea un timestamp interior `mm:ss.xx` (sin brackets) a ms. Análogo

@@ -44,12 +44,16 @@ Documentos fuente de verdad:
   MusicBrainz. API key del usuario en `settings`.
 - **Karaoke:** `whisperx` (Python + PyTorch + wav2vec2) en align-only mode
   via wrapper Python shippeado como Tauri resource. Genera A2 LRC con
-  per-word timestamps. Forced alignment con bounds tight del LRC.
+  per-word timestamps **+ score de confianza** por palabra (formato custom
+  `<mm:ss.xx|score>word`). Forced alignment con bounds tight del LRC.
+  **Hybrid fill:** palabras con score bajo (<0.3) se interpolan entre anchors
+  confiables en vez de usar su timestamp dudoso (fill suave, no salta).
   **Mismatch detection (Nivel 2):** segundo script Python
   (`mismatch_detect.py`) transcribe el audio con WhisperX, convierte LRC
   y transcripción a fonemas IPA vía `phonemizer` (espeak), y compara con
   Levenshtein normalizado por línea. Botón CHECK QUALITY en el panel de
-  lyrics.
+  lyrics (detecta líneas malas; la corrección es manual vía EDIT — no
+  auto-reemplazamos letra con la transcripción de whisper).
 - **Bundled como Tauri resources:** `fpcalc` 1.5.1 (Chromaprint, identification)
   en `resources/bin/`. Resuelto vía `resolve_binary_or_bundled` (bundled first,
   fallback a system PATH).
@@ -83,7 +87,7 @@ src/
 │                           + masterGain + playPauseGain + fade helpers
 ├── components/
 │   ├── ui/                 Button, Tabs (con tab EQ), MarqueeText (genéricos)
-│   ├── library/            LibraryTable (con indicador L + columna +/−),
+│   ├── library/            LibraryTable (con indicador L / K-aligned + columna +/−),
 │   │                       LibrarySearchBar, LibraryToolbar (SCAN + CLEAN +
 │   │                       MB BACKFILL), PlaylistSidebar (tabs PLAYLISTS /
 │   │                       DETAILS), AddToPlaylistPopover, MultiSelectPicker,
@@ -365,6 +369,32 @@ src-tauri/resources/
   provider (LRCLIB caído, timeout NetEase) ya no abortan el cascade. Se
   logean y se sigue al siguiente provider. Antes, un `?` propagaba el
   error y todo fallaba.
+- **Karaoke quality — Mejora 1 (hybrid fill por confianza)** ✓ (2026-06-21):
+  el A2 LRC se extendió a `<mm:ss.xx|score>word`: `build_a2_lrc` propaga el
+  `score` (0..1) de cada `WordTiming` de whisperx. El parser frontend
+  (`parseA2Markers`) lo lee a `LrcLine.wordScores`; backwards-compat con A2
+  sin score (queda undefined). En `useSyncedLyrics`, las palabras con
+  `score < 0.3` ya no usan su timestamp (poco confiable — wav2vec2 entrenado
+  en habla, no canto): su ventana de fill se **interpola por caracteres entre
+  las palabras confiables vecinas** (anchors). El fill fluye suave en vez de
+  saltar. Tracks con todo score alto se comportan idéntico a antes. **Sólo
+  toca timing, nunca el texto.** La Mejora 2 del plan (auto-fix: reemplazar
+  líneas del LRC con la transcripción de whisper) **se descartó a propósito**
+  — transcribir canto es menos confiable que el LRC curado, no queremos pisar
+  letra humana con la adivinanza del modelo. EDIT manual sigue siendo el path
+  para corregir letras. Ver [docs/KARAOKE.md §14](docs/KARAOKE.md).
+- **Indicadores de whisperx (UX)** ✓ (2026-06-21) — whisperx era "disabled
+  silencioso". Dos preguntas distintas: ¿están instaladas las tecnologías? vs
+  ¿ya se procesó ESTA canción? (a) **Deps:** línea en el panel LYRICS
+  (`WHISPERX: OK · ESPEAK-NG: OK` o `NOT DETECTED — INSTALL…`) + feedback de
+  run (`ALIGNING… FIRST RUN DOWNLOADS THE MODEL`). (b) **Per-canción:** cartel
+  explícito en LYRICS (`ALIGNED ✓ <fecha> — ALIGN SCORE X%` / `NOT ALIGNED
+  YET`; `QUALITY CHECKED: X% · <fecha>` / `NOT CHECKED YET`) + marcador
+  `[K]` per-track en la LibraryTable (vs `[L]`) — el `lyrics_status` ganó el
+  estado `'aligned'` (`aligned_at IS NOT NULL`) por CASE en `db/tracks.rs`.
+  **CHECK QUALITY ahora se persiste** (`lyrics.mismatch_score` +
+  `mismatch_checked_at`, migración `20260621000001`; se resetea cuando el LRC
+  cambia). Ver [docs/KARAOKE.md §14.3](docs/KARAOKE.md).
 - Próximo (orden acordado con Bryan 2026-06-18): quick wins **cerrados** (drag
   & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓).
   **(2) calidad/plataforma** — ✓ testing Windows, ✓ `pnpm tauri build`,
@@ -830,6 +860,29 @@ disponible.
 **Bonus fix:** `.stdin(Stdio::null())` en el spawn de yt-dlp. Previene
 que yt-dlp se cuelgue esperando input interactivo (consent, captcha, PO
 token prompt) cuando se ejecuta dentro de Tauri sin TTY.
+
+### 30. Un cluster de AcoustID puede agrupar grabaciones DISTINTAS
+Síntoma que se pagó: bajamos "BTS - Dynamite", corrimos IDENTIFY, y quedó como
+**"Control / Metro Station"** con score 0.971. No fue dedup ni un AcoustID roto:
+el cluster del fingerprint (`/v2/lookup`) devolvía **3 recordings** —
+`Control / Metro Station` PRIMERA (mislabel comunitario), después dos
+`Dynamite / BTS`. El código viejo tomaba **la primera recording con MBID** del
+result de mayor score → "Control". El `score` mide qué tan bien matchea el
+**fingerprint contra el cluster**, NO que la recording elegida sea la correcta;
+AcoustID es comunitario y un cluster puede mezclar canciones por merges/mislabels.
+
+**Fix ([acoustid.rs](src-tauri/src/identification/acoustid.rs) + [mod.rs](src-tauri/src/identification/mod.rs)):**
+aplanamos TODAS las recordings de TODOS los results y elegimos la que mejor
+**coincide con la metadata existente** del track (`MetadataHint`: tokens
+normalizados de `original_title`, o title+artist si no hay). `original_title`
+se prefiere porque es el título raw del download/import — NO contaminado por un
+identify previo equivocado (clave para que re-identificar el track ya pisado se
+auto-corrija). **Safeguard:** si el cluster tiene ≥2 canciones distintas y la
+elegida no coincide en NADA con la pista, marcamos `low_confidence` y **no
+pisamos** la metadata (el usuario revisa). Un cluster de una sola canción se
+confía aunque la metadata vieja fuera basura (el identify existe para eso).
+**Recovery del track ya roto:** reiniciar la app (Gotcha #10) y re-IDENTIFY —
+ahora elige Dynamite por la pista de `original_title`.
 
 ---
 

@@ -44,27 +44,32 @@ pub struct MismatchLineResponse {
     pub score: f64,
 }
 
+/// Resuelve un script Python del bundle de Tauri (`resources/scripts/`) y
+/// verifica que exista. Centraliza el error consistente entre comandos.
+fn resolve_script(app: &AppHandle, name: &str) -> AppResult<std::path::PathBuf> {
+    let path = app
+        .path()
+        .resolve(
+            format!("scripts/{name}"),
+            tauri::path::BaseDirectory::Resource,
+        )
+        .map_err(|e| AppError::Other(format!("resolve {name}: {e}")))?;
+    if !path.exists() {
+        return Err(AppError::Other(format!(
+            "{name} not found at {} — check tauri.conf.json bundle.resources",
+            path.display()
+        )));
+    }
+    Ok(path)
+}
+
 #[tauri::command]
 pub async fn karaoke_auto_align(
     track_id: i64,
     app: AppHandle,
     pool: State<'_, SqlitePool>,
 ) -> AppResult<AlignResponse> {
-    let script_path = app
-        .path()
-        .resolve(
-            "scripts/karaoke_align.py",
-            tauri::path::BaseDirectory::Resource,
-        )
-        .map_err(|e| AppError::Other(format!("resolve karaoke_align.py: {e}")))?;
-
-    if !script_path.exists() {
-        return Err(AppError::Other(format!(
-            "karaoke_align.py not found at {} — check tauri.conf.json bundle.resources",
-            script_path.display()
-        )));
-    }
-
+    let script_path = resolve_script(&app, "karaoke_align.py")?;
     let result =
         karaoke::align_track(pool.inner(), track_id, DEFAULT_ALIGN_LANGUAGE, &script_path).await?;
     Ok(AlignResponse {
@@ -78,21 +83,7 @@ pub async fn karaoke_detect_mismatch(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
 ) -> AppResult<MismatchResponse> {
-    let script_path = app
-        .path()
-        .resolve(
-            "scripts/mismatch_detect.py",
-            tauri::path::BaseDirectory::Resource,
-        )
-        .map_err(|e| AppError::Other(format!("resolve mismatch_detect.py: {e}")))?;
-
-    if !script_path.exists() {
-        return Err(AppError::Other(format!(
-            "mismatch_detect.py not found at {} — check tauri.conf.json bundle.resources",
-            script_path.display()
-        )));
-    }
-
+    let script_path = resolve_script(&app, "mismatch_detect.py")?;
     let result =
         karaoke::detect_mismatch(pool.inner(), track_id, MISMATCH_LANGUAGE, &script_path)
             .await?;

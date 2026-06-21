@@ -96,6 +96,8 @@ pub async fn try_netease(
         aligned_at: None,
         original_synced_lyrics: None,
         alignment_score: None,
+        mismatch_score: None,
+        mismatch_checked_at: None,
         status: "found".to_string(),
     }))
 }

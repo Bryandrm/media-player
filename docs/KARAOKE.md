@@ -770,4 +770,112 @@ Para Fase A actual, **lo aceptamos como límite** y documentamos las opciones pa
 
 ---
 
+## 14. Mejoras de calidad (PLAN-karaoke-quality, 2026-06-21)
+
+El plan original ([docs/PLAN-karaoke-quality.md](./PLAN-karaoke-quality.md))
+proponía dos mejoras. **Sólo se implementó la Mejora 1.** La Mejora 2
+(auto-fix: reemplazar líneas del LRC con la transcripción de whisper) **se
+descartó** — ver §14.2.
+
+### 14.1 Mejora 1 — Hybrid fill por confianza de palabra
+
+**Problema:** wav2vec2 está entrenado en habla, no en canto. Las palabras con
+alignment score bajo (<0.3) tienen timestamps poco confiables; usarlos directo
+hace que el karaoke fill **salte** erráticamente.
+
+**Solución:**
+1. **Backend** (`build_a2_lrc`): el A2 LRC se extendió a
+   `<mm:ss.xx|score>word`. Cada marker de palabra lleva ahora el `score`
+   (0..1) de whisperx, 2 decimales. El trailing end marker (`<mm:ss.xx>`)
+   queda **sin** score (es un end, no una palabra). Formato custom nuestro —
+   ningún otro player lo entiende, pero ya éramos custom con el trailing
+   marker. `format_word_score` clampa defensivo (fuera de rango / NaN → 0.00).
+2. **Parser** (`parseA2Markers`): regex con segundo grupo de captura para el
+   `|score` → `LrcLine.wordScores` (paralelo a `wordTimestampsMs`). El split
+   con dos grupos intercala timestamp + score, así que el stride pasa de 2 a
+   3. **Backwards-compat**: A2 sin score deja `wordScores` undefined (todo se
+   trata como confiable).
+3. **Fill** (`useSyncedLyrics`): las palabras con `score < 0.3` ya no usan su
+   timestamp. Se construyen **anchors** confiables (palabra 0 = line start,
+   palabras con score >= umbral, y el end de línea) en un eje de posición =
+   caracteres acumulados ↔ tiempo. Las palabras de baja confianza derivan su
+   start **interpolando linealmente** entre los anchors vecinos por su
+   posición en caracteres. Corridas de palabras malas se reparten uniforme
+   entre dos confiables → el fill fluye suave. Tracks con todo score alto se
+   comportan **idéntico** a antes (cada palabra usa su timestamp real).
+
+Umbral `SCORE_THRESHOLD = 0.3` (constante en `useSyncedLyrics.ts`), ajustable
+con uso real.
+
+### 14.2 Mejora 2 — Auto-fix de LRC desde transcripción (DESCARTADA)
+
+**Qué proponía:** un comando `karaoke_auto_fix` que, para las líneas con
+mismatch alto (CHECK QUALITY `score < 0.5`), reemplazaba el texto del LRC por
+la **transcripción de whisper** y re-alineaba — eliminando el paso manual de
+EDIT.
+
+**Por qué se descartó (decisión de Bryan, 2026-06-21):** la premisa es *"si el
+LRC no matchea el audio, la transcripción de whisper tiene razón"*, y **eso no
+es confiable**. Transcribir canto es intrínsecamente más propenso a error que
+una letra curada por humanos (LRCLIB/NetEase): un score bajo puede venir tanto
+de un LRC equivocado como de whisper *mishearing* el canto sobre
+instrumentación pesada (mismo límite del Gotcha #27) o de ruido del
+phonemizer/VAD. En esos casos el auto-fix **degradaría una letra correcta**,
+reemplazándola con la adivinanza del modelo. Y como el plan pisaba
+`original_synced_lyrics`, el "deshacer" dependía de un REFETCH al provider, no
+de un backup local de verdad.
+
+**Qué hacemos en su lugar:** CHECK QUALITY sigue *detectando* las líneas malas;
+la corrección es **manual vía EDIT** (el usuario decide qué escribir). No
+auto-reemplazamos letra humana con texto generado por el modelo. El hybrid fill
+(§14.1) ya mejora el síntoma visual de los timestamps malos sin tocar el texto.
+
+Si en el futuro se reconsidera, el approach honesto sería **preview + confirmar
+por línea** (mostrar diff LRC→whisper y que el usuario apruebe cada cambio),
+nunca un reemplazo a ciegas.
+
+### 14.3 Indicadores de whisperx (UX, 2026-06-21)
+
+Deuda de UX de la Fase A: whisperx era "disabled silencioso" — si no estaba
+detectado, los botones AUTO-ALIGN / CHECK QUALITY simplemente no aparecían
+(`{whisperxAvailable && ...}`), sin pista de que la feature existía. Y durante
+el run sólo cambiaba el label del botón a "ALIGNING...", que parecía colgado
+en el primer run (descarga del modelo wav2vec2). Tres indicadores agregados:
+
+**Distinción importante:** "¿están instaladas las tecnologías?" (deps) vs
+"¿ya se procesó ESTA canción?" (estado per-track) son dos preguntas distintas.
+Los indicadores cubren ambas:
+
+**A) Detección de deps (instalación):**
+1. **Estado de deps en el panel LYRICS** (vista synced, siempre visible): una
+   línea muestra `WHISPERX: OK · ESPEAK-NG: OK` cuando están, o
+   `WHISPERX NOT DETECTED — INSTALL IT TO ENABLE AUTO-ALIGN / CHECK QUALITY`
+   cuando falta. (espeak-ng faltante → `RAW TEXT MODE`.) `check_dependencies`
+   ya reportaba ambos (`deps.whisperx`, `deps.espeakNg`); sólo faltaba mostrarlo.
+2. **Feedback de run**: mientras corre, esa misma línea avisa
+   `ALIGNING… RUNNING WHISPERX — FIRST RUN DOWNLOADS THE MODEL (CAN TAKE A FEW
+   MINUTES)`. Sin esto el primer align parecía un hang.
+
+**B) Estado per-canción (¿ya se procesó?):**
+3. **Cartel explícito en el panel LYRICS** (vista synced). Dos ejes
+   independientes, en vez de inferirlos del label del botón:
+   - **ALINEACIÓN:** `ALIGNED ✓ <fecha> — ALIGN SCORE X%` (con link a CHECK
+     QUALITY si el score < 50%) o `NOT ALIGNED YET — RUN AUTO-ALIGN FOR
+     PER-WORD KARAOKE`. Usa `lyrics.alignedAt` + `alignmentScore` (ya existían).
+   - **QUALITY:** `QUALITY CHECKED: X% · <fecha>` o `QUALITY: NOT CHECKED YET`.
+4. **Persistencia de CHECK QUALITY** (migración `20260621000001`). Antes el
+   resultado de mismatch vivía sólo en memoria (`lyricsStore.mismatchResult`) →
+   se perdía al cerrar/cambiar de track. Ahora `db/lyrics.rs::save_mismatch`
+   guarda `mismatch_score` + `mismatch_checked_at` (lo llama `detect_mismatch`
+   tras correr). Se resetean a NULL cuando el texto del LRC cambia (refetch /
+   manual edit) porque un score viejo no aplica a una letra nueva.
+5. **Marcador per-track `[K]` en la library**: el `lyrics_status` (derivado por
+   CASE en `db/tracks.rs`) ganó el estado `'aligned'`
+   (`aligned_at IS NOT NULL AND synced_lyrics IS NOT NULL`), antes del check de
+   `'synced'`. `LibraryTable` lo renderiza como `[K]` (karaoke per-word) vs
+   `[L]` (synced sin alinear). Un EDIT manual resetea `aligned_at` → vuelve a
+   `[L]`, así que el marcador refleja fielmente "tiene forced alignment".
+
+---
+
 *Doc vivo. Actualizar conforme avancen las fases.*

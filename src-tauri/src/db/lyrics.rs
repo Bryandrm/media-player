@@ -16,7 +16,8 @@ pub async fn get_for_track(
     let row = sqlx::query_as::<_, Lyrics>(
         "SELECT track_id, synced_lyrics, plain_lyrics, source, source_id, \
                 confidence, offset_ms, speed_ratio, aligned_at, \
-                original_synced_lyrics, alignment_score, status \
+                original_synced_lyrics, alignment_score, \
+                mismatch_score, mismatch_checked_at, status \
          FROM lyrics WHERE track_id = ?",
     )
     .bind(track_id)
@@ -58,7 +59,9 @@ pub async fn upsert(pool: &SqlitePool, lyrics: &Lyrics) -> AppResult<()> {
                  lyrics.original_synced_lyrics, \
                  excluded.original_synced_lyrics \
              ), \
-             aligned_at = NULL",
+             aligned_at = NULL, \
+             mismatch_score = NULL, \
+             mismatch_checked_at = NULL",
     )
     .bind(lyrics.track_id)
     .bind(&lyrics.synced_lyrics)
@@ -177,6 +180,28 @@ pub async fn save_aligned(
     Ok(())
 }
 
+/// Persiste el resultado de una corrida de CHECK QUALITY (mismatch detection)
+/// para que la app recuerde entre sesiones que ya se chequeó esta canción y
+/// con qué `overall_score`. `mismatch_checked_at` queda con el timestamp de
+/// ahora. Se llama desde `detect_mismatch` tras obtener el resultado.
+pub async fn save_mismatch(
+    pool: &SqlitePool,
+    track_id: i64,
+    overall_score: f64,
+) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE lyrics SET \
+            mismatch_score = ?, \
+            mismatch_checked_at = CURRENT_TIMESTAMP \
+         WHERE track_id = ?",
+    )
+    .bind(overall_score)
+    .bind(track_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Persiste una edición manual del usuario. A diferencia de `upsert` (que
 /// recibe el blob de un provider externo), esto **sobreescribe**
 /// `original_synced_lyrics` con la versión editada — la decisión del usuario
@@ -215,6 +240,8 @@ pub async fn save_manual_edit(
              offset_ms = 0, \
              speed_ratio = 1.0, \
              aligned_at = NULL, \
+             mismatch_score = NULL, \
+             mismatch_checked_at = NULL, \
              fetched_at = CURRENT_TIMESTAMP, \
              last_used_at = CURRENT_TIMESTAMP",
     )

@@ -292,6 +292,8 @@ function KV({
 function mapLyricsStatus(status: string | null): string | null {
   if (!status) return null;
   switch (status) {
+    case "aligned":
+      return "SYNCED (KARAOKE ALIGNED)";
     case "synced":
       return "SYNCED";
     case "plain":

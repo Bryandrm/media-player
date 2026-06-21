@@ -311,12 +311,21 @@ fn build_a2_lrc(original_lrc: &str, lines: &[LrcLine], words: &[whisperx::WordTi
             .unwrap_or(line.timestamp_ms);
         out.push_str(&format_lrc_timestamp(line_marker_ms, true));
 
-        // Markers por palabra.
+        // Markers por palabra. Formato A2 extendido: `<mm:ss.xx|score>word`.
+        // El `|score` (confianza del alignment, 0..1) es nuestro — ningún
+        // otro player lo entiende, pero ya somos custom con el trailing
+        // marker. El frontend lo usa para el hybrid fill: palabras con score
+        // bajo se interpolan entre anchors confiables en vez de confiar en
+        // su (probablemente incorrecto) timestamp. Backwards compat: un A2
+        // sin `|score` (generado antes de este cambio) sigue parseando — el
+        // frontend deja `wordScores` sin poblar y trata todo como confiable.
         for (i, word) in line_words.iter().enumerate() {
             if let Some(wt) = line_word_timings.get(i) {
                 let word_ms = (wt.start.max(0.0) * 1000.0) as u64;
                 out.push('<');
                 out.push_str(&format_lrc_timestamp(word_ms, false));
+                out.push('|');
+                out.push_str(&format_word_score(wt.score));
                 out.push('>');
                 out.push_str(word);
             } else {
@@ -343,6 +352,18 @@ fn build_a2_lrc(original_lrc: &str, lines: &[LrcLine], words: &[whisperx::WordTi
     }
 
     out
+}
+
+/// Formatea el score de confianza de una palabra a 2 decimales (0.00..1.00)
+/// para el marker A2 extendido `<mm:ss.xx|score>`. Clamp defensivo: whisperx
+/// devuelve 0..1 pero un valor fuera de rango (o NaN) no debe romper el LRC.
+fn format_word_score(score: f64) -> String {
+    let s = if score.is_finite() {
+        score.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    format!("{:.2}", s)
 }
 
 /// Formato `[mm:ss.xx]` (con brackets) o `mm:ss.xx` (sin brackets, para A2 inner).
@@ -459,16 +480,43 @@ mod tests {
         assert!(a2.contains("[ar:Avicii]"));
         assert!(a2.contains("[ti:The Nights]"));
         // Line marker usa el start de "Once" (27.10), NO el LRC original (25.43).
+        // Cada palabra lleva su `|score` (0.90 acá); el trailing marker NO.
         assert!(
-            a2.contains("[00:27.10]<00:27.10>Once <00:27.50>upon<00:27.80>"),
-            "expected line marker to use whisperx start (27.10), not LRC (25.43). got: {}",
+            a2.contains("[00:27.10]<00:27.10|0.90>Once <00:27.50|0.90>upon<00:27.80>"),
+            "expected line marker to use whisperx start (27.10) + per-word scores. got: {}",
             a2
         );
         assert!(
-            a2.contains("[00:32.00]<00:32.00>Of <00:32.20>memories<00:32.80>"),
-            "expected line marker for second line at 32.00, got: {}",
+            a2.contains("[00:32.00]<00:32.00|0.90>Of <00:32.20|0.90>memories<00:32.80>"),
+            "expected line marker for second line at 32.00 + scores, got: {}",
             a2
         );
+    }
+
+    #[test]
+    fn build_a2_lrc_propagates_word_scores() {
+        // Una línea con palabras de confianza dispar: 0.95 (alta) y 0.12 (baja).
+        // El A2 LRC debe codificar ambos scores en sus markers.
+        let original = "[00:10.00]Good bad";
+        let lines = vec![LrcLine { timestamp_ms: 10_000, text: "Good bad".into() }];
+        let words = vec![
+            whisperx::WordTiming { word: "Good".into(), start: 10.00, end: 10.40, score: 0.95 },
+            whisperx::WordTiming { word: "bad".into(), start: 10.40, end: 10.90, score: 0.12 },
+        ];
+        let a2 = build_a2_lrc(original, &lines, &words);
+        assert!(a2.contains("<00:10.00|0.95>Good"), "got: {}", a2);
+        assert!(a2.contains("<00:10.40|0.12>bad"), "got: {}", a2);
+    }
+
+    #[test]
+    fn format_word_score_clamps_and_rounds() {
+        assert_eq!(format_word_score(0.923), "0.92");
+        assert_eq!(format_word_score(0.0), "0.00");
+        assert_eq!(format_word_score(1.0), "1.00");
+        // fuera de rango / NaN → clamp defensivo, nunca rompe el formato.
+        assert_eq!(format_word_score(1.7), "1.00");
+        assert_eq!(format_word_score(-0.3), "0.00");
+        assert_eq!(format_word_score(f64::NAN), "0.00");
     }
 }
 
@@ -520,11 +568,21 @@ pub async fn detect_mismatch(
     let file_path =
         file_path.ok_or_else(|| AppError::NotFound(format!("track {track_id}")))?;
 
-    whisperx::detect_mismatch(
+    let result = whisperx::detect_mismatch(
         Path::new(&file_path),
         &synced,
         language,
         script_path,
     )
-    .await
+    .await?;
+
+    // Persistir el overall_score + checked_at para que la app recuerde entre
+    // sesiones que ya se corrió CHECK QUALITY en esta canción. Si la
+    // persistencia falla, no abortamos la detección — el resultado igual se
+    // devuelve al frontend (se logea y sigue).
+    if let Err(e) = db::lyrics::save_mismatch(pool, track_id, result.overall_score).await {
+        eprintln!("[mismatch] no se pudo persistir el score: {e}");
+    }
+
+    Ok(result)
 }

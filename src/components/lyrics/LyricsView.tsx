@@ -422,22 +422,72 @@ export function LyricsView() {
               </>
             )}
           </div>
-          {whisperxAvailable && lyrics?.alignedAt && lyrics.alignmentScore !== null && lyrics.alignmentScore < 0.5 && !mismatchResult && (
-            <div className="flex items-center gap-2 mt-1 text-accent">
-              ALIGNMENT SCORE: {Math.round(lyrics.alignmentScore * 100)}% —
-              <button
-                className="underline cursor-pointer bg-transparent border-none text-accent p-0"
-                onClick={onDetectMismatch}
-                disabled={detecting}
-              >
-                CHECK QUALITY
-              </button>
-              TO FIND BAD LINES
+          {/* Estado per-canción de karaoke (explícito, no inferido del label
+              del botón). Dos ejes independientes:
+                - ALINEACIÓN: si se corrió AUTO-ALIGN (lyrics.alignedAt) + score.
+                - QUALITY: resultado persistido de CHECK QUALITY (mismatchScore).
+              Se oculta cuando hay un mismatchResult vivo (el panel de abajo ya
+              muestra el detalle de esa corrida). */}
+          {whisperxAvailable && !mismatchResult && (
+            <div className="flex flex-col gap-1 mt-1">
+              {lyrics?.alignedAt ? (
+                <div className="flex items-center gap-2 flex-wrap text-muted">
+                  <span className="text-fg">ALIGNED ✓</span>
+                  <span>{lyrics.alignedAt.slice(0, 10)}</span>
+                  {lyrics.alignmentScore !== null && (
+                    <span
+                      className={lyrics.alignmentScore < 0.5 ? "text-accent" : ""}
+                    >
+                      — ALIGN SCORE {Math.round(lyrics.alignmentScore * 100)}%
+                    </span>
+                  )}
+                  {lyrics.alignmentScore !== null && lyrics.alignmentScore < 0.5 && (
+                    <button
+                      className="underline cursor-pointer bg-transparent border-none text-accent p-0"
+                      onClick={onDetectMismatch}
+                      disabled={detecting}
+                    >
+                      CHECK QUALITY TO FIND BAD LINES
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="text-muted">
+                  NOT ALIGNED YET — RUN AUTO-ALIGN FOR PER-WORD KARAOKE
+                </div>
+              )}
+              {lyrics?.mismatchScore !== null && lyrics?.mismatchScore !== undefined ? (
+                <div className="flex items-center gap-2 text-muted">
+                  QUALITY CHECKED:
+                  <span className={lyrics.mismatchScore < 0.5 ? "text-accent" : "text-fg"}>
+                    {Math.round(lyrics.mismatchScore * 100)}%
+                  </span>
+                  {lyrics.mismatchCheckedAt && (
+                    <span>· {lyrics.mismatchCheckedAt.slice(0, 10)}</span>
+                  )}
+                </div>
+              ) : (
+                <div className="text-muted">QUALITY: NOT CHECKED YET</div>
+              )}
             </div>
           )}
-          {whisperxAvailable && lyrics?.alignedAt && lyrics.alignmentScore !== null && lyrics.alignmentScore >= 0.5 && !mismatchResult && (
+          {/* Estado de whisperx/espeak-ng + feedback del run. Siempre visible
+              en la vista synced — cierra el gap de "no sé si la feature está
+              disponible ni si está corriendo". Mientras corre avisa que el
+              primer run descarga el modelo (sino el botón parece colgado). */}
+          {aligning || detecting ? (
+            <div className="flex items-center gap-2 mt-1 text-accent">
+              {aligning ? "ALIGNING" : "CHECKING"}… RUNNING WHISPERX — FIRST RUN
+              DOWNLOADS THE MODEL (CAN TAKE A FEW MINUTES)
+            </div>
+          ) : !whisperxAvailable ? (
             <div className="flex items-center gap-2 mt-1 text-muted">
-              ALIGNMENT SCORE: {Math.round(lyrics.alignmentScore * 100)}% — GOOD
+              WHISPERX NOT DETECTED — INSTALL IT TO ENABLE AUTO-ALIGN / CHECK QUALITY
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 mt-1 text-muted">
+              WHISPERX: OK · ESPEAK-NG:{" "}
+              {espeakNgAvailable ? "OK" : "NOT FOUND (RAW TEXT MODE)"}
             </div>
           )}
         </div>

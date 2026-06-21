@@ -53,6 +53,10 @@ pub struct Track {
     /// Score numérico de AcoustID (0..1) para el match aceptado. NULL si
     /// no hubo identify exitoso. La UI lo muestra en tooltip del [ID].
     pub acoustid_score: Option<f64>,
+    /// overall_score (0..1) de la última corrida de CHECK QUALITY (mismatch
+    /// detection). NULL = nunca chequeado. El frontend muestra un marcador `Q`
+    /// en la library (acento si <0.5) y el % en tooltip.
+    pub mismatch_score: Option<f64>,
 }
 
 /// Detalle completo de un track para el panel "DETAILS" del sidebar. Trae
@@ -235,5 +239,11 @@ pub struct Lyrics {
     /// alineó. Score bajo (<0.5) indica que el LRC probablemente no matchea
     /// el audio — las palabras del texto no se encontraron en la señal.
     pub alignment_score: Option<f64>,
+    /// overall_score (0.0..1.0) de la última corrida de CHECK QUALITY (mismatch
+    /// detection). NULL = nunca chequeado. Persistido para que la app recuerde
+    /// el resultado entre sesiones. Se resetea cuando el texto del LRC cambia.
+    pub mismatch_score: Option<f64>,
+    /// Timestamp de la última corrida de CHECK QUALITY. NULL = nunca chequeado.
+    pub mismatch_checked_at: Option<String>,
     pub status: String,
 }

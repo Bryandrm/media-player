@@ -247,12 +247,13 @@ pub async fn list_tracks(
                 CASE \
                     WHEN l.track_id IS NULL THEN NULL \
                     WHEN l.status = 'not_found' THEN 'not_found' \
+                    WHEN l.aligned_at IS NOT NULL AND l.synced_lyrics IS NOT NULL THEN 'aligned' \
                     WHEN l.synced_lyrics IS NOT NULL THEN 'synced' \
                     WHEN l.plain_lyrics IS NOT NULL THEN 'plain' \
                     ELSE 'instrumental' \
                 END AS lyrics_status, \
                 t.acoustid_id, t.mbid_recording, t.identification_status, \
-                t.acoustid_score \
+                t.acoustid_score, l.mismatch_score \
          FROM playlist_tracks pt \
          JOIN tracks t ON t.id = pt.track_id \
          LEFT JOIN lyrics l ON l.track_id = t.id \

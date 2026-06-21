@@ -125,6 +125,8 @@ async fn fetch_one(
             aligned_at: None,
             original_synced_lyrics: None,
             alignment_score: None,
+            mismatch_score: None,
+            mismatch_checked_at: None,
             status: "found".to_string(),
         }));
     }
@@ -150,6 +152,8 @@ async fn fetch_one(
         aligned_at: None,
         original_synced_lyrics: None,
         alignment_score: None,
+        mismatch_score: None,
+        mismatch_checked_at: None,
         status: "found".to_string(),
     }))
 }
@@ -258,6 +262,8 @@ async fn search_fuzzy(
             aligned_at: None,
             original_synced_lyrics: None,
             alignment_score: None,
+            mismatch_score: None,
+            mismatch_checked_at: None,
             status: "found".to_string(),
         }));
     }

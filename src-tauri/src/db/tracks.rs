@@ -148,12 +148,13 @@ pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Track>> {
                 CASE
                     WHEN l.track_id IS NULL THEN NULL
                     WHEN l.status = 'not_found' THEN 'not_found'
+                    WHEN l.aligned_at IS NOT NULL AND l.synced_lyrics IS NOT NULL THEN 'aligned'
                     WHEN l.synced_lyrics IS NOT NULL THEN 'synced'
                     WHEN l.plain_lyrics IS NOT NULL THEN 'plain'
                     ELSE 'instrumental'
                 END AS lyrics_status,
                 t.acoustid_id, t.mbid_recording, t.identification_status,
-                t.acoustid_score
+                t.acoustid_score, l.mismatch_score
          FROM tracks t
          LEFT JOIN lyrics l ON l.track_id = t.id
          ORDER BY
@@ -177,6 +178,13 @@ pub struct TrackForIdentification {
     pub file_path: String,
     pub duration_ms: i64,
     pub acoustid_fingerprint: Option<String>,
+    /// Metadata existente — alimenta el `MetadataHint` que desambigua entre las
+    /// grabaciones de un cluster de AcoustID. `original_title` es el más
+    /// confiable (título raw del download/import, no contaminado por un
+    /// identify previo equivocado).
+    pub title: String,
+    pub artist: Option<String>,
+    pub original_title: Option<String>,
 }
 
 pub async fn get_for_identification(
@@ -184,7 +192,8 @@ pub async fn get_for_identification(
     track_id: i64,
 ) -> AppResult<Option<TrackForIdentification>> {
     let row = sqlx::query_as::<_, TrackForIdentification>(
-        "SELECT file_path, duration_ms, acoustid_fingerprint \
+        "SELECT file_path, duration_ms, acoustid_fingerprint, \
+                title, artist, original_title \
          FROM tracks WHERE id = ?",
     )
     .bind(track_id)
@@ -415,6 +424,7 @@ pub async fn get_details(
                 CASE \
                     WHEN l.track_id IS NULL THEN NULL \
                     WHEN l.status = 'not_found' THEN 'not_found' \
+                    WHEN l.aligned_at IS NOT NULL AND l.synced_lyrics IS NOT NULL THEN 'aligned' \
                     WHEN l.synced_lyrics IS NOT NULL THEN 'synced' \
                     WHEN l.plain_lyrics IS NOT NULL THEN 'plain' \
                     ELSE 'instrumental' \

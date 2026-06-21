@@ -16,7 +16,10 @@ import { LibrarySearchBar } from "./LibrarySearchBar";
 import { AddToPlaylistPopover } from "./AddToPlaylistPopover";
 
 // Indicador de letras en la columna L de la library.
-//   synced       → "[L]" en accent (la mejor experiencia, llamativo)
+//   aligned      → "[K]" en accent (synced + whisperx alineado → karaoke real
+//                  per-word). Distinto de [L] para saber qué tracks ya tienen
+//                  forced alignment corrido.
+//   synced       → "[L]" en accent (synced sin alinear, highlight por línea)
 //   plain        → "·" en muted (hay algo pero no sincronizado)
 //   instrumental → "♪" en muted (track sin letras confirmado por LRCLIB)
 //   not_found    → "—" en muted (buscamos, nadie tenía letras)
@@ -27,29 +30,59 @@ import { AddToPlaylistPopover } from "./AddToPlaylistPopover";
 //
 // En la fila currente (bg accent), el accent del indicador desaparece —
 // usamos foreground para que quede visible contra el fondo naranja. La
-// fila tiene `text-bg` global, así que sin override el `[L]` quedaría
+// fila tiene `text-bg` global, así que sin override el `[L]`/`[K]` quedaría
 // invisible (negro sobre naranja apenas se distingue).
 function LyricsIndicator({
   status,
   isCurrent,
+  mismatchScore,
 }: {
   status: TrackLyricsStatus | null;
   isCurrent: boolean;
+  /** overall_score de CHECK QUALITY (0..1). null = nunca chequeado → sin `Q`. */
+  mismatchScore: number | null;
 }) {
   if (status === null) return null;
-  if (status === "synced") {
-    return (
-      <span className={isCurrent ? "" : "text-accent"}>[L]</span>
+
+  // Base: indicador de disponibilidad/alineación de la letra.
+  let base: React.ReactNode;
+  if (status === "aligned") {
+    base = (
+      <span className={isCurrent ? "" : "text-accent"} title="Karaoke aligned (per-word timing)">[K]</span>
     );
+  } else if (status === "synced") {
+    base = <span className={isCurrent ? "" : "text-accent"}>[L]</span>;
+  } else if (status === "plain") {
+    base = <span className="text-muted">·</span>;
+  } else if (status === "instrumental") {
+    base = <span className="text-muted">♪</span>;
+  } else {
+    // not_found
+    base = <span className="text-muted">—</span>;
   }
-  if (status === "plain") {
-    return <span className="text-muted">·</span>;
-  }
-  if (status === "instrumental") {
-    return <span className="text-muted">♪</span>;
-  }
-  // not_found
-  return <span className="text-muted">—</span>;
+
+  // Marcador secundario `Q`: la letra ya pasó por CHECK QUALITY. Acento si el
+  // score es bajo (<0.5 = mismatch alto, líneas malas), muted si es bueno. El
+  // % exacto va en el tooltip. Independiente de [K]/[L] (se puede chequear
+  // quality sin alinear). Sólo aparece cuando hubo una corrida persistida.
+  const quality =
+    mismatchScore !== null ? (
+      <span
+        className={
+          isCurrent ? "" : mismatchScore < 0.5 ? "text-accent" : "text-muted"
+        }
+        title={`Quality checked: ${Math.round(mismatchScore * 100)}%`}
+      >
+        {" "}Q
+      </span>
+    ) : null;
+
+  return (
+    <>
+      {base}
+      {quality}
+    </>
+  );
 }
 
 // Indicador de identification + trigger inline. La celda misma es el
@@ -404,7 +437,11 @@ export function LibraryTable() {
                       {isCurrent ? "►" : String(i + 1).padStart(2, "0")}
                     </td>
                     <td className="px-3 py-2 font-bold">
-                      <LyricsIndicator status={t.lyricsStatus} isCurrent={isCurrent} />
+                      <LyricsIndicator
+                        status={t.lyricsStatus}
+                        isCurrent={isCurrent}
+                        mismatchScore={t.mismatchScore}
+                      />
                     </td>
                     <td
                       className={`px-3 py-2 font-bold ${
