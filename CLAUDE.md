@@ -884,6 +884,27 @@ confía aunque la metadata vieja fuera basura (el identify existe para eso).
 **Recovery del track ya roto:** reiniciar la app (Gotcha #10) y re-IDENTIFY —
 ahora elige Dynamite por la pista de `original_title`.
 
+### 31. Un 429 de LRCLIB/NetEase NO debe cachear `not_found`
+Síntoma que se pagó: recorrer una library grande (260 tracks) dispara el
+auto-fetch de letras por cada cambio de track → ráfaga de requests casi
+simultáneos → LRCLIB responde **429 Too Many Requests**. El bug: los providers
+trataban **cualquier** non-success (incluido 429) como `Ok(None)` = "no hay
+letra" → el cascade cacheaba `not_found` **permanente**. Resultado real: 61
+tracks marcados "sin letras" que sí tenían letra, solo por el rate limit.
+
+**Fix (dos partes):**
+1. **No cachear not_found en falla transitoria.** 404 = no-match genuino →
+   `Ok(None)` (se puede cachear). 429/5xx/red → `Err` → el cascade
+   ([lyrics/mod.rs](src-tauri/src/lyrics/mod.rs)) setea un flag `transient_failure`
+   y, si no encontró nada, **NO** llama `mark_not_found` (deja status null para
+   reintentar). Recovery de los ya-marcados: `DELETE FROM lyrics WHERE
+   status='not_found' AND <recientes>`.
+2. **Throttle + backoff** ([lyrics/mod.rs](src-tauri/src/lyrics/mod.rs)
+   `send_throttled`): gate global (`OnceLock<Mutex<Instant>>`) que espacia los
+   requests salientes a ~3/seg (`MIN_LYRICS_REQUEST_INTERVAL = 300ms`) + reintento
+   con backoff exponencial ante 429 (700ms→1.4s→2.8s, 3 intentos). En uso normal
+   (un fetch cada varios minutos) el gate nunca se toca; sólo espacia las ráfagas.
+
 ---
 
 ## Disclaimer legal (recordatorio)

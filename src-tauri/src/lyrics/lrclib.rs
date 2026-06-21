@@ -12,7 +12,7 @@
 use serde::Deserialize;
 
 use crate::contracts::Lyrics;
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 
 const LRCLIB_GET: &str = "https://lrclib.net/api/get";
 const LRCLIB_SEARCH: &str = "https://lrclib.net/api/search";
@@ -92,17 +92,21 @@ async fn fetch_one(
         }
     }
 
-    let resp = http.get(LRCLIB_GET).query(&params).send().await?;
+    let resp = super::send_throttled(http.get(LRCLIB_GET).query(&params)).await?;
 
-    // 404 = no match (esperado). Cualquier otro non-success lo logueamos
-    // pero devolvemos None (no rompemos el flujo si LRCLIB tiene un
-    // hipo — el frontend mostrará "not found" igual).
+    // 404 = no match GENUINO (esperado) → Ok(None): el track no tiene letra
+    // en LRCLIB, el cascade puede cachear not_found.
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
+    // 429 / 5xx / cualquier otro non-success = falla TRANSITORIA (rate limit,
+    // server hiccup). NO es "no hay letra" → devolvemos Err para que el cascade
+    // NO cachee not_found. Sin esto, un 429 (típico al bajar letras en masa)
+    // marca el track "sin letras" permanente aunque la letra exista.
     if !resp.status().is_success() {
-        eprintln!("[lrclib] non-success status: {}", resp.status());
-        return Ok(None);
+        let status = resp.status();
+        eprintln!("[lrclib] non-success status: {status} (transitorio, no se cachea not_found)");
+        return Err(AppError::Other(format!("lrclib transient HTTP {status}")));
     }
 
     let body: LrcLibResponse = resp.json().await?;
@@ -219,10 +223,15 @@ async fn search_fuzzy(
         ("track_name", q.title),
     ];
 
-    let resp = http.get(LRCLIB_SEARCH).query(&params).send().await?;
-    if !resp.status().is_success() {
-        eprintln!("[lrclib search] non-success: {}", resp.status());
+    let resp = super::send_throttled(http.get(LRCLIB_SEARCH).query(&params)).await?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
+    }
+    if !resp.status().is_success() {
+        // Transitorio (429/5xx) → Err para que el cascade no cachee not_found.
+        let status = resp.status();
+        eprintln!("[lrclib search] non-success: {status} (transitorio)");
+        return Err(AppError::Other(format!("lrclib search transient HTTP {status}")));
     }
 
     let results: Vec<LrcLibResponse> = resp.json().await?;

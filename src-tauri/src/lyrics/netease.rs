@@ -15,7 +15,7 @@
 use serde::Deserialize;
 
 use crate::contracts::Lyrics;
-use crate::errors::AppResult;
+use crate::errors::{AppError, AppResult};
 
 const SEARCH_URL: &str = "https://music.163.com/api/search/get/";
 const LYRIC_URL: &str = "https://music.163.com/api/song/lyric";
@@ -116,15 +116,15 @@ async fn search_best_match(
         ("limit", "10"),
         ("offset", "0"),
     ];
-    let resp = http
-        .get(SEARCH_URL)
-        .header("Referer", REFERER)
-        .query(&params)
-        .send()
-        .await?;
+    let resp = super::send_throttled(
+        http.get(SEARCH_URL).header("Referer", REFERER).query(&params),
+    )
+    .await?;
     if !resp.status().is_success() {
-        eprintln!("[netease] search HTTP {}", resp.status());
-        return Ok(None);
+        // Transitorio (429/5xx) → Err para que el cascade no cachee not_found.
+        let status = resp.status();
+        eprintln!("[netease] search HTTP {status} (transitorio)");
+        return Err(AppError::Other(format!("netease transient HTTP {status}")));
     }
 
     let env: SearchEnvelope = resp.json().await?;
@@ -151,15 +151,14 @@ async fn fetch_lyric(http: &reqwest::Client, song_id: i64) -> AppResult<Option<S
         ("kv", "1"),
         ("tv", "-1"),
     ];
-    let resp = http
-        .get(LYRIC_URL)
-        .header("Referer", REFERER)
-        .query(&params)
-        .send()
-        .await?;
+    let resp = super::send_throttled(
+        http.get(LYRIC_URL).header("Referer", REFERER).query(&params),
+    )
+    .await?;
     if !resp.status().is_success() {
-        eprintln!("[netease] lyric HTTP {}", resp.status());
-        return Ok(None);
+        let status = resp.status();
+        eprintln!("[netease] lyric HTTP {status} (transitorio)");
+        return Err(AppError::Other(format!("netease transient HTTP {status}")));
     }
     let env: LyricEnvelope = resp.json().await?;
     Ok(env.lrc.and_then(|l| l.lyric))
