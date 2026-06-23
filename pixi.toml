@@ -3,7 +3,7 @@ name = "media-player-deps"
 version = "0.1.0"
 description = "Dependencies for Brutalist Music Player"
 channels = ["conda-forge"]
-platforms = ["win-64"]
+platforms = ["win-64", "osx-arm64"]
 
 # -- Core: downloads, identification, playback --
 [feature.core.dependencies]
@@ -11,9 +11,26 @@ ffmpeg = ">=7"
 yt-dlp = "*"
 nodejs = ">=22"
 
+# Habilita `--impersonate Chrome` (TLS fingerprinting) → evita el throttling de
+# YouTube (Gotcha #29). Sin esto yt-dlp falla con "Impersonate target chrome is
+# not available". El .exe oficial de Windows ya lo trae bundleado; el yt-dlp de
+# conda-forge no. Vía PyPI (no conda) porque conda-forge no tiene build win-64;
+# los wheels de PyPI traen libcurl-impersonate bundleado en todas las plataformas.
+[feature.core.pypi-dependencies]
+curl_cffi = "*"
+
 # -- ML: karaoke alignment, mismatch detection --
 [feature.ml.dependencies]
 python = ">=3.11,<3.13"
+# Nota: espeak-ng (backend de phonemizer para mismatch detection) NO va acá —
+# conda-forge no tiene build osx-arm64. En macOS: `brew install espeak-ng`.
+# En Windows: instalador .exe aparte (ver Gotcha #26).
+
+# PyAV (dep transitiva de whisperx/faster-whisper) se buildea desde source en
+# macOS y necesita pkg-config para encontrar las libs de ffmpeg del env conda.
+# Solo osx-arm64 — en Windows PyAV usa wheel (no compila).
+[feature.ml.target.osx-arm64.dependencies]
+pkg-config = "*"
 
 [feature.ml.pypi-options]
 extra-index-urls = ["https://download.pytorch.org/whl/cpu"]
@@ -25,6 +42,15 @@ torchaudio = ">=2.8,<2.9"
 whisperx = { git = "https://github.com/m-bain/whisperx.git" }
 faster-whisper = "*"
 phonemizer = "*"
+
+# -- Tasks --
+# Arranca la app con el entorno activo → whisperx/faster-whisper/phonemizer
+# quedan en el PATH y el backend (resolve_binary) los encuentra.
+# Uso:  pixi run -e full dev   (karaoke habilitado)
+#       pixi run -e core dev   (solo core, sin karaoke)
+[tasks]
+dev = "pnpm tauri dev"
+build = "pnpm tauri build"
 
 # -- Environments --
 [environments]
