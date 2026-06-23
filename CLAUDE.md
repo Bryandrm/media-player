@@ -11,11 +11,12 @@ Reproductor de música local desktop con visualizador estilo MilkDrop (Butterchu
 
 Documentos fuente de verdad:
 - [docs/PLAN-reproductor-brutalist.md](./docs/PLAN-reproductor-brutalist.md) — visión, scope, roadmap.
+- [docs/BACKLOG.md](./docs/BACKLOG.md) — tareas de desarrollo formalizadas (vista única + priorización). Leer al planear qué sigue.
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) — arquitectura técnica, contratos Tauri, pipeline de audio.
 - [docs/DECISIONS.md](./docs/DECISIONS.md) — ADRs. Leer antes de proponer cambios técnicos importantes.
 - [docs/LYRICS.md](./docs/LYRICS.md) — sub-sistema de letras (LRCLIB + USLT, drift correction, etc.).
 - [docs/IDENTIFICATION.md](./docs/IDENTIFICATION.md) — sub-sistema de identificación (AcoustID + Chromaprint).
-- [docs/KARAOKE.md](./docs/KARAOKE.md) — sub-sistema de karaoke (forced alignment + per-word timing + future fullscreen + vocal removal). No iniciado, doc-only.
+- [docs/KARAOKE.md](./docs/KARAOKE.md) — sub-sistema de karaoke (forced alignment + per-word timing + future fullscreen + vocal removal). Fase A ✓ (per-word real); Fase B–E pendientes.
 - [docs/SECURITY.md](./docs/SECURITY.md) — auditoría de seguridad, superficie de ataque, plan de hardening.
 
 ---
@@ -169,11 +170,14 @@ src-tauri/resources/
   del alignment depende de la calidad del LRC; con LRCLIB community-curated
   hay tracks donde funciona excelente y tracks donde el mismatch text↔audio
   hereda errores. Ver [docs/KARAOKE.md §13](./docs/KARAOKE.md#13-lecciones-aprendidas-fase-a)
-  para el journey completo de implementación + límites honestos. Actualmente
-  revertido a **fake karaoke** (interpolación uniforme dentro de línea)
-  porque whisperx hereda los mismatches del LRC. Volverá cuando mejore la
-  calidad del LRC base — 2.c.3 (NetEase) ya sumó cobertura synced; falta
-  2.c.4 (auto-fallback por confidence + auto-detect de mismatch).
+  para el journey completo de implementación + límites honestos.
+  **Estado actual (2026-06-23): karaoke per-word REAL activo** vía hybrid fill
+  por confianza (Mejora 1, ver abajo) — ya **no** es el "fake karaoke"
+  (interpolación uniforme) que hubo en el ínterin. Las piezas que destrabaron
+  esto ya están shipped: 2.c.3 (NetEase, +cobertura synced), 2.c.4a
+  (auto-fallback por confidence) y 2.c.4b (auto-detect de mismatch). Las
+  palabras con score bajo se interpolan suave entre anchors confiables en vez
+  de saltar.
 - **Lyrics Fase 2.c.1 — manual edit modal** ✓ (2026-06-14) — botón EDIT en
   LyricsView abre modal con textareas synced + plain. Save vía
   `lyrics_save_manual_edit` sobreescribe `original_synced_lyrics` (preserva
@@ -464,14 +468,28 @@ al boot vía `check_dependencies` y muestra un banner si faltan.
 **Bundled** (incluido en el binario, no requiere instalación):
 - `fpcalc` 1.5.1 (Chromaprint) — identification (AcoustID). Bundleado como
   Tauri resource en `src-tauri/resources/bin/`. `.gitignore`-ado (binario
-  platform-specific, no va al repo). El developer lo descarga de
-  [Chromaprint releases](https://github.com/acoustid/chromaprint/releases).
+  platform-specific, no va al repo). En un entorno nuevo, correr
+  `pnpm setup:fpcalc` (`tools/setup-fpcalc.sh`) lo descarga para la plataforma
+  actual; sin él, el bundle de Tauri falla con `glob pattern resources/bin/*
+  ... didn't match any files`.
 
 **Deps opcionales** (features específicas, sin banner — disabled silencioso):
-- `whisperx` (`pipx install whisperx`) — forced alignment (AUTO-ALIGN).
-- `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng` (sistema)
-  — mismatch detection (CHECK QUALITY). Si `phonemizer` no está, el script
-  cae a comparación de texto raw (funcional pero menos preciso).
+- `whisperx` — forced alignment (AUTO-ALIGN).
+- `phonemizer` + `espeak-ng` — mismatch detection (CHECK QUALITY). Si
+  `phonemizer` no está, el script cae a comparación de texto raw (funcional
+  pero menos preciso).
+
+**Entorno de deps vía pixi** (`pixi.toml`, platforms `win-64` + `osx-arm64`):
+las deps opcionales (`whisperx`, `faster-whisper`, `phonemizer` + `torch`)
+viven en el env `full`. `pixi install -e full` las instala. **El backend
+resuelve los binarios por PATH** (`resolve_binary`), y el env de pixi NO está
+en el PATH por default → para habilitar karaoke hay que arrancar la app dentro
+del env: **`pixi run -e full dev`** (task definida en `pixi.toml`; `core` =
+sin karaoke). En macOS `espeak-ng` va aparte por brew (`brew install
+espeak-ng`) — conda-forge no tiene build osx-arm64; `mismatch_detect.py`
+apunta la dylib de `/opt/homebrew/lib`. Alternativa sin pixi: `pipx install
+whisperx` + `pipx inject whisperx phonemizer` (cae en `~/.local/bin`, que el
+resolver ya cubre). `pixi.lock` está `.gitignore`-ado (cada máquina re-resuelve).
 
 ---
 
@@ -752,11 +770,18 @@ incluidos) y nuestro reader (`from_utf8_lossy`) lo decodifica bien. Las tags
 internas del mp3 nunca se vieron afectadas (la metadata mostrada sale de ahí,
 no del filename).
 
-### 23. AirPods Pro multipoint Mac↔iPhone — handoff corta el audio (bug abierto)
-**Reportado 2026-06-19, pendiente investigar.** AirPods Pro con multipoint
-emparejados entre Mac (este player) y iPhone. Al reproducir música en el
-player y luego empezar audio en el iPhone, el handoff **no es limpio** —
-el audio se entrecorta en vez de "Mac pausa + iPhone arranca".
+### 23. Desconexión/handoff de audífonos — el player no pausa (bug abierto)
+**Reportado 2026-06-19, ampliado 2026-06-23. Pendiente investigar. Tarea: B1 en
+[docs/BACKLOG.md](docs/BACKLOG.md).** Dos síntomas del mismo problema de fondo
+(no reaccionamos al cambio de output device):
+
+1. **AirPods Pro multipoint Mac↔iPhone:** con multipoint emparejado entre Mac
+   (este player) y iPhone, al empezar audio en el iPhone el handoff **no es
+   limpio** — el audio se entrecorta en vez de "Mac pausa + iPhone arranca".
+2. **Sony XM6 — al desconectar los audífonos, el player transiciona a los
+   altavoces y sigue sonando, en vez de pausar.** Comportamiento esperado:
+   perder el output device (desconexión) → **pausar** (estándar de
+   reproductores; evita que la música salga de golpe por los parlantes).
 
 Hipótesis ordenadas por probabilidad (sin verificar todavía):
 1. **MediaSession no recibe `pause`** al perder foco → el `<audio>` element
@@ -856,6 +881,14 @@ la consola) parece un hang total.
 (incluido en el exe oficial de yt-dlp) para hacer TLS fingerprinting
 idéntico a Chrome. Sin versión específica → yt-dlp elige la más reciente
 disponible.
+
+**Caveat macOS/pixi:** el yt-dlp de conda-forge / brew **NO** trae `curl_cffi`
+(solo el .exe oficial de Windows lo bundlea) → falla con `Impersonate target
+"chrome" is not available`. En el entorno pixi se resuelve sumando `curl_cffi`
+como pypi-dependency en `pixi.toml` (conda-forge no tiene build win-64; los
+wheels de PyPI traen libcurl-impersonate en todas las plataformas). Verificar
+con `yt-dlp --list-impersonate-targets` (Chrome debe aparecer sin
+`(unavailable)`).
 
 **Bonus fix:** `.stdin(Stdio::null())` en el spawn de yt-dlp. Previene
 que yt-dlp se cuelgue esperando input interactivo (consent, captcha, PO
