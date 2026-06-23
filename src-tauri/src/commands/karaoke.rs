@@ -71,7 +71,8 @@ pub async fn karaoke_auto_align(
 ) -> AppResult<AlignResponse> {
     let script_path = resolve_script(&app, "karaoke_align.py")?;
     let result =
-        karaoke::align_track(pool.inner(), track_id, DEFAULT_ALIGN_LANGUAGE, &script_path).await?;
+        karaoke::align_track(pool.inner(), track_id, DEFAULT_ALIGN_LANGUAGE, &script_path, &app)
+            .await?;
     Ok(AlignResponse {
         alignment_score: result.alignment_score,
     })
@@ -85,7 +86,7 @@ pub async fn karaoke_detect_mismatch(
 ) -> AppResult<MismatchResponse> {
     let script_path = resolve_script(&app, "mismatch_detect.py")?;
     let result =
-        karaoke::detect_mismatch(pool.inner(), track_id, MISMATCH_LANGUAGE, &script_path)
+        karaoke::detect_mismatch(pool.inner(), track_id, MISMATCH_LANGUAGE, &script_path, &app)
             .await?;
 
     Ok(MismatchResponse {

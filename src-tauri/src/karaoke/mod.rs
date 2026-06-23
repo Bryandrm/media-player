@@ -22,6 +22,7 @@ pub mod whisperx;
 use std::path::Path;
 
 use sqlx::SqlitePool;
+use tauri::AppHandle;
 
 use crate::db;
 use crate::errors::{AppError, AppResult};
@@ -40,6 +41,7 @@ pub async fn align_track(
     track_id: i64,
     language: &str,
     script_path: &Path,
+    app: &AppHandle,
 ) -> AppResult<AlignResult> {
     // 1. Leer lyrics actuales. Para el alignment usamos `original_synced_lyrics`
     //    como fuente — es el LRC raw tal como vino de LRCLIB, sin contaminar
@@ -87,7 +89,8 @@ pub async fn align_track(
 
     // 4. Alinear via whisperx.
     let words =
-        whisperx::align(Path::new(&file_path), &segments, language, script_path).await?;
+        whisperx::align(Path::new(&file_path), &segments, language, script_path, app, track_id)
+            .await?;
 
     if words.is_empty() {
         return Err(AppError::WhisperxFailed(
@@ -546,6 +549,7 @@ pub async fn detect_mismatch(
     track_id: i64,
     language: &str,
     script_path: &Path,
+    app: &AppHandle,
 ) -> AppResult<MismatchResult> {
     let lyrics = db::lyrics::get_for_track(pool, track_id)
         .await?
@@ -573,6 +577,8 @@ pub async fn detect_mismatch(
         &synced,
         language,
         script_path,
+        app,
+        track_id,
     )
     .await?;
 

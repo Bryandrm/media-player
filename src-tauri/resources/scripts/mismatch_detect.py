@@ -45,13 +45,46 @@ import sys
 import traceback
 import unicodedata
 
-# Windows: phonemizer needs the espeak-ng shared library, not the CLI exe.
-# Set PHONEMIZER_ESPEAK_LIBRARY to the DLL path before importing phonemizer.
-if sys.platform == "win32" and "PHONEMIZER_ESPEAK_LIBRARY" not in os.environ:
-    _dll = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
-                        "eSpeak NG", "libespeak-ng.dll")
-    if os.path.isfile(_dll):
-        os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = _dll
+# phonemizer needs the espeak-ng shared library, not the CLI exe. Set
+# PHONEMIZER_ESPEAK_LIBRARY to the lib path before importing phonemizer.
+if "PHONEMIZER_ESPEAK_LIBRARY" not in os.environ:
+    if sys.platform == "win32":
+        # Windows: instalador estándar deja la DLL acá.
+        _candidates = [
+            os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
+                         "eSpeak NG", "libespeak-ng.dll"),
+            os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                         "eSpeak NG", "libespeak-ng.dll"),
+        ]
+    elif sys.platform == "darwin":
+        # macOS: ctypes.util.find_library NO busca /opt/homebrew/lib en Apple
+        # Silicon → hay que apuntar la dylib explícitamente (brew install espeak-ng).
+        _candidates = [
+            "/opt/homebrew/lib/libespeak-ng.dylib",  # Apple Silicon
+            "/usr/local/lib/libespeak-ng.dylib",     # Intel
+        ]
+    else:
+        _candidates = []
+    for _lib in _candidates:
+        if os.path.isfile(_lib):
+            os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = _lib
+            break
+
+
+def _progress(stage, **extra):
+    """Emite un marcador de progreso a stderr. El wrapper Rust parsea las
+    líneas @@PROGRESS@@ y las reenvía como evento Tauri `karaoke-progress`."""
+    payload = {"stage": stage}
+    payload.update(extra)
+    print("@@PROGRESS@@" + json.dumps(payload), file=sys.stderr, flush=True)
+
+
+def _hf_cached(repo_id):
+    """Best-effort: True si el repo de HuggingFace ya está cacheado (no baja)."""
+    from pathlib import Path
+    base = os.environ.get("HF_HOME")
+    hub = Path(base) / "hub" if base else Path.home() / ".cache" / "huggingface" / "hub"
+    return (hub / ("models--" + repo_id.replace("/", "--"))).is_dir()
 
 
 def parse_lrc_lines(lrc_text):
@@ -238,6 +271,7 @@ def main():
     language = sys.argv[4]
 
     try:
+        _progress("loading_engine")
         import whisperx
     except ImportError as e:
         print(f"whisperx not importable: {e}", file=sys.stderr)
@@ -281,6 +315,11 @@ def main():
         print(f"faster_whisper not importable: {e}", file=sys.stderr)
         sys.exit(3)
 
+    _progress(
+        "loading_model",
+        model="faster-whisper-small",
+        downloading=not _hf_cached("Systran/faster-whisper-small"),
+    )
     try:
         fw_model = FWModel("small", device=device, compute_type="int8")
     except Exception as e:
@@ -296,6 +335,7 @@ def main():
         sys.exit(7)
 
     print("[mismatch] transcribing audio (no VAD, full coverage)...", file=sys.stderr)
+    _progress("transcribing")
     try:
         segments_gen, info = fw_model.transcribe(
             audio, language=load_lang, beam_size=5, word_timestamps=True,
@@ -346,6 +386,7 @@ def main():
     if n_empty:
         print(f"[mismatch] {n_empty}/{len(all_texts)} texts empty after normalization", file=sys.stderr)
 
+    _progress("phonemizing")
     print(f"[mismatch] converting {len(non_empty)} non-empty texts to phonemes (lang={espeak_lang})...", file=sys.stderr)
     try:
         if non_empty:

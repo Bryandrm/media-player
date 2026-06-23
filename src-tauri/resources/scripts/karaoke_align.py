@@ -45,8 +45,30 @@ para el mensaje de error legible.
 """
 
 import json
+import os
 import sys
 import traceback
+
+
+def _progress(stage, **extra):
+    """Emite un marcador de progreso estructurado a stderr. El wrapper Rust
+    parsea las líneas con prefijo @@PROGRESS@@ y las reenvía como evento Tauri
+    `karaoke-progress`. El resto del stderr sigue siendo log/error normal."""
+    payload = {"stage": stage}
+    payload.update(extra)
+    print("@@PROGRESS@@" + json.dumps(payload), file=sys.stderr, flush=True)
+
+
+def _hf_cached(repo_id):
+    """Best-effort: True si el repo de HuggingFace ya está en el cache local
+    (→ no se va a descargar). Sirve para que la UI muestre el aviso de
+    descarga SOLO cuando realmente baja. Si no podemos determinarlo,
+    el caller pasa downloading=None y la UI muestra un texto neutral."""
+    from pathlib import Path
+    base = os.environ.get("HF_HOME")
+    hub = Path(base) / "hub" if base else Path.home() / ".cache" / "huggingface" / "hub"
+    folder = "models--" + repo_id.replace("/", "--")
+    return (hub / folder).is_dir()
 
 
 def main():
@@ -65,6 +87,7 @@ def main():
     try:
         # Importar whisperx tarde para que errores de invocación (argv malo)
         # no esperen a la carga de PyTorch (~3-5s).
+        _progress("loading_engine")
         import whisperx  # noqa: E402
     except ImportError as e:
         print(f"whisperx not importable: {e}", file=sys.stderr)
@@ -96,6 +119,11 @@ def main():
     # Auto-detect language if requested
     if language == "auto":
         print("auto-detecting language from audio...", file=sys.stderr)
+        _progress(
+            "detecting_language",
+            model="faster-whisper-base",
+            downloading=not _hf_cached("Systran/faster-whisper-base"),
+        )
         try:
             detect_model = whisperx.load_model(
                 "base", device, compute_type="int8", language=None,
@@ -119,6 +147,28 @@ def main():
     # texto. WhisperX aligna word-level dentro de cada bound. Approach
     # conservador y predecible.
     aligned_input = segments
+
+    # Determinar el modelo de alignment (wav2vec2 por idioma) y si ya está
+    # cacheado, para que la UI muestre el aviso de descarga sólo cuando baja.
+    # Best-effort: si los dicts internos de whisperx cambian, caemos a un
+    # texto neutral (model/downloading = None).
+    _align_model = None
+    _align_downloading = None
+    try:
+        from whisperx.alignment import (
+            DEFAULT_ALIGN_MODELS_HF,
+            DEFAULT_ALIGN_MODELS_TORCH,
+        )
+        if language in DEFAULT_ALIGN_MODELS_TORCH:
+            # torchaudio bundle (en cache de torch, no de HF) — no chequeamos.
+            _align_model = DEFAULT_ALIGN_MODELS_TORCH[language]
+        elif language in DEFAULT_ALIGN_MODELS_HF:
+            _align_model = DEFAULT_ALIGN_MODELS_HF[language]
+            _align_downloading = not _hf_cached(_align_model)
+    except Exception:
+        pass
+    _progress("loading_align_model", model=_align_model, downloading=_align_downloading)
+
     try:
         model_a, metadata = whisperx.load_align_model(
             language_code=language, device=device
@@ -128,6 +178,7 @@ def main():
         traceback.print_exc(file=sys.stderr)
         sys.exit(6)
 
+    _progress("aligning")
     try:
         result = whisperx.align(
             aligned_input,

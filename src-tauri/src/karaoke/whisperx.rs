@@ -14,9 +14,60 @@ use std::path::Path;
 use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 use crate::errors::{AppError, AppResult};
+
+/// Spawnea `cmd`, streamea su stderr línea por línea y reenvía los marcadores
+/// `@@PROGRESS@@{json}` (que emiten los scripts Python) como evento Tauri
+/// `karaoke-progress`, inyectando `trackId` + `op` en el payload. El resto del
+/// stderr se loguea y se acumula para el mensaje de error. Devuelve
+/// `(exit status, stderr acumulado sin las líneas de progreso)`.
+///
+/// Reemplaza el viejo `.output()` (que bloqueaba hasta el final sin feedback):
+/// ahora la UI puede mostrar en qué fase está el proceso en tiempo real.
+async fn run_streaming(
+    mut cmd: Command,
+    app: &AppHandle,
+    track_id: i64,
+    op: &str,
+) -> AppResult<(std::process::ExitStatus, String)> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn()?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::Other("whisperx child sin handle de stderr".into()))?;
+    let mut lines = BufReader::new(stderr).lines();
+    let mut collected = String::new();
+
+    while let Some(line) = lines.next_line().await? {
+        if let Some(json) = line.strip_prefix("@@PROGRESS@@") {
+            match serde_json::from_str::<serde_json::Value>(json) {
+                Ok(mut val) => {
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("trackId".into(), serde_json::Value::from(track_id));
+                        obj.insert("op".into(), serde_json::Value::from(op));
+                    }
+                    let _ = app.emit("karaoke-progress", val);
+                }
+                Err(e) => eprintln!("[{op}] progress parse error: {e} (line: {json})"),
+            }
+        } else {
+            eprintln!("[{op}] {line}");
+            collected.push_str(&line);
+            collected.push('\n');
+        }
+    }
+
+    let status = child.wait().await?;
+    Ok((status, collected))
+}
 
 /// Segmento que enviamos a WhisperX. Bounds en segundos (whisperx los
 /// quiere así). Cada segmento corresponde a una línea del LRC original —
@@ -112,6 +163,8 @@ pub async fn align(
     segments: &[AlignSegment],
     language: &str,
     script_path: &Path,
+    app: &AppHandle,
+    track_id: i64,
 ) -> AppResult<Vec<WordTiming>> {
     let python_bin = find_python_for_whisperx()?;
 
@@ -145,25 +198,18 @@ pub async fn align(
         );
     }
 
-    let output = Command::new(&python_bin)
-        .arg(script_path)
+    let mut cmd = Command::new(&python_bin);
+    cmd.arg(script_path)
         .arg(audio_path)
         .arg(&segments_path)
         .arg(&output_path)
-        .arg(language)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await?;
+        .arg(language);
 
-    // El wrapper escribe progreso a stderr; lo logueamos siempre para
-    // debug, sea exit success o fail.
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.is_empty() {
-        eprintln!("[karaoke] whisperx stderr:\n{}", stderr.trim());
-    }
+    // Streamea stderr → eventos `karaoke-progress` (fases en vivo) + acumula
+    // el resto para el mensaje de error.
+    let (status, stderr) = run_streaming(cmd, app, track_id, "align").await?;
 
-    if !output.status.success() {
+    if !status.success() {
         return Err(AppError::WhisperxFailed(stderr.trim().to_string()));
     }
 
@@ -181,6 +227,8 @@ pub async fn detect_mismatch(
     lrc_text: &str,
     language: &str,
     script_path: &Path,
+    app: &AppHandle,
+    track_id: i64,
 ) -> AppResult<super::MismatchResult> {
     let python_bin = find_python_for_whisperx()?;
 
@@ -197,23 +245,16 @@ pub async fn detect_mismatch(
         language
     );
 
-    let output = Command::new(&python_bin)
-        .arg(script_path)
+    let mut cmd = Command::new(&python_bin);
+    cmd.arg(script_path)
         .arg(audio_path)
         .arg(&lrc_path)
         .arg(&output_path)
-        .arg(language)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await?;
+        .arg(language);
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !stderr.is_empty() {
-        eprintln!("[mismatch] stderr:\n{}", stderr.trim());
-    }
+    let (status, stderr) = run_streaming(cmd, app, track_id, "mismatch").await?;
 
-    if !output.status.success() {
+    if !status.success() {
         return Err(AppError::WhisperxFailed(
             format!("mismatch_detect failed: {}", stderr.trim()),
         ));

@@ -4,6 +4,10 @@ import { useLyricsStore } from "../../stores/lyricsStore";
 import { usePlayerStore } from "../../stores/playerStore";
 import { useDownloadStore } from "../../stores/downloadStore";
 import { useSyncedLyrics } from "../../hooks/useSyncedLyrics";
+import {
+  useKaraokeProgress,
+  type KaraokeProgress,
+} from "../../hooks/useKaraokeProgress";
 import { effectiveTimestampMs, parseLrc, type LrcLine } from "../../lib/lrcParser";
 import { getAudioElement } from "../../audio/element";
 import { Button } from "../ui/Button";
@@ -33,6 +37,59 @@ function splitLineIntoTokens(text: string): LineToken[] {
     offset += seg.length;
   }
   return tokens;
+}
+
+// Spinner brutalist: cicla frames ASCII en monospace (estética terminal, sin
+// rounded ni blur). Indeterminado a propósito — whisperx no expone progreso
+// confiable para la fase de cómputo (ver ADR / charla con Bryan).
+const SPINNER_FRAMES = ["|", "/", "-", "\\"];
+function Spinner() {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(
+      () => setI((n) => (n + 1) % SPINNER_FRAMES.length),
+      120,
+    );
+    return () => window.clearInterval(id);
+  }, []);
+  return <span className="inline-block w-[1ch]">{SPINNER_FRAMES[i]}</span>;
+}
+
+// Traduce el payload de progreso de whisperx a un texto de fase para la UI.
+// El aviso de descarga aparece SOLO cuando el modelo realmente baja
+// (`downloading === true`); en runs cacheados muestra texto neutral. Si no hay
+// progreso todavía, cae al texto por defecto según la operación.
+function karaokePhaseLabel(
+  progress: KaraokeProgress | null,
+  op: "align" | "mismatch",
+): string {
+  if (!progress || progress.op !== op) {
+    return op === "align" ? "STARTING…" : "STARTING…";
+  }
+  const model = progress.model ?? "MODEL";
+  switch (progress.stage) {
+    case "loading_engine":
+      return "STARTING WHISPERX…";
+    case "detecting_language":
+      return progress.downloading
+        ? `DETECTING LANGUAGE — DOWNLOADING ${model} (CAN TAKE A FEW MINUTES)`
+        : "DETECTING LANGUAGE…";
+    case "loading_model":
+    case "loading_align_model":
+      return progress.downloading
+        ? `DOWNLOADING ${model} — FIRST TIME ONLY (CAN TAKE A FEW MINUTES)`
+        : "LOADING MODEL…";
+    case "transcribing":
+      return "TRANSCRIBING AUDIO…";
+    case "aligning":
+      return "ALIGNING WORDS…";
+    case "phonemizing":
+      return "ANALYZING PHONEMES…";
+    case "scoring":
+      return "SCORING LINES…";
+    default:
+      return op === "align" ? "ALIGNING…" : "CHECKING…";
+  }
 }
 
 // Vista LYRICS. Estados que cubre:
@@ -99,6 +156,10 @@ export function LyricsView() {
   // discoverable, sobre todo en una app desktop sin tooltips ricos).
   const [alignMode, setAlignMode] = useState(false);
 
+  // Progreso en vivo de whisperx (fases del AUTO-ALIGN / CHECK QUALITY).
+  const { progress: karaokeProgress, reset: resetKaraokeProgress } =
+    useKaraokeProgress();
+
   // Modal de edición manual (Lyrics Fase 2.c).
   const [editOpen, setEditOpen] = useState(false);
   const openEdit = () => setEditOpen(true);
@@ -157,11 +218,13 @@ export function LyricsView() {
 
   const onAutoAlign = () => {
     if (trackId === null || aligning) return;
+    resetKaraokeProgress();
     void alignTrack(trackId);
   };
 
   const onDetectMismatch = () => {
     if (trackId === null || detecting) return;
+    resetKaraokeProgress();
     void detectMismatch(trackId);
   };
 
@@ -473,12 +536,18 @@ export function LyricsView() {
           )}
           {/* Estado de whisperx/espeak-ng + feedback del run. Siempre visible
               en la vista synced — cierra el gap de "no sé si la feature está
-              disponible ni si está corriendo". Mientras corre avisa que el
-              primer run descarga el modelo (sino el botón parece colgado). */}
+              disponible ni si está corriendo". Mientras corre, spinner + fase
+              en vivo (DETECTANDO IDIOMA / DESCARGANDO modelo sólo si baja /
+              ALINEANDO / TRANSCRIBIENDO…) en vez de un texto estático. */}
           {aligning || detecting ? (
             <div className="flex items-center gap-2 mt-1 text-accent">
-              {aligning ? "ALIGNING" : "CHECKING"}… RUNNING WHISPERX — FIRST RUN
-              DOWNLOADS THE MODEL (CAN TAKE A FEW MINUTES)
+              <Spinner />
+              <span>
+                {karaokePhaseLabel(
+                  karaokeProgress,
+                  aligning ? "align" : "mismatch",
+                )}
+              </span>
             </div>
           ) : !whisperxAvailable ? (
             <div className="flex items-center gap-2 mt-1 text-muted">
