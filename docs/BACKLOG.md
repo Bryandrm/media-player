@@ -45,9 +45,15 @@ coherente de "editar y arreglar la letra de este track".
   de la lista separada de abajo (que se reemplazó por una guía corta). Match por
   texto normalizado (robusto a A2-align que mueve timestamps). En
   [LyricsView.tsx](../src/components/lyrics/LyricsView.tsx).
-- **[ ] inc.2 — Edición inline por línea**: click en una línea marcada → editar
-  el texto en el lugar (sugerir la transcripción del audio), guardar. Hoy la
-  edición sigue siendo el modal global de textareas.
+- **[x] inc.2 — Edición inline por línea** (2026-06-24): botón **FIX** en las
+  líneas marcadas → la línea se vuelve un input en el lugar, con **USE AUDIO**
+  (rellena con la transcripción de whisperx) + SAVE/CANCEL (Enter/Esc). Helper
+  puro `replaceLrcLineText` ([lrcParser.ts](../src/lib/lrcParser.ts)) reemplaza
+  sólo esa línea del LRC crudo (match por texto, preserva timestamps y el resto),
+  y persiste vía `saveManualEdit` (resetea aligned_at + quality — correcto: el
+  texto cambió). Sólo líneas marcadas; editar cualquier línea sigue por el modal
+  EDIT. **Trade-off:** invalida el alignment de todo el track (re-align selectivo
+  por línea = inc.4).
 - **[ ] inc.3 — Auto-refetch** de otro provider cuando la confidence/score es
   baja (cerrar el loop del smart cascade 2.c.4a: hoy detecta, falta actuar).
 - **[ ] inc.4 — Editor línea-por-línea con timestamps**: ajustar el timestamp de
@@ -112,6 +118,46 @@ el principio de simpleza (el autor aprende Rust — un trait simple, sin
 abstracción de más).
 
 **Estado:** definida, no iniciada.
+
+---
+
+### [~] T6 — Editor de lyrics con waveform (mini-DAW de timing)  ⭐ GRANDE
+
+**Origen:** charla 2026-06-24. La edición actual (modal de textareas + FIX
+inline de inc.2) es rústica para el **timing**. Visión: un editor donde cada
+palabra es un segmento sobre la **onda de audio**, con cotas de inicio/fin
+arrastrables. Subsume/evoluciona T1 (la edición de texto se integra acá).
+
+**Decisiones tomadas:** onda con **canvas custom** (no librería — más control,
+brutalist, las interacciones son custom igual). Construir **por fases**, MVP
+primero.
+
+**Interacciones objetivo (visión completa):**
+- Arrastrar una **cota** (handle) → cambia cuánto dura la palabra (start o end).
+- Arrastrar el **segmento entero** → mueve la palabra en el tiempo manteniendo
+  su duración (palabra de 1.4s en seg 30 → arrastro a seg 35, sigue durando 1.4s).
+- **Push en colisión:** si una cota choca con la palabra vecina, la empuja.
+- Vista por **línea** + **global**.
+
+**Fases:**
+- **[~] Fase 1 (MVP):** onda del track (decode vía `convertFileSrc` + `fetch` +
+  `decodeAudioData`, peaks en canvas) + **playhead** sincronizado a
+  `audio.currentTime` + **click-to-seek**. Read-only. *En progreso (2026-06-24).*
+- **[ ] Fase 2:** palabras como cajas sobre la onda (derivadas del A2, read-only).
+- **[ ] Fase 3:** drag para **mover** (mantiene duración) + cotas para **resize**.
+- **[ ] Fase 4:** **push en colisión** + zoom/scroll + toggle línea/global +
+  guardar el A2 **extendido**.
+
+**Trabajo de fondo (cross-cutting):** el A2 actual guarda sólo START por palabra
++ un END de línea. La visión necesita START y END por palabra (con gaps).
+whisperx ya da start+end por palabra — falta **persistirlo** (extender el A2 con
+end por palabra) + ajustar parser/serializer/renderer del karaoke. Se encara
+junto con la Fase 3/4.
+
+**Interacciones por pointer-events** (no HTML5 DnD — roto en WKWebView,
+Gotcha #17), mismo patrón que el reorder de playlists.
+
+**Estado:** en progreso — Fase 1 (MVP) arrancada.
 
 ---
 
