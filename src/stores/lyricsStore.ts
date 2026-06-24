@@ -55,6 +55,10 @@ type LyricsState = {
     syncedLyrics: string | null,
     plainLyrics: string | null,
   ) => Promise<void>;
+  /** Guarda una edición de TIMING del editor de waveform (T6): el A2
+   *  re-editado. No toca texto ni resetea sync/quality (comando
+   *  `lyrics_save_word_timing`). */
+  saveWordTiming: (trackId: number, syncedLyrics: string) => Promise<void>;
   /** Reset al cambiar de track o cerrar el panel — evita mostrar las
    *  letras del track viejo durante un cambio. */
   clear: () => void;
@@ -223,6 +227,22 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
     } catch (e) {
       const msg = String(e);
       console.warn("lyrics_save_manual_edit failed:", msg);
+      set({ error: msg });
+      throw new Error(msg);
+    }
+  },
+
+  saveWordTiming: async (trackId, syncedLyrics) => {
+    try {
+      const result = await invoke<Lyrics>("lyrics_save_word_timing", {
+        trackId,
+        syncedLyrics,
+      });
+      if (get().forTrackId !== null && get().forTrackId !== trackId) return;
+      set({ current: result, forTrackId: trackId, error: null });
+    } catch (e) {
+      const msg = String(e);
+      console.warn("lyrics_save_word_timing failed:", msg);
       set({ error: msg });
       throw new Error(msg);
     }

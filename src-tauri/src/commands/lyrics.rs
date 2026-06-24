@@ -127,3 +127,18 @@ pub async fn lyrics_save_manual_edit(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("lyrics row missing for track {}", track_id)))
 }
+
+/// Guarda una edición de timing del editor de waveform (T6): el A2 re-editado.
+/// No toca texto ni resetea sync/quality (ver `db::lyrics::save_word_timing`).
+#[tauri::command]
+pub async fn lyrics_save_word_timing(
+    track_id: i64,
+    synced_lyrics: String,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<Lyrics> {
+    db::lyrics::save_word_timing(&pool, track_id, &synced_lyrics).await?;
+
+    db::lyrics::get_for_track(&pool, track_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("lyrics row missing for track {}", track_id)))
+}

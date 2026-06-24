@@ -181,6 +181,30 @@ pub async fn save_aligned(
     Ok(())
 }
 
+/// Guarda una edición de **timing** del editor de waveform (T6): sólo
+/// sobreescribe `synced_lyrics` (el A2 re-editado) y refresca `aligned_at`.
+/// A diferencia de `save_manual_edit`, **NO** toca el texto, ni resetea
+/// `offset_ms`/`speed_ratio`/`mismatch_*` ni `original_synced_lyrics` — el
+/// usuario sólo movió palabras en el tiempo, la letra y la calidad siguen
+/// válidas.
+pub async fn save_word_timing(
+    pool: &SqlitePool,
+    track_id: i64,
+    synced_lyrics: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE lyrics SET \
+            synced_lyrics = ?, \
+            aligned_at = CURRENT_TIMESTAMP \
+         WHERE track_id = ?",
+    )
+    .bind(synced_lyrics)
+    .bind(track_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Persiste el resultado de una corrida de CHECK QUALITY (mismatch detection)
 /// para que la app recuerde entre sesiones que ya se chequeó esta canción y
 /// con qué `overall_score`. `mismatch_checked_at` queda con el timestamp de

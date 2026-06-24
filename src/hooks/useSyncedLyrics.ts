@@ -179,9 +179,16 @@ export function useSyncedLyrics(
               : interpAnchor(charStart[i], anchorsPos, anchorsTime);
         }
 
-        // Fill: end de cada palabra = start de la próxima (o fin de línea).
+        // Fill: end de cada palabra = end EXPLÍCITO (editor de timing, permite
+        // gaps) si lo hay; sino start de la próxima (o fin de línea).
         for (let i = 0; i < n; i++) {
-          const endEff = i + 1 < n ? effStart[i + 1] : lineEndEff;
+          const explicitEnd = line.wordEndTimestampsMs?.[i];
+          const endEff =
+            explicitEnd != null
+              ? toEff(explicitEnd)
+              : i + 1 < n
+                ? effStart[i + 1]
+                : lineEndEff;
           const span = Math.max(1, endEff - effStart[i]);
           const wp = Math.max(0, Math.min(1, (currentMs - effStart[i]) / span));
           wordSpans[i].style.setProperty("--word-progress", String(wp));

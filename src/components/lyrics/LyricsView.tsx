@@ -11,7 +11,9 @@ import {
 import {
   effectiveTimestampMs,
   parseLrc,
+  replaceLrcLine,
   replaceLrcLineText,
+  serializeA2Line,
   type LrcLine,
 } from "../../lib/lrcParser";
 import type { MismatchLine } from "../../types";
@@ -200,6 +202,7 @@ export function LyricsView() {
   const resetSync = useLyricsStore((s) => s.resetSync);
   const alignTrack = useLyricsStore((s) => s.alignTrack);
   const saveManualEdit = useLyricsStore((s) => s.saveManualEdit);
+  const saveWordTiming = useLyricsStore((s) => s.saveWordTiming);
   const fetchLyrics = useLyricsStore((s) => s.fetch);
   const tracks = useLibraryStore((s) => s.tracks);
   const whisperxAvailable = useDownloadStore((s) => s.deps?.whisperx ?? false);
@@ -409,7 +412,25 @@ export function LyricsView() {
 
   // T6 — overlay del editor de timing (sólo en la vista synced; ver render).
   const waveformEditor = editorOpen ? (
-    <WaveformEditor track={track} onClose={() => setEditorOpen(false)} />
+    <WaveformEditor
+      track={track}
+      lines={lines}
+      initialLineIdx={activeIndex}
+      onSaveLine={async (l, segs) => {
+        if (trackId === null || !lyrics?.syncedLyrics) return;
+        // Serializa la línea editada a A2 (start+end por palabra) y reemplaza
+        // sólo esa línea en el synced; persiste sin resetear texto/quality.
+        const a2 = serializeA2Line(l.timestampMs, segs);
+        const newSynced = replaceLrcLine(
+          lyrics.syncedLyrics,
+          l.timestampMs,
+          l.text,
+          a2,
+        );
+        await saveWordTiming(trackId, newSynced);
+      }}
+      onClose={() => setEditorOpen(false)}
+    />
   ) : null;
 
   if (notFound) {

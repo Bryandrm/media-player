@@ -29,6 +29,13 @@ export type LrcLine = {
    *  Sintaxis A2:
    *    `[mm:ss.xx]<mm:ss.xx>word1 <mm:ss.xx>word2 <mm:ss.xx>word3` */
   wordTimestampsMs?: number[];
+  /** End timestamp explícito POR palabra (paralelo a `wordTimestampsMs`).
+   *  `null` = sin end explícito → el consumidor usa el start de la próxima
+   *  palabra (o el fin de línea). Lo escribe el editor de timing (T6) como
+   *  `<startTs>word<endTs>`; permite **gaps** (una palabra termina antes de
+   *  que arranque la siguiente). El A2 de whisperx no trae ends por palabra
+   *  (sólo el trailing de la última) → casi todo `null` salvo la última. */
+  wordEndTimestampsMs?: (number | null)[];
   /** End timestamp de la ÚLTIMA palabra de la línea, cuando viene de un
    *  forced alignment (whisperx incluye `end` por palabra; lo serializamos
    *  como trailing marker `<endTs>` al final de la línea).
@@ -108,11 +115,18 @@ export function parseLrc(input: string): ParsedLrc {
 
     // Detectar A2: si tiene markers `<...>` extraemos per-word timestamps;
     // si no, queda como texto plano y wordTimestampsMs queda undefined.
-    const { text, wordTimestampsMs, lastWordEndMs, wordScores } =
+    const { text, wordTimestampsMs, wordEndTimestampsMs, lastWordEndMs, wordScores } =
       parseA2Markers(rawText);
 
     for (const ts of timestamps) {
-      lines.push({ timestampMs: ts, text, wordTimestampsMs, lastWordEndMs, wordScores });
+      lines.push({
+        timestampMs: ts,
+        text,
+        wordTimestampsMs,
+        wordEndTimestampsMs,
+        lastWordEndMs,
+        wordScores,
+      });
     }
   }
 
@@ -172,6 +186,74 @@ export function replaceLrcLineText(
   const lastClose = trimmed.lastIndexOf("]");
   const prefix = trimmed.slice(0, lastClose + 1); // tags de timestamp tal cual
   physical[idx] = `${prefix}${newText}`;
+  return physical.join("\n");
+}
+
+/** Palabra con start+end (ms) para serializar A2 / editar timing. */
+export type A2Word = { text: string; startMs: number; endMs: number };
+
+/** Formatea ms a `mm:ss.xx` (centésimas) para los markers del LRC. */
+function fmtLrcTs(ms: number): string {
+  const t = Math.max(0, Math.round(ms));
+  const cs = Math.floor((t % 1000) / 10);
+  const totalSec = Math.floor(t / 1000);
+  const ss = totalSec % 60;
+  const mm = Math.floor(totalSec / 60);
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  return `${p2(mm)}:${p2(ss)}.${p2(cs)}`;
+}
+
+/** Serializa una línea A2 con start+end EXPLÍCITOS por palabra (T6 editor):
+ *  `[lineTs]<startTs>word<endTs>...`. El parser reconstruye el texto con
+ *  `words.join(" ")`, así que no hace falta separar con espacios. */
+export function serializeA2Line(
+  lineTimestampMs: number,
+  words: A2Word[],
+): string {
+  const body = words
+    .map((w) => `<${fmtLrcTs(w.startMs)}>${w.text}<${fmtLrcTs(w.endMs)}>`)
+    .join("");
+  return `[${fmtLrcTs(lineTimestampMs)}]${body}`;
+}
+
+/** Índice de la línea física que matchea por texto (y, si puede, timestamp).
+ *  -1 si no hay. */
+function findLrcLineIdx(
+  physical: string[],
+  targetMs: number,
+  oldText: string,
+): number {
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+  const target = norm(oldText);
+  let fallbackIdx = -1;
+  for (let i = 0; i < physical.length; i++) {
+    const trimmed = physical[i].replace(/^﻿/, "").trim();
+    if (trimmed === "" || META_RE.test(trimmed)) continue;
+    const timestamps = parseTimestamps(trimmed);
+    if (timestamps.length === 0) continue;
+    const lastClose = trimmed.lastIndexOf("]");
+    const rawText = lastClose >= 0 ? trimmed.slice(lastClose + 1).trim() : "";
+    const { text } = parseA2Markers(rawText);
+    if (norm(text) !== target) continue;
+    if (fallbackIdx === -1) fallbackIdx = i;
+    if (timestamps.includes(targetMs)) return i;
+  }
+  return fallbackIdx;
+}
+
+/** Reemplaza la línea física ENTERA (tag de timestamp + markers A2) por
+ *  `newLine`. Lo usa el editor de timing para persistir el A2 re-editado de
+ *  una línea. Match por texto (+ timestamp). Sin match → LRC sin cambios. */
+export function replaceLrcLine(
+  rawLrc: string,
+  targetMs: number,
+  oldText: string,
+  newLine: string,
+): string {
+  const physical = rawLrc.split(/\r?\n/);
+  const idx = findLrcLineIdx(physical, targetMs, oldText);
+  if (idx === -1) return rawLrc;
+  physical[idx] = newLine;
   return physical.join("\n");
 }
 
@@ -236,6 +318,7 @@ function applyMetadataTag(meta: LrcMetadata, key: string, value: string): void {
 function parseA2Markers(rawText: string): {
   text: string;
   wordTimestampsMs?: number[];
+  wordEndTimestampsMs?: (number | null)[];
   lastWordEndMs?: number;
   wordScores?: number[];
 } {
@@ -265,6 +348,7 @@ function parseA2Markers(rawText: string): {
   }
 
   const wordTimestampsMs: number[] = [];
+  const wordEndTimestampsMs: (number | null)[] = [];
   const words: string[] = [];
   const wordScores: number[] = [];
   let anyScore = false;
@@ -277,16 +361,18 @@ function parseA2Markers(rawText: string): {
     const ts = parseInnerTimestamp(tsStr);
     if (ts === null) continue;
     if (!wordText) {
-      // Trailing marker (timestamp sin palabra después). Convención:
-      // representa el END de la última palabra registrada. Sólo guardamos
-      // el ÚLTIMO trailing — si hay múltiples por error, el más reciente
-      // gana.
+      // Marker sin palabra después = END explícito de la palabra MÁS RECIENTE.
+      // En el A2 de whisperx sólo aparece al final (end de la última palabra);
+      // el editor de timing escribe uno por palabra (`<s>w<e>`) → habilita gaps.
       if (wordTimestampsMs.length > 0) {
+        wordEndTimestampsMs[wordTimestampsMs.length - 1] = ts;
         lastWordEndMs = ts;
       }
       continue;
     }
     wordTimestampsMs.push(ts);
+    wordEndTimestampsMs.push(null); // sin end explícito por ahora; un marker
+    // vacío posterior lo setea.
     words.push(wordText);
     // Score: si el marker lo trae lo parseamos; si no, 1.0 (confiable) para
     // mantener `wordScores` paralelo a `wordTimestampsMs`.
@@ -308,6 +394,7 @@ function parseA2Markers(rawText: string): {
   return {
     text: words.join(" "),
     wordTimestampsMs,
+    wordEndTimestampsMs,
     lastWordEndMs,
     // Sólo exponemos wordScores si AL MENOS una palabra trajo score real.
     // Sin esto, un A2 viejo (sin scores) tendría un array de puros 1.0 que
