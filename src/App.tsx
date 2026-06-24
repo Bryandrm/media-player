@@ -11,6 +11,7 @@ import { useIdentificationEvents } from "./hooks/useIdentificationEvents";
 import { usePlaybackPersist } from "./hooks/usePlaybackPersist";
 import { useMediaSession } from "./hooks/useMediaSession";
 import { useLyricsSync } from "./hooks/useLyricsSync";
+import { useAudioContextResume } from "./hooks/useAudioContextResume";
 import { Tabs } from "./components/ui/Tabs";
 import { LibraryToolbar } from "./components/library/LibraryToolbar";
 import { LibraryTable } from "./components/library/LibraryTable";
@@ -48,6 +49,7 @@ function App() {
   usePlaybackPersist();
   useMediaSession();
   useLyricsSync();
+  useAudioContextResume();
 
   useEffect(() => {
     loadTracks().then(() => backfillCovers());

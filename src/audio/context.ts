@@ -91,6 +91,11 @@ function buildChannel(id: ChannelId, audio: HTMLAudioElement): Channel {
 export function getAudioContext(): AudioContext {
   if (!ctx) {
     ctx = new AudioContext();
+    // [audio-debug] temporal: rastrear transiciones de estado del ctx para
+    // diagnosticar el "avanza pero no suena" tras desconectar/reconectar BT.
+    ctx.addEventListener("statechange", () => {
+      console.warn(`[audio-debug] statechange -> ${ctx?.state}`);
+    });
     preMasterGain = ctx.createGain();
     masterGain = ctx.createGain();
     playPauseGain = ctx.createGain();
@@ -202,9 +207,33 @@ function clearPendingPauseTimer(): void {
 /** Ramp valor-actual→1 sobre PLAY_FADE_MS. Cancela cualquier `audio.pause()`
  *  pendiente: si el usuario hace click play durante un fade-out, el pause
  *  programado debe cancelarse o silenciaría justo después del fade-in. */
+/** Reanuda el AudioContext si quedó `suspended`/`interrupted`. macOS/WKWebView
+ *  lo duerme tras sleep, idle largo, o cambios de output device; con el audio
+ *  ruteado por `createMediaElementSource` (Gotcha #2) el `<audio>` avanza su
+ *  timeline pero no sale sonido porque el grafo está dormido. Idempotente:
+ *  `resume()` sobre un contexto `running` es no-op. Fire-and-forget. */
+export function ensureAudioContextRunning(): void {
+  if (ctx && ctx.state !== "running") {
+    const prev = ctx.state;
+    void ctx
+      .resume()
+      .then(() => console.warn(`[audio-debug] resume: ${prev} -> ${ctx?.state}`))
+      .catch((e) => console.warn(`[audio-debug] resume falló (${prev}):`, e));
+  }
+}
+
+/** Estado actual del ctx sin crearlo (para logging/diagnóstico). */
+export function getAudioContextState(): string {
+  return ctx ? ctx.state : "uncreated";
+}
+
 export function fadeInPlayPause(): void {
   clearPendingPauseTimer();
   getAudioContext();
+  // Todo play pasa por acá (playTrack, crossfade, toggle) → centralizamos el
+  // resume del contexto. Cubre el caso "avanza pero no suena" cuando el ctx
+  // se suspendió mientras el player seguía abierto.
+  ensureAudioContextRunning();
   const ctxRef = ctx!;
   const t = ctxRef.currentTime;
   const g = playPauseGain!.gain;
