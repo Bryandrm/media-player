@@ -189,7 +189,7 @@ Schema actual: dos migraciones.
 - `20260421000001_initial_schema.sql` — `tracks`, `playlists`, `playlist_tracks`, `lyrics`, `downloads`, `settings` + 3 índices sobre `tracks`.
 - `20260502000001_lyrics_phase1.sql` — aditiva sobre `lyrics`: agrega `offset_ms`, `status`, `source_id`, `confidence`, `last_used_at` + índice `idx_lyrics_status`. La validación de `status ∈ {'found','not_found','manual_pending'}` se hace en código Rust (SQLite no soporta CHECK añadido por ALTER).
 
-Tablas en uso activo: `tracks`, `lyrics`. Tablas creadas pero sin código que las use: `playlists`, `playlist_tracks`, `downloads`, `settings` (Fase 2+).
+La lista de arriba es ilustrativa, no exhaustiva — hay más migraciones aditivas en `src-tauri/migrations/` (acoustid, smart playlists, downloads title/playlist_id, y sobre `lyrics`: `aligned_at`, `original_synced_lyrics`, `alignment_score`, `mismatch_score`/`checked_at`, y `mismatch_lines` — esta última, `20260623000001`, persiste el detalle per-línea de CHECK QUALITY para el flag visual inline). Todas las tablas (`tracks`, `lyrics`, `playlists`, `playlist_tracks`, `downloads`, `settings`) están **en uso activo**.
 
 ### 4.3 Paths
 

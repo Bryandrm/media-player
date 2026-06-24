@@ -399,12 +399,33 @@ src-tauri/resources/
   **CHECK QUALITY ahora se persiste** (`lyrics.mismatch_score` +
   `mismatch_checked_at`, migración `20260621000001`; se resetea cuando el LRC
   cambia). Ver [docs/KARAOKE.md §14.3](docs/KARAOKE.md).
+- **Lyrics — módulo de edición (T1) inc.1: flag visual inline** ✓ (2026-06-23)
+  — las líneas con mismatch (CHECK QUALITY score <50%) se marcan **dentro** del
+  panel synced (borde accent + badge `⚠NN%` + `audio: "<transcripción>"`), en
+  vez de una lista aparte. **Score per-línea persistido** (`lyrics.mismatch_lines`
+  JSON, migración `20260623000001`) → sobrevive reinicios y cambios de track; se
+  invalida cuando el LRC cambia (refetch / manual edit). Se eliminó el estado en
+  memoria `mismatchResult` (quedaba pegado del track anterior y, vía un guard,
+  ocultaba el panel ALIGNED/QUALITY en el nuevo) → **única fuente `current`**,
+  recarga por track. Botón **RE-CHECK QUALITY** cuando ya se chequeó. Match
+  línea↔mismatch por texto normalizado (robusto a A2-align). Roadmap del módulo
+  (inc.2 edición inline, inc.3 auto-refetch, etc.) en
+  [docs/BACKLOG.md](docs/BACKLOG.md) (T1).
+- **Fix audio: resume del AudioContext** ✓ (2026-06-23, en observación) —
+  macOS/WKWebView suspende el ctx tras sleep / idle / cambio de output device
+  (ej: desconectar/reconectar audífonos BT) → el `<audio>` avanza pero no suena
+  (audio ruteado por `createMediaElementSource`, Gotcha #2).
+  `ensureAudioContextRunning()` en `fadeInPlayPause()` + hook
+  `useAudioContextResume` (devicechange / focus / visibility). Ver Gotcha #32 +
+  B2 en [docs/BACKLOG.md](docs/BACKLOG.md).
 - Próximo (orden acordado con Bryan 2026-06-18): quick wins **cerrados** (drag
   & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓).
   **(2) calidad/plataforma** — ✓ testing Windows, ✓ `pnpm tauri build`,
   ✓ tests + CI. **(3) lyrics/karaoke quality** — smart cascade ✓, alignment
   score ✓, mismatch detection ✓. **Features grandes al final**: Karaoke
-  Fase B-E, Identification Fase 3.
+  Fase B-E, Identification Fase 3. **Tareas vivas + priorización en
+  [docs/BACKLOG.md](docs/BACKLOG.md)** — en progreso: T1 (módulo de edición de
+  lyrics, inc.1 ✓).
 
 ---
 
@@ -937,6 +958,26 @@ tracks marcados "sin letras" que sí tenían letra, solo por el rate limit.
    requests salientes a ~3/seg (`MIN_LYRICS_REQUEST_INTERVAL = 300ms`) + reintento
    con backoff exponencial ante 429 (700ms→1.4s→2.8s, 3 intentos). En uso normal
    (un fetch cada varios minutos) el gate nunca se toca; sólo espacia las ráfagas.
+
+### 32. El AudioContext se suspende y el `<audio>` avanza pero no suena
+Síntoma que se pagó: dejar el player abierto un rato (sleep / idle de la Mac, o
+desconectar/reconectar audífonos Bluetooth) y al volver la canción **avanza pero
+no sale sonido**. Causa: macOS/WKWebView **suspende el `AudioContext`** ante
+sleep, idle largo, o interrupciones de audio session (cambio de output device).
+Como todo el audio se rutea por `createMediaElementSource` (Gotcha #2), el
+`<audio>` element sigue su timeline (por eso "avanza") pero el grafo de Web Audio
+dormido no produce sonido. No había `resume()` salvo en el path paused→play del
+toggle, así que un ctx suspendido con `isPlaying=true` no se despertaba.
+
+**Fix ([audio/context.ts](src/audio/context.ts) + [useAudioContextResume.ts](src/hooks/useAudioContextResume.ts)):**
+`ensureAudioContextRunning()` (resume si `state !== "running"`) llamado desde
+`fadeInPlayPause()` → **todo** play reanuda el ctx; + un hook montado en App que
+escucha `visibilitychange` / `focus` / `navigator.mediaDevices.devicechange` y,
+si `isPlaying`, reanuda. El listener de `devicechange` es el que destraba el caso
+"reconecté los audífonos" (no hay cambio de foco). **En observación** (2026-06-23,
+B2 en [docs/BACKLOG.md](docs/BACKLOG.md)) con logs temporales `[audio-debug]`.
+**No confundir con B1**: ahí el objetivo es *pausar* al desconectar (no *resumir*);
+mismo origen (no reaccionábamos al cambio de output device), reacción opuesta.
 
 ---
 
