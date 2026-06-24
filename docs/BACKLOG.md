@@ -140,13 +140,28 @@ primero.
 - Vista por **línea** + **global**.
 
 **Fases:**
-- **[~] Fase 1 (MVP):** onda del track (decode vía `convertFileSrc` + `fetch` +
-  `decodeAudioData`, peaks en canvas) + **playhead** sincronizado a
-  `audio.currentTime` + **click-to-seek**. Read-only. *En progreso (2026-06-24).*
-- **[ ] Fase 2:** palabras como cajas sobre la onda (derivadas del A2, read-only).
-- **[ ] Fase 3:** drag para **mover** (mantiene duración) + cotas para **resize**.
-- **[ ] Fase 4:** **push en colisión** + zoom/scroll + toggle línea/global +
-  guardar el A2 **extendido**.
+- **[x] Fase 1 (MVP)** (2026-06-24): onda del track (decode vía `convertFileSrc`
+  + `fetch` + `decodeAudioData`, peaks en canvas) + **playhead** + **click-seek**
+  + coloreo de progreso (reproducido en accent).
+- **[x] Fase 2** (2026-06-24): layout **overview + detalle**. Overview = canción
+  completa con marcador de ventana; detalle = zoom a la línea seleccionada
+  (nav ◂▸) con las **palabras como cajas** sobre la onda (derivadas del A2).
+  Peaks por rango de samples para el zoom.
+- **[x] Fase 3** (2026-06-24): **drag** en las cajas del detalle (pointer-events):
+  cuerpo = **mover** (mantiene duración), cotas = **resize** start/end, con
+  feedback de cursor + clamp a la ventana y MIN_DUR. **Local, NO persistido
+  todavía** (el guardado + A2 extendido es Fase 4). Sin push de colisión aún.
+- **[~] Fase 4:** en progreso:
+  - **[x] 4a — GUARDAR** (2026-06-24): A2 extendido a **start+end por palabra**
+    (`<s>word<e>`) → parser (`wordEndTimestampsMs`) + serializer (`serializeA2Line`)
+    + renderer del karaoke (gaps) + `replaceLrcLine`. Botón **SAVE LINE** en el
+    editor → comando `lyrics_save_word_timing` (DB) que persiste el A2 re-editado
+    **sin** resetear texto/offset/speed/quality (sólo `synced_lyrics` +
+    `aligned_at`). Round-trip OK (reabrir muestra el timing guardado).
+  - **[x] 4b — push en colisión** (2026-06-24): ripple `rippleForward`/
+    `rippleBackward` — arrastrar una cota/cuerpo contra la vecina la empuja
+    (manteniendo duración, cascada, corta en la primera sin colisión).
+  - **[ ] 4c — zoom/scroll + toggle línea/global.**
 
 **Trabajo de fondo (cross-cutting):** el A2 actual guarda sólo START por palabra
 + un END de línea. La visión necesita START y END por palabra (con gaps).
