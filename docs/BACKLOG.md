@@ -38,19 +38,39 @@ edición, CHECK QUALITY que detecta líneas malas, AUTO-ALIGN, offset/speed,
 RE-ALIGN). El usuario las opera sueltas. Esta tarea las junta en un flujo
 coherente de "editar y arreglar la letra de este track".
 
-**Scope (a refinar antes de arrancar):**
-- **Flag visual de líneas malas** en el panel de lyrics — reusa
-  `lyrics.mismatch_score` + el score per-línea que ya persiste CHECK QUALITY
-  (migración `20260621000001`). Marcar las líneas con score bajo (<50%) para que
-  el usuario sepa qué editar sin adivinar.
-- **Auto-refetch** de otro provider cuando la confidence/score es baja (cerrar
-  el loop del smart cascade 2.c.4a: hoy detecta, falta actuar).
-- **Editor línea-por-línea** con timestamps (más allá del textarea synced/plain
-  actual): editar texto + ajustar el timestamp de una línea puntual, re-align
-  selectivo de un rango.
-- **Integración con "Contribute to LRCLIB"** (ver T2) como paso final del flujo.
+**Scope (incrementos):**
+- **[x] inc.1 — Flag visual inline de líneas malas** (2026-06-23). Las líneas
+  con score < 50% de la última corrida de CHECK QUALITY se marcan **dentro** del
+  panel synced (borde accent + badge `⚠NN%` + `audio: "<transcripción>"`), en vez
+  de la lista separada de abajo (que se reemplazó por una guía corta). Match por
+  texto normalizado (robusto a A2-align que mueve timestamps). En
+  [LyricsView.tsx](../src/components/lyrics/LyricsView.tsx).
+- **[ ] inc.2 — Edición inline por línea**: click en una línea marcada → editar
+  el texto en el lugar (sugerir la transcripción del audio), guardar. Hoy la
+  edición sigue siendo el modal global de textareas.
+- **[ ] inc.3 — Auto-refetch** de otro provider cuando la confidence/score es
+  baja (cerrar el loop del smart cascade 2.c.4a: hoy detecta, falta actuar).
+- **[ ] inc.4 — Editor línea-por-línea con timestamps**: ajustar el timestamp de
+  una línea puntual, re-align selectivo de un rango.
+- **[ ] inc.5 — Integración con "Contribute to LRCLIB"** (ver T2) como paso
+  final del flujo.
 
-**Estado:** definida, no iniciada. Es la recomendación #1 de priorización.
+**Estado:** en progreso — inc.1 shipped + persistencia (pendiente verificación
+visual), inc.2-5 pendientes.
+
+**inc.1b — persistencia + track-refresh + RE-CHECK QUALITY** (2026-06-23):
+- Los scores **per-línea ahora se persisten** (`lyrics.mismatch_lines` JSON,
+  migración `20260623000001`) → los flags sobreviven reinicios y cambios de
+  track (antes vivían sólo en memoria).
+- Se **invalidan cuando el LRC cambia** (refetch / manual edit resetean
+  `mismatch_lines` junto con score/checked_at).
+- **Fix de track-change:** se eliminó el estado en memoria `mismatchResult` (que
+  quedaba pegado de la canción anterior y, vía el guard `!mismatchResult`,
+  ocultaba TODO el panel de indicadores ALIGNED/QUALITY en el track nuevo).
+  Ahora la única fuente es `current` (persistido), que se recarga por track → los
+  indicadores de aligned/quality y los flags se actualizan solos al cambiar de
+  canción.
+- Botón **RE-CHECK QUALITY** cuando ya se chequeó (espeja RE-ALIGN).
 
 ---
 
@@ -116,6 +136,24 @@ la cercanía al borde). Acotado al modo reorder de
 
 ---
 
+### [ ] T5 — Silenciar errores WebGL de mount del visualizer
+
+**Origen:** logs de consola (2026-06-23). Butterchurn emite, al montar, algunos
+errores transitorios:
+`WebGL: Cannot generate mipmaps for a zero-size texture` /
+`Framebuffer is incomplete: Attachment has zero size`.
+
+El visualizer se ve bien — es un frame que renderiza con el canvas/framebuffer
+en **tamaño cero** antes de dimensionar (territorio Gotchas #5 `setRendererSize`
+y #8 mount persistente). Ruido benigno, pero ensucia la consola.
+
+**Scope:** gatear el primer render hasta que el canvas tenga tamaño > 0 (o
+llamar `setRendererSize` antes del primer frame). Bajo impacto, bajo riesgo.
+
+**Estado:** definida (polish, baja prioridad), no iniciada.
+
+---
+
 ## Bugs
 
 ### [ ] B1 — Desconexión de audífonos: el player va a altavoces en vez de pausar
@@ -140,6 +178,42 @@ perder foco (hipótesis #1). Detalle completo + hipótesis ordenadas en el
 Gotcha #23.
 
 **Estado:** bug abierto, sin investigar.
+
+**Relacionado:** [B2](#-b2--reproduccion-muda-el-audiocontext-queda-suspendido) —
+misma raíz parcial (no reaccionamos a cambios de output device / suspend del
+ctx). Si B2 termina escuchando `devicechange`, B1 puede colgarse del mismo
+listener para decidir *pausar* (disconnect) vs *resumir* (volver el foco).
+
+---
+
+### [x] B2 — Reproducción muda: el AudioContext queda suspendido
+
+**Reportado/arreglado 2026-06-23.** Dejar el player abierto un rato y volver:
+la canción **avanza pero no sale sonido**. Causa: macOS/WKWebView suspende el
+`AudioContext` (sleep / idle / cambio de output device); como el audio se rutea
+por `createMediaElementSource` (Gotcha #2), el `<audio>` corre su timeline pero
+el grafo dormido no produce sonido. No había `resume()` salvo en el path
+paused→play del toggle ([playerStore.ts](../src/stores/playerStore.ts)), así que
+si el ctx se suspendía con `isPlaying=true` nada lo despertaba.
+
+**Fix (shipped, en observación):**
+1. `ensureAudioContextRunning()` en [audio/context.ts](../src/audio/context.ts)
+   + llamado desde `fadeInPlayPause()` → **todo** play (playTrack, crossfade,
+   toggle) reanuda el ctx.
+2. Hook [useAudioContextResume](../src/hooks/useAudioContextResume.ts) (montado
+   en App) → al volver foco/visibilidad **o cambiar el set de output devices
+   (`devicechange`)**, si `isPlaying`, reanuda el ctx solo.
+
+**Resultado (2026-06-23):** mejoró. La feature de los XM6 (pausa al quitarlos /
+reanuda al ponerlos) ahora **sí produce sonido** al reconectar — antes el "play"
+de los audífonos reanudaba el estado pero el ctx quedaba suspendido → mudo. El
+trigger que lo destrabó es el listener de `devicechange`. **Pendiente:** confirmar
+que no reaparece en idle largo / sleep profundo. Logs `[audio-debug]` temporales
+en consola (`console.warn`) para captar el estado si recurre.
+
+**Nota:** la pausa de los XM6 al quitarlos solapa con [B1](#-b1--desconexión-de-audífonos-el-player-va-a-altavoces-en-vez-de-pausar)
+para ese modelo, pero B1 sigue abierto para audífonos sin sensor de uso /
+desconexión total de BT.
 
 ---
 
