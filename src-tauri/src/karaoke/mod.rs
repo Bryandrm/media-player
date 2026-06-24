@@ -582,13 +582,57 @@ pub async fn detect_mismatch(
     )
     .await?;
 
-    // Persistir el overall_score + checked_at para que la app recuerde entre
-    // sesiones que ya se corrió CHECK QUALITY en esta canción. Si la
+    // Persistir el overall_score + checked_at + detalle per-línea para que la
+    // app recuerde entre sesiones (y entre cambios de track) que ya se corrió
+    // CHECK QUALITY y QUÉ líneas están mal (flag visual inline). Si la
     // persistencia falla, no abortamos la detección — el resultado igual se
     // devuelve al frontend (se logea y sigue).
-    if let Err(e) = db::lyrics::save_mismatch(pool, track_id, result.overall_score).await {
+    //
+    // Serializamos en camelCase para que el JSON matchee el contrato
+    // MismatchLine del frontend (que lo `JSON.parse`-ea directo).
+    let lines_json = serde_json::to_string(
+        &result
+            .lines
+            .iter()
+            .map(PersistedMismatchLine::from)
+            .collect::<Vec<_>>(),
+    )
+    .unwrap_or_else(|_| "[]".to_string());
+    if let Err(e) =
+        db::lyrics::save_mismatch(pool, track_id, result.overall_score, &lines_json).await
+    {
         eprintln!("[mismatch] no se pudo persistir el score: {e}");
     }
 
     Ok(result)
+}
+
+/// Shape camelCase para persistir las líneas de mismatch en `lyrics.mismatch_lines`.
+/// Igual al contrato `MismatchLine` del frontend → se `JSON.parse`-ea directo.
+/// (El `MismatchLine` interno es snake_case y además Deserialize del output de
+/// Python, por eso no le ponemos `rename_all` ahí.)
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedMismatchLine<'a> {
+    index: usize,
+    timestamp_ms: u64,
+    lrc_text: &'a str,
+    transcribed_text: &'a str,
+    lrc_phonemes: &'a str,
+    transcribed_phonemes: &'a str,
+    score: f64,
+}
+
+impl<'a> From<&'a MismatchLine> for PersistedMismatchLine<'a> {
+    fn from(l: &'a MismatchLine) -> Self {
+        Self {
+            index: l.index,
+            timestamp_ms: l.timestamp_ms,
+            lrc_text: &l.lrc_text,
+            transcribed_text: &l.transcribed_text,
+            lrc_phonemes: &l.lrc_phonemes,
+            transcribed_phonemes: &l.transcribed_phonemes,
+            score: l.score,
+        }
+    }
 }

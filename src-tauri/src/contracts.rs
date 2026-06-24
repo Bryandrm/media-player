@@ -245,5 +245,11 @@ pub struct Lyrics {
     pub mismatch_score: Option<f64>,
     /// Timestamp de la última corrida de CHECK QUALITY. NULL = nunca chequeado.
     pub mismatch_checked_at: Option<String>,
+    /// JSON array con el detalle PER-LÍNEA de la última corrida de CHECK QUALITY
+    /// (`[{index, timestampMs, lrcText, transcribedText, lrcPhonemes,
+    /// transcribedPhonemes, score}]`, camelCase = contrato MismatchLine del
+    /// frontend). NULL = nunca chequeado. El frontend lo `JSON.parse`-ea para
+    /// el flag visual inline de líneas malas. Se resetea con el LRC.
+    pub mismatch_lines: Option<String>,
     pub status: String,
 }

@@ -98,6 +98,7 @@ pub async fn try_netease(
         alignment_score: None,
         mismatch_score: None,
         mismatch_checked_at: None,
+        mismatch_lines: None,
         status: "found".to_string(),
     }))
 }

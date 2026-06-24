@@ -252,6 +252,11 @@ export type Lyrics = {
   mismatchScore: number | null;
   /** Timestamp de la última corrida de CHECK QUALITY. null = nunca. */
   mismatchCheckedAt: string | null;
+  /** JSON array con el detalle per-línea de la última corrida de CHECK QUALITY
+   *  (`MismatchLine[]` serializado). null = nunca chequeado. Se `JSON.parse`-ea
+   *  para el flag visual inline de líneas malas (T1 inc.1). Persistido →
+   *  sobrevive reinicios y cambios de track; se resetea con el LRC. */
+  mismatchLines: string | null;
   status: LyricsStatus;
 };
 

@@ -131,6 +131,7 @@ async fn fetch_one(
             alignment_score: None,
             mismatch_score: None,
             mismatch_checked_at: None,
+            mismatch_lines: None,
             status: "found".to_string(),
         }));
     }
@@ -158,6 +159,7 @@ async fn fetch_one(
         alignment_score: None,
         mismatch_score: None,
         mismatch_checked_at: None,
+        mismatch_lines: None,
         status: "found".to_string(),
     }))
 }
@@ -273,6 +275,7 @@ async fn search_fuzzy(
             alignment_score: None,
             mismatch_score: None,
             mismatch_checked_at: None,
+            mismatch_lines: None,
             status: "found".to_string(),
         }));
     }

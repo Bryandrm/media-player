@@ -49,6 +49,7 @@ pub fn try_embedded(track_id: i64, file_path: &Path) -> AppResult<Option<Lyrics>
         alignment_score: None,
         mismatch_score: None,
         mismatch_checked_at: None,
+        mismatch_lines: None,
         status: "found".to_string(),
     }))
 }

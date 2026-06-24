@@ -9,6 +9,7 @@ import {
   type KaraokeProgress,
 } from "../../hooks/useKaraokeProgress";
 import { effectiveTimestampMs, parseLrc, type LrcLine } from "../../lib/lrcParser";
+import type { MismatchLine } from "../../types";
 import { getAudioElement } from "../../audio/element";
 import { Button } from "../ui/Button";
 import { LyricsEditModal } from "./LyricsEditModal";
@@ -17,6 +18,18 @@ import { LyricsEditModal } from "./LyricsEditModal";
 // perceptible. Si el usuario tiene drift muy grande, varios clicks llegan
 // rápido al ajuste correcto sin overshoot.
 const SPEED_RATIO_STEP = 0.005;
+
+// Umbral de score por línea bajo el cual CHECK QUALITY la marca como mismatch.
+// Mismo valor que usa el panel de resumen (0.5 = 50%).
+const MISMATCH_LINE_THRESHOLD = 0.5;
+
+// Normaliza texto para matchear líneas del LRC con las de mismatch detection.
+// Matcheamos por TEXTO (no índice ni timestamp) para que el flag siga andando
+// aunque el track esté A2-alineado: el alignment mueve los timestamps pero el
+// texto de la línea no cambia.
+function normalizeForMatch(s: string): string {
+  return s.replace(/\s+/g, " ").trim().toLowerCase();
+}
 
 // Splittea una línea en tokens de palabra + espacio para el karaoke fill
 // per-word. Devuelve cada palabra con su offset acumulado en la línea
@@ -114,7 +127,6 @@ export function LyricsView() {
   const error = useLyricsStore((s) => s.error);
   const aligning = useLyricsStore((s) => s.aligning);
   const detecting = useLyricsStore((s) => s.detecting);
-  const mismatchResult = useLyricsStore((s) => s.mismatchResult);
   const detectMismatch = useLyricsStore((s) => s.detectMismatch);
   const setOffset = useLyricsStore((s) => s.setOffset);
   const setSpeedRatio = useLyricsStore((s) => s.setSpeedRatio);
@@ -143,6 +155,31 @@ export function LyricsView() {
   const lrcOffset = parsed?.metadata.offsetMs ?? 0;
 
   const lines = parsed?.lines ?? [];
+
+  // T1 inc.1 — líneas de la última corrida de CHECK QUALITY, persistidas en
+  // `lyrics.mismatchLines` (JSON). Única fuente: se recargan al cambiar de track
+  // (junto con `current`), así el flag y los indicadores nunca quedan pegados de
+  // la canción anterior.
+  const mismatchLines = useMemo<MismatchLine[]>(() => {
+    if (!lyrics?.mismatchLines) return [];
+    try {
+      return JSON.parse(lyrics.mismatchLines) as MismatchLine[];
+    } catch {
+      return [];
+    }
+  }, [lyrics?.mismatchLines]);
+
+  // Conteo de líneas malas (score < umbral) para el flag inline + el resumen.
+  const badLines = useMemo(
+    () => mismatchLines.filter((l) => l.score < MISMATCH_LINE_THRESHOLD),
+    [mismatchLines],
+  );
+  const badLineLookup = useMemo(() => {
+    const map = new Map<string, MismatchLine>();
+    for (const l of badLines) map.set(normalizeForMatch(l.lrcText), l);
+    return map;
+  }, [badLines]);
+
   const activeLineRef = useRef<HTMLDivElement>(null);
   // El hook actualiza `--progress` (0..1) en activeLineRef cada frame
   // sin pasar por React state — el karaoke fill se anima fluido vía CSS
@@ -374,6 +411,12 @@ export function LyricsView() {
             // Texto display: líneas vacías son silencios, render como "·"
             // para mantener ritmo visual sin saltos.
             const displayText = line.text || "·";
+
+            // T1 inc.1 — ¿CHECK QUALITY marcó esta línea como mala? Si sí, borde
+            // accent + badge de score + lo que transcribió el audio (inline,
+            // no en lista aparte).
+            const bad = badLineLookup.get(normalizeForMatch(line.text));
+            if (bad) cls += " border-l-2 border-accent pl-2";
             // Sólo la línea activa se splitea en palabras para el karaoke
             // fill. Las otras se renderizan como texto plano — ahorra DOM
             // nodes (cientos de spans) sin perder funcionalidad.
@@ -401,6 +444,16 @@ export function LyricsView() {
                       ),
                     )
                   : displayText}
+                {bad && (
+                  <span className="ml-2 align-middle text-accent text-xs font-bold normal-case tracking-normal">
+                    ⚠{Math.round(bad.score * 100)}%
+                  </span>
+                )}
+                {bad?.transcribedText && (
+                  <div className="mt-0.5 text-muted text-xs font-normal normal-case tracking-normal">
+                    audio: “{bad.transcribedText}”
+                  </div>
+                )}
               </div>
             );
           })}
@@ -480,18 +533,22 @@ export function LyricsView() {
                       : "Transcribe audio + compare against LRC (install espeak-ng for phonemic IPA comparison)"
                   }
                 >
-                  {detecting ? "CHECKING..." : "CHECK QUALITY"}
+                  {detecting
+                    ? "CHECKING..."
+                    : lyrics?.mismatchCheckedAt
+                      ? "RE-CHECK QUALITY"
+                      : "CHECK QUALITY"}
                 </Button>
               </>
             )}
           </div>
           {/* Estado per-canción de karaoke (explícito, no inferido del label
-              del botón). Dos ejes independientes:
+              del botón). Dos ejes independientes, ambos leídos de `current`
+              (persistidos) → se actualizan solos al cambiar de track:
                 - ALINEACIÓN: si se corrió AUTO-ALIGN (lyrics.alignedAt) + score.
-                - QUALITY: resultado persistido de CHECK QUALITY (mismatchScore).
-              Se oculta cuando hay un mismatchResult vivo (el panel de abajo ya
-              muestra el detalle de esa corrida). */}
-          {whisperxAvailable && !mismatchResult && (
+                - QUALITY: resultado persistido de CHECK QUALITY (mismatchScore
+                  + conteo de líneas malas, que ahora se marcan inline). */}
+          {whisperxAvailable && (
             <div className="flex flex-col gap-1 mt-1">
               {lyrics?.alignedAt ? (
                 <div className="flex items-center gap-2 flex-wrap text-muted">
@@ -520,13 +577,19 @@ export function LyricsView() {
                 </div>
               )}
               {lyrics?.mismatchScore !== null && lyrics?.mismatchScore !== undefined ? (
-                <div className="flex items-center gap-2 text-muted">
+                <div className="flex items-center gap-2 flex-wrap text-muted">
                   QUALITY CHECKED:
                   <span className={lyrics.mismatchScore < 0.5 ? "text-accent" : "text-fg"}>
                     {Math.round(lyrics.mismatchScore * 100)}%
                   </span>
                   {lyrics.mismatchCheckedAt && (
                     <span>· {lyrics.mismatchCheckedAt.slice(0, 10)}</span>
+                  )}
+                  {badLines.length > 0 && (
+                    <span className="text-accent">
+                      · {badLines.length}/{mismatchLines.length} LINES MARKED ⚠
+                      ABOVE — EDIT TO FIX
+                    </span>
                   )}
                 </div>
               ) : (
@@ -560,38 +623,6 @@ export function LyricsView() {
             </div>
           )}
         </div>
-        {mismatchResult && (
-          <div className="shrink-0 px-6 py-2 border-t-2 border-fg text-xs uppercase tracking-wider max-h-48 overflow-y-auto">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-muted">QUALITY:</span>
-              <span className={mismatchResult.overallScore < 0.5 ? "text-accent" : "text-fg"}>
-                {Math.round(mismatchResult.overallScore * 100)}%
-              </span>
-              <span className="text-muted ml-2">
-                {mismatchResult.lines.filter((l) => l.score < 0.5).length}/{mismatchResult.lines.length} MISMATCHED
-              </span>
-            </div>
-            {!espeakNgAvailable && (
-              <div className="mb-2 text-muted">
-                RAW TEXT MODE — INSTALL ESPEAK-NG FOR PHONEMIC (IPA) COMPARISON
-              </div>
-            )}
-            {mismatchResult.lines.filter((l) => l.score < 0.5).length > 0 && (
-              <div className="mb-2 text-accent">
-                USE EDIT TO FIX BAD LINES, THEN RE-ALIGN
-              </div>
-            )}
-            {mismatchResult.lines
-              .filter((l) => l.score < 0.5)
-              .map((l) => (
-                <div key={l.index} className="mb-1 border-l-2 border-accent pl-2">
-                  <div className="text-fg">{l.lrcText}</div>
-                  <div className="text-muted">{l.transcribedText || "(silence)"}</div>
-                  <div className="text-accent">{Math.round(l.score * 100)}%</div>
-                </div>
-              ))}
-          </div>
-        )}
       </div>
       {editModal}
       </>

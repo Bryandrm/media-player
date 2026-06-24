@@ -17,7 +17,7 @@ pub async fn get_for_track(
         "SELECT track_id, synced_lyrics, plain_lyrics, source, source_id, \
                 confidence, offset_ms, speed_ratio, aligned_at, \
                 original_synced_lyrics, alignment_score, \
-                mismatch_score, mismatch_checked_at, status \
+                mismatch_score, mismatch_checked_at, mismatch_lines, status \
          FROM lyrics WHERE track_id = ?",
     )
     .bind(track_id)
@@ -61,7 +61,8 @@ pub async fn upsert(pool: &SqlitePool, lyrics: &Lyrics) -> AppResult<()> {
              ), \
              aligned_at = NULL, \
              mismatch_score = NULL, \
-             mismatch_checked_at = NULL",
+             mismatch_checked_at = NULL, \
+             mismatch_lines = NULL",
     )
     .bind(lyrics.track_id)
     .bind(&lyrics.synced_lyrics)
@@ -188,14 +189,17 @@ pub async fn save_mismatch(
     pool: &SqlitePool,
     track_id: i64,
     overall_score: f64,
+    lines_json: &str,
 ) -> AppResult<()> {
     sqlx::query(
         "UPDATE lyrics SET \
             mismatch_score = ?, \
-            mismatch_checked_at = CURRENT_TIMESTAMP \
+            mismatch_checked_at = CURRENT_TIMESTAMP, \
+            mismatch_lines = ? \
          WHERE track_id = ?",
     )
     .bind(overall_score)
+    .bind(lines_json)
     .bind(track_id)
     .execute(pool)
     .await?;
@@ -242,6 +246,7 @@ pub async fn save_manual_edit(
              aligned_at = NULL, \
              mismatch_score = NULL, \
              mismatch_checked_at = NULL, \
+             mismatch_lines = NULL, \
              fetched_at = CURRENT_TIMESTAMP, \
              last_used_at = CURRENT_TIMESTAMP",
     )

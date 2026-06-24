@@ -27,8 +27,6 @@ type LyricsState = {
   aligning: boolean;
   /** True mientras corre mismatch detection. */
   detecting: boolean;
-  /** Resultado de la última detección de mismatch. */
-  mismatchResult: MismatchResult | null;
 
   /** `force` saltea el cache (incluido not_found) y re-corre el cascade —
    *  lo usa el botón REFETCH (ej: track marcado not_found antes de NetEase). */
@@ -70,7 +68,6 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
   error: null,
   aligning: false,
   detecting: false,
-  mismatchResult: null,
 
   fetch: async (trackId, force = false) => {
     // Race-guard: si ya estamos fetch-eando para este trackId, no duplicar.
@@ -180,13 +177,14 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
 
   detectMismatch: async (trackId) => {
     if (get().detecting) return;
-    set({ detecting: true, mismatchResult: null, error: null });
+    set({ detecting: true, error: null });
     try {
       const result = await invoke<MismatchResult>("karaoke_detect_mismatch", { trackId });
       console.log(`[mismatch] overall score: ${result.overallScore.toFixed(3)}, ${result.lines.length} lines`);
-      // El backend persistió mismatch_score + checked_at. Reflejarlo optimista
-      // en `current` para que el cartel "QUALITY CHECKED" se actualice sin
-      // refetch (al reabrir el track, leerá el valor real de la DB).
+      // El backend persistió mismatch_score + checked_at + mismatch_lines.
+      // Reflejarlo optimista en `current` (única fuente) para que el cartel
+      // QUALITY + el flag inline de líneas malas se actualicen sin refetch.
+      // Al reabrir/cambiar de track, se leen los valores reales de la DB.
       const current = get().current;
       const patched =
         current && current.trackId === trackId
@@ -194,9 +192,10 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
               ...current,
               mismatchScore: result.overallScore,
               mismatchCheckedAt: new Date().toISOString(),
+              mismatchLines: JSON.stringify(result.lines),
             }
           : current;
-      set({ mismatchResult: result, current: patched, detecting: false });
+      set({ current: patched, detecting: false });
     } catch (e) {
       const msg = String(e);
       console.warn("karaoke_detect_mismatch failed:", msg);
@@ -235,6 +234,5 @@ export const useLyricsStore = create<LyricsState>((set, get) => ({
     loading: false,
     notFound: false,
     error: null,
-    mismatchResult: null,
   }),
 }));

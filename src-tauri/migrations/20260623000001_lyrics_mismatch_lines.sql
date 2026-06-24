@@ -1,0 +1,12 @@
+-- Persistencia de los scores PER-LÍNEA de CHECK QUALITY (mismatch detection).
+-- Antes sólo persistíamos el overall (mismatch_score, migración 20260621). El
+-- flag visual inline de líneas malas (T1 inc.1) necesita el detalle por línea
+-- también, para sobrevivir reinicios y cambios de track sin tener que re-correr
+-- CHECK QUALITY.
+--   mismatch_lines: JSON array [{index, timestampMs, lrcText, transcribedText,
+--                   lrcPhonemes, transcribedPhonemes, score}] (camelCase, igual
+--                   shape que el contrato MismatchLine del frontend). NULL =
+--                   nunca chequeado.
+-- Se resetea a NULL junto con mismatch_score/checked_at cuando el texto del LRC
+-- cambia (refetch / manual edit) — un detalle viejo no aplica a una letra nueva.
+ALTER TABLE lyrics ADD COLUMN mismatch_lines TEXT;
