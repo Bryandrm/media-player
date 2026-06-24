@@ -8,11 +8,17 @@ import {
   useKaraokeProgress,
   type KaraokeProgress,
 } from "../../hooks/useKaraokeProgress";
-import { effectiveTimestampMs, parseLrc, type LrcLine } from "../../lib/lrcParser";
+import {
+  effectiveTimestampMs,
+  parseLrc,
+  replaceLrcLineText,
+  type LrcLine,
+} from "../../lib/lrcParser";
 import type { MismatchLine } from "../../types";
 import { getAudioElement } from "../../audio/element";
 import { Button } from "../ui/Button";
 import { LyricsEditModal } from "./LyricsEditModal";
+import { WaveformEditor } from "./WaveformEditor";
 
 // Step de drift correction. ±0.5% por click — granularidad fina pero
 // perceptible. Si el usuario tiene drift muy grande, varios clicks llegan
@@ -105,6 +111,67 @@ function karaokePhaseLabel(
   }
 }
 
+// Editor inline de UNA línea (T1 inc.2). Reemplaza el render de la línea
+// mientras se edita: input prellenado + USE AUDIO (rellena con lo que
+// transcribió whisperx) + SAVE/CANCEL. Enter guarda, Esc cancela. Maneja su
+// propio draft — el padre sólo sabe qué línea está en edición.
+function LineEditor({
+  initial,
+  audioText,
+  onSave,
+  onCancel,
+}: {
+  initial: string;
+  audioText?: string;
+  onSave: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(initial);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+  return (
+    <div
+      className="flex flex-col gap-1 normal-case tracking-normal font-normal text-base"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onSave(draft.trim());
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        className="w-full bg-bg text-fg border-2 border-fg px-2 py-1"
+      />
+      <div className="flex items-center gap-2">
+        {audioText && (
+          <Button size="sm" onClick={() => setDraft(audioText)}>
+            USE AUDIO
+          </Button>
+        )}
+        <Button size="sm" variant="active" onClick={() => onSave(draft.trim())}>
+          SAVE
+        </Button>
+        <Button size="sm" onClick={onCancel}>
+          CANCEL
+        </Button>
+      </div>
+      {audioText && (
+        <div className="text-muted text-xs">audio: “{audioText}”</div>
+      )}
+    </div>
+  );
+}
+
 // Vista LYRICS. Estados que cubre:
 //   - sin track cargado    → mensaje placeholder
 //   - loading              → "fetching lyrics…"
@@ -193,6 +260,31 @@ export function LyricsView() {
   // discoverable, sobre todo en una app desktop sin tooltips ricos).
   const [alignMode, setAlignMode] = useState(false);
 
+  // T1 inc.2 — índice de la línea en edición inline (null = ninguna). Se
+  // resetea al cambiar de track (abajo).
+  const [editingLineIdx, setEditingLineIdx] = useState<number | null>(null);
+
+  // T6 — editor de timing con waveform (overlay full-screen).
+  const [editorOpen, setEditorOpen] = useState(false);
+
+  // Guarda la edición de una línea: reconstruye el LRC reemplazando sólo esa
+  // línea y lo persiste vía saveManualEdit (que resetea aligned_at + quality,
+  // correcto porque el texto cambió). Editamos sobre original_synced_lyrics
+  // (LRC raw, sin A2) para un resultado limpio; fallback a synced.
+  const commitLineEdit = async (line: LrcLine, newText: string) => {
+    setEditingLineIdx(null);
+    if (trackId === null) return;
+    const base = lyrics?.originalSyncedLyrics ?? lyrics?.syncedLyrics;
+    if (!base || newText === line.text) return;
+    const newSynced = replaceLrcLineText(
+      base,
+      line.timestampMs,
+      line.text,
+      newText,
+    );
+    await saveManualEdit(trackId, newSynced, lyrics?.plainLyrics ?? null);
+  };
+
   // Progreso en vivo de whisperx (fases del AUTO-ALIGN / CHECK QUALITY).
   const { progress: karaokeProgress, reset: resetKaraokeProgress } =
     useKaraokeProgress();
@@ -275,6 +367,11 @@ export function LyricsView() {
     return () => window.removeEventListener("keydown", onKey);
   }, [alignMode]);
 
+  // Al cambiar de track, salir de cualquier edición inline en curso.
+  useEffect(() => {
+    setEditingLineIdx(null);
+  }, [trackId]);
+
   // === RENDER ===
 
   if (trackId === null || track === null) {
@@ -309,6 +406,11 @@ export function LyricsView() {
       onClose={() => setEditOpen(false)}
     />
   );
+
+  // T6 — overlay del editor de timing (sólo en la vista synced; ver render).
+  const waveformEditor = editorOpen ? (
+    <WaveformEditor track={track} onClose={() => setEditorOpen(false)} />
+  ) : null;
 
   if (notFound) {
     return (
@@ -417,6 +519,7 @@ export function LyricsView() {
             // no en lista aparte).
             const bad = badLineLookup.get(normalizeForMatch(line.text));
             if (bad) cls += " border-l-2 border-accent pl-2";
+            const isEditing = editingLineIdx === i;
             // Sólo la línea activa se splitea en palabras para el karaoke
             // fill. Las otras se renderizan como texto plano — ahorra DOM
             // nodes (cientos de spans) sin perder funcionalidad.
@@ -425,34 +528,59 @@ export function LyricsView() {
                 key={i}
                 ref={isActive ? activeLineRef : null}
                 className={cls}
-                onClick={() => onLineClick(line)}
+                onClick={isEditing ? undefined : () => onLineClick(line)}
               >
-                {isActive
-                  ? splitLineIntoTokens(displayText).map((tok, k) =>
-                      tok.isSpace ? (
-                        // Espacios como texto plano — el browser los usa
-                        // como break opportunities al envolver.
-                        tok.text
-                      ) : (
-                        // `--word-progress` lo escribe useSyncedLyrics
-                        // cada frame por palabra. JS hace el cálculo
-                        // (linear o A2 según haya wordTimestampsMs); CSS
-                        // sólo renderea el gradient.
-                        <span key={k} className="karaoke-word">
-                          {tok.text}
+                {isEditing ? (
+                  // T1 inc.2 — editor inline de esta línea.
+                  <LineEditor
+                    initial={line.text}
+                    audioText={bad?.transcribedText}
+                    onSave={(t) => commitLineEdit(line, t)}
+                    onCancel={() => setEditingLineIdx(null)}
+                  />
+                ) : (
+                  <>
+                    {isActive
+                      ? splitLineIntoTokens(displayText).map((tok, k) =>
+                          tok.isSpace ? (
+                            // Espacios como texto plano — el browser los usa
+                            // como break opportunities al envolver.
+                            tok.text
+                          ) : (
+                            // `--word-progress` lo escribe useSyncedLyrics
+                            // cada frame por palabra. JS hace el cálculo
+                            // (linear o A2 según haya wordTimestampsMs); CSS
+                            // sólo renderea el gradient.
+                            <span key={k} className="karaoke-word">
+                              {tok.text}
+                            </span>
+                          ),
+                        )
+                      : displayText}
+                    {bad && (
+                      <>
+                        <span className="ml-2 align-middle text-accent text-xs font-bold normal-case tracking-normal">
+                          ⚠{Math.round(bad.score * 100)}%
                         </span>
-                      ),
-                    )
-                  : displayText}
-                {bad && (
-                  <span className="ml-2 align-middle text-accent text-xs font-bold normal-case tracking-normal">
-                    ⚠{Math.round(bad.score * 100)}%
-                  </span>
-                )}
-                {bad?.transcribedText && (
-                  <div className="mt-0.5 text-muted text-xs font-normal normal-case tracking-normal">
-                    audio: “{bad.transcribedText}”
-                  </div>
+                        {/* FIX: trigger propio de la edición inline (T1 inc.2).
+                            stopPropagation para no disparar el seek del click. */}
+                        <button
+                          className="ml-2 align-middle text-xs font-bold normal-case tracking-normal underline text-accent bg-transparent border-none cursor-pointer p-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingLineIdx(i);
+                          }}
+                        >
+                          FIX
+                        </button>
+                      </>
+                    )}
+                    {bad?.transcribedText && (
+                      <div className="mt-0.5 text-muted text-xs font-normal normal-case tracking-normal">
+                        audio: “{bad.transcribedText}”
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             );
@@ -501,6 +629,15 @@ export function LyricsView() {
                 principal de Lyrics Fase 2.c para corregir mismatches de
                 LRCLIB que el alignment automático no compensa. */}
             <Button size="sm" onClick={openEdit}>EDIT</Button>
+            {/* TIMING: abre el editor de timing con waveform (T6 — mini-DAW).
+                Fase 1 MVP: onda + playhead + seek. */}
+            <Button
+              size="sm"
+              onClick={() => setEditorOpen(true)}
+              disabled={trackId === null}
+            >
+              TIMING
+            </Button>
             {/* AUTO-ALIGN: forced alignment via WhisperX. Visible sólo si
                 whisperx está instalado. Tarda ~30s-2min — UI no se bloquea
                 pero el botón muestra "ALIGNING..." mientras corre. Texto
@@ -625,6 +762,7 @@ export function LyricsView() {
         </div>
       </div>
       {editModal}
+      {waveformEditor}
       </>
     );
   }

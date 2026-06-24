@@ -124,6 +124,57 @@ export function parseLrc(input: string): ParsedLrc {
   return { metadata, lines };
 }
 
+/** Reemplaza el texto de UNA línea del LRC crudo preservando los timestamps y
+ *  el resto del archivo intacto. Lo usa la edición inline por línea (T1 inc.2).
+ *
+ *  Matchea la línea física cuyo texto (A2-stripped) coincide con `oldText`;
+ *  si hay varias con el mismo texto (coros repetidos), prefiere la que además
+ *  incluya `targetMs` entre sus timestamps. Reemplaza el contenido después del
+ *  último `]` por `newText` — descarta los markers A2 de ESA línea, lo cual es
+ *  correcto: editar el texto invalida el alignment igual (el caller resetea
+ *  `aligned_at`). Si no encuentra match, devuelve el LRC sin cambios.
+ *
+ *  Operar sobre `original_synced_lyrics` (LRC raw, sin A2) da un resultado
+ *  limpio; el match por texto funciona igual contra el synced A2 porque el
+ *  texto de la línea es idéntico (A2 sólo agrega timing por palabra). */
+export function replaceLrcLineText(
+  rawLrc: string,
+  targetMs: number,
+  oldText: string,
+  newText: string,
+): string {
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+  const target = norm(oldText);
+  const physical = rawLrc.split(/\r?\n/);
+
+  let fallbackIdx = -1; // primer match por texto, sin importar timestamp
+  let exactIdx = -1; // match por texto Y timestamp
+  for (let i = 0; i < physical.length; i++) {
+    const trimmed = physical[i].replace(/^﻿/, "").trim();
+    if (trimmed === "" || META_RE.test(trimmed)) continue;
+    const timestamps = parseTimestamps(trimmed);
+    if (timestamps.length === 0) continue;
+    const lastClose = trimmed.lastIndexOf("]");
+    const rawText = lastClose >= 0 ? trimmed.slice(lastClose + 1).trim() : "";
+    const { text } = parseA2Markers(rawText);
+    if (norm(text) !== target) continue;
+    if (fallbackIdx === -1) fallbackIdx = i;
+    if (timestamps.includes(targetMs)) {
+      exactIdx = i;
+      break;
+    }
+  }
+
+  const idx = exactIdx !== -1 ? exactIdx : fallbackIdx;
+  if (idx === -1) return rawLrc;
+
+  const trimmed = physical[idx].replace(/^﻿/, "").trim();
+  const lastClose = trimmed.lastIndexOf("]");
+  const prefix = trimmed.slice(0, lastClose + 1); // tags de timestamp tal cual
+  physical[idx] = `${prefix}${newText}`;
+  return physical.join("\n");
+}
+
 function parseTimestamps(line: string): number[] {
   // Regex con flag `g` para múltiples matches. Reset lastIndex por si la
   // misma instancia se reutiliza (importante en module-level RegExp + g).
