@@ -227,3 +227,48 @@ No se re-listan acá en detalle: viven en sus docs de dominio. Punteros:
   iniciada, se evalúa por uso real. Ver [IDENTIFICATION.md §0](./IDENTIFICATION.md).
 - **MediaSession test en Windows** — TODO en
   [useMediaSession.ts](../src/hooks/useMediaSession.ts).
+
+---
+
+## Ideas futuras (panorama — fuera de scope, NO comprometido)
+
+Análisis parqueado para no re-derivarlo. **No es una tarea**; contradice la
+identidad local-first del proyecto. Capturado acá sólo para tener el panorama
+disponible entre PCs (vía git).
+
+### Sync de lyrics / karaoke / quality entre varias PCs
+
+**¿Posible?** Sí, y el proyecto está bien posicionado: el dato valioso (LRC, A2
+con marcas de karaoke, alignment/mismatch scores) es **derivado de una grabación**
+y ya calculamos un **fingerprint de Chromaprint + MBID** por track. Esa es la
+clave de sync machine-independent — **nunca sincronizar por `file_path`** (ruta
+absoluta, distinta por OS/PC); siempre keyear por fingerprint/MBID y re-resolver
+el path local.
+
+**Tres caminos (menor → mayor scope):**
+- **A) File-sync (Syncthing/Dropbox/iCloud):** rápido pero frágil — SQLite sobre
+  Dropbox se corrompe (WAL/locks) y las rutas absolutas rompen entre OSes. No
+  recomendado para la DB.
+- **B) Export/import por fingerprint (sweet spot):** comando que exporta
+  lyrics+karaoke+quality a un archivo portable keyed por fingerprint/MBID; se
+  importa en la otra PC matcheando local. Robusto, sin servidor, encaja con el
+  ethos local-first. Es una extensión del export M3U existente.
+- **C) Sync backend real (otro producto):** servidor + auth + estado de sync +
+  resolución de conflictos. Lo pesado **no es la red** (ya hacemos HTTP con
+  reqwest/rustls por todos lados) sino el protocolo stateful + conflictos + infra.
+  Punto medio moderno: Turso/libSQL embedded replicas.
+
+**Gotchas no-obvios:**
+- **El karaoke (A2) está acoplado al audio EXACTO** — se alineó contra esa
+  waveform. La letra de texto viaja libre; los timestamps sólo son 100% válidos
+  si la otra PC tiene el mismo master/encoding (el dedup por fingerprint es
+  exacto, Gotcha #11). El karaoke es el dato "pegajoso".
+- **Conflictos:** editás en PC A, re-alineás en B → LWW por timestamp
+  (`aligned_at`/`mismatch_checked_at`/`fetched_at` ya existen) o merge.
+- **Casi todo es re-derivable** (letras de LRCLIB/NetEase, karaoke de whisperx) →
+  sync sería una *optimización* (no recomputar whisperx por máquina), no una
+  necesidad de correctitud.
+
+**Recomendación si algún día se encara:** approach **B**, arrancando por el
+contrato de export. El audio queda fuera del scope de la app (Syncthing o
+re-descarga por URL).
