@@ -9,6 +9,7 @@
 - **Fase A** ✓ shippeada (2026-05-04) con caveats. Forced alignment via **WhisperX** en modo align-only + parser A2 + botón `AUTO-ALIGN`. **Funciona bien para tracks con LRC de buena calidad; mediocre para LRC con letras imperfectas** (ver §13 "Lecciones aprendidas").
 - **Alignment score (Nivel 1)** ✓ (2026-06-19). `align_track` calcula promedio de `word.score` de WhisperX y lo persiste en `lyrics.alignment_score`. Score bajo (< 0.5) = mismatch LRC↔audio.
 - **Mismatch detection (Nivel 2)** ✓ (2026-06-19). Script `mismatch_detect.py`: WhisperX transcribe el audio → `phonemizer` (espeak-ng) convierte LRC + transcripción a IPA → Levenshtein normalizado por línea. Botón **CHECK QUALITY** en el panel de lyrics. Panel de resultados muestra score overall + líneas con mismatch (<50%). Deps: `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng`.
+- **Editor de timing con waveform (T6)** ✓ en progreso (2026-06-24/25). Mini-DAW para afinar a mano el per-word timing: overlay con onda de audio (overview = timeline de líneas con zoom; detalle = palabras como cajas sobre la onda). Mover/redimensionar palabras (drag + push de colisión), mover líneas, FOLLOW/LOOP. Guarda el A2 re-editado sin resetear texto/quality (`lyrics_save_word_timing`). **Extendió el A2 a start+end por palabra** (ver §6.1). Detalle + fases en [BACKLOG.md](./BACKLOG.md) (T6).
 - **Fase B–E** — futuro, sin compromiso. Karaoke mode UI, vocal removal, mic input, pitch scoring.
 
 ---
@@ -23,9 +24,9 @@ Resuelve la limitación documentada en [LYRICS.md Fase 3](./LYRICS.md#fase-3--av
 - **Modo de uso:** `align-only` — pasamos la letra del LRC + bounds de cada línea a `whisperx.align()` Python API. **No** transcribimos el audio. Sólo forced alignment de fonemas dentro de los bounds.
 - **Backend:** [`src-tauri/src/karaoke/whisperx.rs`](../src-tauri/src/karaoke/whisperx.rs) spawnea [`resources/scripts/karaoke_align.py`](../src-tauri/resources/scripts/karaoke_align.py) (~80 líneas) y consume su JSON output. El cascade en [`mod.rs`](../src-tauri/src/karaoke/mod.rs) parsea el LRC original, construye segmentos, y serializa el resultado a A2 LRC.
 - **Persistencia:** sobreescribimos `lyrics.synced_lyrics` con A2. **`lyrics.original_synced_lyrics` guarda el LRC raw** para que re-aligns no se basen en datos ya alineados (bug del round-trip — ver §13.4).
-- **Parser:** [`src/lib/lrcParser.ts`](../src/lib/lrcParser.ts) detecta sintaxis A2 y agrega `wordTimestampsMs?: number[]` + `lastWordEndMs?: number` a `LrcLine`. Backward compatible.
+- **Parser:** [`src/lib/lrcParser.ts`](../src/lib/lrcParser.ts) detecta sintaxis A2 y agrega `wordTimestampsMs?: number[]` + `wordEndTimestampsMs?: (number|null)[]` (end EXPLÍCITO por palabra, lo escribe el editor T6 — permite gaps) + `lastWordEndMs?: number` a `LrcLine`. Backward compatible.
 - **UI:** botón `AUTO-ALIGN` / `RE-ALIGN` en la barra de controles de `LyricsView`. Visible sólo si `whisperx` está en PATH y hay synced_lyrics. Click → loading ~30s-2min → letras con per-word timing.
-- **Karaoke fill:** [`useSyncedLyrics`](../src/hooks/useSyncedLyrics.ts) escribe `--word-progress` per-palabra cada frame; CSS aplica gradient A→B per palabra. Cuando hay A2, usa `wordTimestampsMs[i]..wordTimestampsMs[i+1]` (o `lastWordEndMs` para la última); fallback a interpolación linear cuando no.
+- **Karaoke fill:** [`useSyncedLyrics`](../src/hooks/useSyncedLyrics.ts) escribe `--word-progress` per-palabra cada frame; CSS aplica gradient A→B per palabra. Cuando hay A2, usa `wordTimestampsMs[i]` como start y el **end explícito** `wordEndTimestampsMs[i]` si lo hay (gaps del editor T6), sino `wordTimestampsMs[i+1]` (o `lastWordEndMs` para la última); fallback a interpolación linear cuando no.
 
 **Caveat honesto:** la calidad del alignment depende de la calidad del LRC. Para tracks con LRC bien transcrito (mainstream occidental, releases populares), el resultado es excelente — palabras se iluminan con el canto. Para LRC con letras aproximadas/incorrectas (community-curated en LRCLIB con errores), forced alignment hereda el mismatch y los timestamps salen off. **No es un bug nuestro — es un límite teórico**: forced alignment requiere que el texto coincida con el audio. Ver §13 para opciones de recovery.
 
@@ -454,6 +455,12 @@ WhisperxParse(String),
 ```
 
 El primer `[mm:ss.xx]` es el timestamp de la línea (igual que LRC estándar). Los `<mm:ss.xx>` interleaved entre palabras son los timestamps de cada palabra.
+
+**Variantes que el parser soporta:**
+- **Score por palabra** (whisperx, hybrid fill): `<mm:ss.xx|score>word` — el `|score` (0..1) opcional indica la confianza del alignment. Palabras con score bajo se interpolan entre anchors confiables (ver §14).
+- **End EXPLÍCITO por palabra** (editor de timing T6): `<startTs>word<endTs>` — un marker sin palabra después de una palabra = el **end** de esa palabra. Habilita **gaps** (una palabra termina antes de que arranque la siguiente). El editor escribe `[lineTs]<s1>w1<e1><s2>w2<e2>…` con start+end explícitos por palabra. El parser lo expone en `wordEndTimestampsMs[i]` (`null` = sin end explícito → usa el start de la próxima). El A2 de whisperx sólo trae el trailing end de la última palabra; el editor los trae todos.
+
+Backward compatible: parsers viejos (o los nuestros pre-T6) ignoran los markers extra y leen sólo lo que entienden.
 
 ### 6.2 Cambios en `parseLrc`
 

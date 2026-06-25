@@ -97,7 +97,9 @@ src/
 │   │                       VolumeSlider, CoverArt
 │   ├── visualizer/         VisualizerView (con toggle vis/lyrics + persistent
 │   │                       mount), VisualizerCanvas, PresetSelector
-│   ├── lyrics/             LyricsView (panel sincronizado), LyricsEditModal
+│   ├── lyrics/             LyricsView (panel sincronizado + flag inline de
+│   │                       líneas malas + edición inline), LyricsEditModal,
+│   │                       WaveformEditor (T6: editor de timing con onda)
 │   ├── eq/                 EqualizerView (10 sliders verticales + bypass)
 │   └── downloads/          DownloadsView, DownloadForm, DownloadQueue, …
 ├── hooks/                  useAudioPlayer, useKeyboardShortcuts, usePressFlash,
@@ -418,6 +420,26 @@ src-tauri/resources/
   `ensureAudioContextRunning()` en `fadeInPlayPause()` + hook
   `useAudioContextResume` (devicechange / focus / visibility). Ver Gotcha #32 +
   B2 en [docs/BACKLOG.md](docs/BACKLOG.md).
+- **Editor de timing con waveform (T6)** ✓ en progreso (2026-06-24/25) —
+  mini-DAW para afinar el timing del karaoke. Overlay full-screen
+  ([WaveformEditor.tsx](src/components/lyrics/WaveformEditor.tsx)) que abre el
+  botón **TIMING** en LyricsView. Decodifica el audio
+  (`convertFileSrc` + `fetch` + `decodeAudioData`, peaks en **canvas custom**,
+  con stride para no congelar). **Dos vistas:** *overview* (canción completa =
+  timeline de líneas: ticks, hover + tooltip con la letra, **click = zoom** a la
+  línea + vecinas para ver solapamientos/juego, `FULL VIEW` para volver) y
+  *detalle* (zoom a la línea seleccionada con las **palabras como cajas** sobre
+  la onda). **Edición (pointer-events, Gotcha #17):** en el detalle, mover
+  palabra (handle/label de arriba) / resize cotas / **push de colisión** entre
+  palabras; en el overview, **mover la línea** entera (traslada las palabras
+  manteniendo duración — NO escala). **FOLLOW** (sigue la línea que suena) +
+  **LOOP LINE** (repite). **Guardado:** **SAVE LINE** serializa el A2 re-editado
+  y llama `lyrics_save_word_timing` — actualiza `synced_lyrics` + `aligned_at`
+  **sin** resetear texto/offset/speed/quality (a diferencia del manual edit de
+  texto). **Formato A2 extendido a start+end por palabra** (`<s>word<e>`, ver
+  [docs/KARAOKE.md §6.1](docs/KARAOKE.md)) → permite gaps;
+  parser/serializer/renderer actualizados. Fases + caveats (duración de línea
+  parqueada) en [docs/BACKLOG.md](docs/BACKLOG.md) (T6).
 - Próximo (orden acordado con Bryan 2026-06-18): quick wins **cerrados** (drag
   & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓).
   **(2) calidad/plataforma** — ✓ testing Windows, ✓ `pnpm tauri build`,

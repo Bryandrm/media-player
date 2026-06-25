@@ -161,7 +161,36 @@ primero.
   - **[x] 4b — push en colisión** (2026-06-24): ripple `rippleForward`/
     `rippleBackward` — arrastrar una cota/cuerpo contra la vecina la empuja
     (manteniendo duración, cascada, corta en la primera sin colisión).
-  - **[ ] 4c — zoom/scroll + toggle línea/global.**
+  - **[~] 4c — navegación/timeline + playback aids** (2026-06-24):
+    - **[x] FOLLOW** (el detalle sigue la línea que suena) + **LOOP LINE**
+      (repite la ventana de la línea) — toggles mutuamente excluyentes.
+    - **[x] Overview = timeline de líneas**: ticks por línea, hover highlight +
+      **tooltip con la letra**, click = seleccionar la línea (+ seek).
+    - **[x] Fix de freeze al abrir**: stride en `computePeaks` (no recorrer
+      millones de samples síncronos).
+    - **[x] Mover línea** (2026-06-24, corregido 2026-06-25): arrastrar la
+      región de la línea en el overview = **mover** (traslada TODAS las palabras
+      por el mismo delta, **mantienen duración y distribución** — NO se escalan;
+      el escalado proporcional fue un bug). Clamp a las vecinas. → `editSegs` →
+      **SAVE LINE**.
+    - **[x] Zoom + navegación del overview** (2026-06-25): **click = seek**
+      (navegar la timeline, ya no zoomea); **doble-click = zoom in** centrado en
+      el punto (**shift = zoom out**); **rueda = zoom in/out** centrado en el
+      cursor; **shift+rueda o arrastrar = pan** horizontal (sólo con zoom).
+      Botón **FULL VIEW** + **indicador de % de zoom** (100% = canción completa).
+      La ventana visible vive en un **ref** (`viewRef`), no en state → pan/zoom
+      no re-renderizan React. La onda se dibuja **remuestreando** picos de toda
+      la canción (≈1 bucket/ms, `resampleInto`) en el rAF → cualquier nivel de
+      zoom sin re-leer el AudioBuffer.
+    - **[x] Pan lateral del detalle** (2026-06-25): arrastrar zona vacía o rueda
+      = mover la ventana de la línea lateralmente (sin zoom — el detalle siempre
+      muestra una línea + contexto). Clamp a `[0, fin de canción]`, reset al
+      cambiar de línea. El detalle también remuestrea `fullPeaks` → pan barato.
+      Bonus: **zoom del overview suavizado** para trackpad (`exp(dy·k)` con `dy`
+      capeado + `normalizeWheelY` por `deltaMode`) — saltaba 100%→1000% de un toque.
+    - **[ ] (parqueado) Expandir la DURACIÓN de la línea** (3s→5s/2s, "si las
+      palabras lo permiten"): contenedor de línea con inicio/fin propios (cola de
+      highlight más allá de las palabras). Necesita extender el A2 + el renderer.
 
 **Trabajo de fondo (cross-cutting):** el A2 actual guarda sólo START por palabra
 + un END de línea. La visión necesita START y END por palabra (con gaps).
