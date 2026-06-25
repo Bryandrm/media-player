@@ -311,8 +311,13 @@ desconexión total de BT.
 
 No se re-listan acá en detalle: viven en sus docs de dominio. Punteros:
 
-- **Karaoke Fase B–E** — fullscreen UI, vocal removal, mic input, pitch scoring.
-  Ver [KARAOKE.md §0](./KARAOKE.md). **Fase B es el siguiente gran hito.**
+- **Karaoke Fase B** ✓ MVP (2026-06-25) — modo fullscreen `KaraokeView`
+  (overlay global): línea activa gigante con sweep per-word, pasada/próxima,
+  countdown en gaps instrumentales, progress bar. Trigger botón KARAOKE / tecla
+  `K`. Ver [KARAOKE.md §8](./KARAOKE.md). Ideas pendientes: más contexto,
+  fondo con visualizer, tamaño configurable.
+- **Karaoke Fase C–E** — vocal removal, mic input, pitch scoring. Sin compromiso.
+  Ver [KARAOKE.md §0](./KARAOKE.md).
 - **Identification Fase 3** — auto-identify + resolución de ambigüedad. No
   iniciada, se evalúa por uso real. Ver [IDENTIFICATION.md §0](./IDENTIFICATION.md).
 - **MediaSession test en Windows** — TODO en

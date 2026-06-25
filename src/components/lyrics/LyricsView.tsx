@@ -3,6 +3,7 @@ import { useLibraryStore } from "../../stores/libraryStore";
 import { useLyricsStore } from "../../stores/lyricsStore";
 import { usePlayerStore } from "../../stores/playerStore";
 import { useDownloadStore } from "../../stores/downloadStore";
+import { useUiStore } from "../../stores/uiStore";
 import { useSyncedLyrics } from "../../hooks/useSyncedLyrics";
 import {
   useKaraokeProgress,
@@ -207,6 +208,7 @@ export function LyricsView() {
   const tracks = useLibraryStore((s) => s.tracks);
   const whisperxAvailable = useDownloadStore((s) => s.deps?.whisperx ?? false);
   const espeakNgAvailable = useDownloadStore((s) => s.deps?.espeakNg ?? false);
+  const setKaraokeOpen = useUiStore((s) => s.setKaraokeOpen);
 
   const track = useMemo(
     () => (trackId === null ? null : tracks.find((t) => t.id === trackId) ?? null),
@@ -646,6 +648,15 @@ export function LyricsView() {
               {alignMode ? "ALIGN: CLICK A LINE" : "ALIGN"}
             </Button>
             <Button size="sm" onClick={onReset}>RESET</Button>
+            {/* KARAOKE: modo fullscreen "para fiesta" (Fase B). Letras gigantes
+                con sweep per-word. Atajo de teclado: K. */}
+            <Button
+              size="sm"
+              variant="active"
+              onClick={() => setKaraokeOpen(true)}
+            >
+              KARAOKE
+            </Button>
             {/* EDIT: abre modal de edición manual del LRC. Es el path
                 principal de Lyrics Fase 2.c para corregir mismatches de
                 LRCLIB que el alignment automático no compensa. */}

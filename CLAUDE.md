@@ -99,7 +99,8 @@ src/
 │   │                       mount), VisualizerCanvas, PresetSelector
 │   ├── lyrics/             LyricsView (panel sincronizado + flag inline de
 │   │                       líneas malas + edición inline), LyricsEditModal,
-│   │                       WaveformEditor (T6: editor de timing con onda)
+│   │                       WaveformEditor (T6: editor de timing con onda),
+│   │                       KaraokeView (Fase B: overlay fullscreen, tecla K)
 │   ├── eq/                 EqualizerView (10 sliders verticales + bypass)
 │   └── downloads/          DownloadsView, DownloadForm, DownloadQueue, …
 ├── hooks/                  useAudioPlayer, useKeyboardShortcuts, usePressFlash,
@@ -426,10 +427,11 @@ src-tauri/resources/
   botón **TIMING** en LyricsView. Decodifica el audio
   (`convertFileSrc` + `fetch` + `decodeAudioData`, peaks en **canvas custom**,
   con stride para no congelar). **Dos vistas:** *overview* (canción completa =
-  timeline de líneas: ticks, hover + tooltip con la letra, **click = zoom** a la
-  línea + vecinas para ver solapamientos/juego, `FULL VIEW` para volver) y
+  timeline de líneas: ticks, hover + tooltip con la letra; **click = seek**,
+  **doble-click = zoom** centrado, **rueda = zoom** (suavizado para trackpad),
+  **shift+rueda o drag = pan**, `FULL VIEW` + indicador de % de zoom) y
   *detalle* (zoom a la línea seleccionada con las **palabras como cajas** sobre
-  la onda). **Edición (pointer-events, Gotcha #17):** en el detalle, mover
+  la onda; **pan lateral** por drag/rueda). **Edición (pointer-events, Gotcha #17):** en el detalle, mover
   palabra (handle/label de arriba) / resize cotas / **push de colisión** entre
   palabras; en el overview, **mover la línea** entera (traslada las palabras
   manteniendo duración — NO escala). **FOLLOW** (sigue la línea que suena) +
@@ -440,14 +442,23 @@ src-tauri/resources/
   [docs/KARAOKE.md §6.1](docs/KARAOKE.md)) → permite gaps;
   parser/serializer/renderer actualizados. Fases + caveats (duración de línea
   parqueada) en [docs/BACKLOG.md](docs/BACKLOG.md) (T6).
+- **Karaoke Fase B (fullscreen)** ✓ MVP (2026-06-25) —
+  [KaraokeView.tsx](src/components/lyrics/KaraokeView.tsx), overlay global
+  montado en App. Línea activa gigante con **sweep per-word** (reusa
+  `useSyncedLyrics` + `.karaoke-word`), línea pasada/próxima, **countdown** en
+  gaps instrumentales (sólo con fin de línea explícito A2) y progress bar abajo.
+  Trigger: botón **KARAOKE** en LyricsView o tecla **`K`** (toggle, gated por
+  track cargado); salida con **Escape**/EXIT. Estado `uiStore.karaokeOpen`
+  (runtime, no persistido); cerrado pasa `NO_LINES` a `useSyncedLyrics` → cero
+  rAF de fondo. Ver [docs/KARAOKE.md §8](docs/KARAOKE.md).
 - Próximo (orden acordado con Bryan 2026-06-18): quick wins **cerrados** (drag
   & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓).
   **(2) calidad/plataforma** — ✓ testing Windows, ✓ `pnpm tauri build`,
   ✓ tests + CI. **(3) lyrics/karaoke quality** — smart cascade ✓, alignment
-  score ✓, mismatch detection ✓. **Features grandes al final**: Karaoke
-  Fase B-E, Identification Fase 3. **Tareas vivas + priorización en
-  [docs/BACKLOG.md](docs/BACKLOG.md)** — en progreso: T1 (módulo de edición de
-  lyrics, inc.1 ✓).
+  score ✓, mismatch detection ✓. **Features grandes**: Karaoke Fase B ✓
+  (fullscreen), pendientes Fase C-E + Identification Fase 3. **Tareas vivas +
+  priorización en [docs/BACKLOG.md](docs/BACKLOG.md)** — T1 (módulo de edición
+  de lyrics, inc.1/inc.2 ✓).
 
 ---
 

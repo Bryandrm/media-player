@@ -22,6 +22,7 @@ import { DownloadsView } from "./components/downloads/DownloadsView";
 import { EqualizerView } from "./components/eq/EqualizerView";
 import { ApiKeyModal } from "./components/identification/ApiKeyModal";
 import { FileDropOverlay } from "./components/library/FileDropOverlay";
+import { KaraokeView } from "./components/lyrics/KaraokeView";
 
 function App() {
   const loadTracks = useLibraryStore((s) => s.loadTracks);
@@ -133,6 +134,7 @@ function App() {
       <PlayerBar />
       <ApiKeyModal />
       <FileDropOverlay />
+      <KaraokeView />
     </main>
   );
 }

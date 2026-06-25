@@ -10,7 +10,15 @@
 - **Alignment score (Nivel 1)** ✓ (2026-06-19). `align_track` calcula promedio de `word.score` de WhisperX y lo persiste en `lyrics.alignment_score`. Score bajo (< 0.5) = mismatch LRC↔audio.
 - **Mismatch detection (Nivel 2)** ✓ (2026-06-19). Script `mismatch_detect.py`: WhisperX transcribe el audio → `phonemizer` (espeak-ng) convierte LRC + transcripción a IPA → Levenshtein normalizado por línea. Botón **CHECK QUALITY** en el panel de lyrics. Panel de resultados muestra score overall + líneas con mismatch (<50%). Deps: `phonemizer` (`pipx inject whisperx phonemizer`) + `espeak-ng`.
 - **Editor de timing con waveform (T6)** ✓ en progreso (2026-06-24/25). Mini-DAW para afinar a mano el per-word timing: overlay con onda de audio (overview = timeline de líneas con zoom; detalle = palabras como cajas sobre la onda). Mover/redimensionar palabras (drag + push de colisión), mover líneas, FOLLOW/LOOP. Guarda el A2 re-editado sin resetear texto/quality (`lyrics_save_word_timing`). **Extendió el A2 a start+end por palabra** (ver §6.1). Detalle + fases en [BACKLOG.md](./BACKLOG.md) (T6).
-- **Fase B–E** — futuro, sin compromiso. Karaoke mode UI, vocal removal, mic input, pitch scoring.
+- **Fase B (karaoke mode UI fullscreen)** ✓ MVP (2026-06-25). Overlay
+  `KaraokeView` global (encima de todo): header minimal (cover + artista —
+  título), línea pasada / **línea activa gigante con sweep per-word** (reusa
+  `useSyncedLyrics` + `.karaoke-word`) / próxima línea, **countdown** en gaps
+  instrumentales (`NEXT LINE IN x.xs`, sólo con fin de línea explícito A2) y
+  progress bar abajo. Trigger: botón **KARAOKE** en LyricsView o tecla **`K`**;
+  salida con Escape / EXIT. Estado `uiStore.karaokeOpen` (runtime, no
+  persistido). Ver §8.
+- **Fase C–E** — futuro, sin compromiso. Vocal removal, mic input, pitch scoring.
 
 ---
 
@@ -535,6 +543,14 @@ Considerado: agregar columna **A** en LibraryTable (al lado de L y ID) con `[A]`
 ---
 
 ## 8. Karaoke mode UI — Fase B
+
+> **Estado: MVP shippeado (2026-06-25).** Implementado en
+> [`src/components/lyrics/KaraokeView.tsx`](../src/components/lyrics/KaraokeView.tsx),
+> montado global en `App.tsx`. Reusa `useSyncedLyrics` (mismo sweep per-word que
+> `LyricsView`) — el render karaoke es un caso de los `.karaoke-word`. Estado en
+> `uiStore.karaokeOpen` (runtime, no persistido). Pendiente/ideas: más líneas de
+> contexto, fondo (visualizer detrás), tamaño configurable. El countdown sólo se
+> muestra en gaps reales (línea activa con `lastWordEndMs`, últimos 4s).
 
 ### 8.1 KaraokeView component
 

@@ -25,6 +25,9 @@ type UiState = {
   playerPaneMode: PlayerPaneMode;
   /** Tab activa del sidebar en la vista LIBRARY (playlists vs details). */
   sidebarTab: SidebarTab;
+  /** Modo karaoke fullscreen (Fase B). Overlay global encima de todo —
+   *  runtime, NO persistido (no querés arrancar la app en karaoke). */
+  karaokeOpen: boolean;
 
   setView: (v: View) => void;
   setPresetIndex: (i: number) => void;
@@ -32,6 +35,8 @@ type UiState = {
   setAutoCycle: (v: boolean) => void;
   setPlayerPaneMode: (m: PlayerPaneMode) => void;
   setSidebarTab: (t: SidebarTab) => void;
+  setKaraokeOpen: (v: boolean) => void;
+  toggleKaraoke: () => void;
 };
 
 const SPLIT_MIN = 0.2;
@@ -46,6 +51,7 @@ export const useUiStore = create<UiState>()(
       autoCycle: false,
       playerPaneMode: "visualizer",
       sidebarTab: "playlists",
+      karaokeOpen: false,
 
       setView: (v) => set({ view: v }),
       setPresetIndex: (i) => set({ presetIndex: i }),
@@ -54,6 +60,8 @@ export const useUiStore = create<UiState>()(
       setAutoCycle: (v) => set({ autoCycle: v }),
       setPlayerPaneMode: (m) => set({ playerPaneMode: m }),
       setSidebarTab: (t) => set({ sidebarTab: t }),
+      setKaraokeOpen: (v) => set({ karaokeOpen: v }),
+      toggleKaraoke: () => set((s) => ({ karaokeOpen: !s.karaokeOpen })),
     }),
     {
       name: "brutalist-player:ui",

@@ -64,6 +64,12 @@ export function useKeyboardShortcuts() {
         case "S":
           s.toggleShuffle();
           break;
+        case "k":
+        case "K":
+          // Karaoke fullscreen — sólo si hay un track cargado. El overlay
+          // muestra fallback si no hay synced lyrics. Escape lo cierra.
+          if (hasTrack) useUiStore.getState().toggleKaraoke();
+          break;
         case "v":
         case "V": {
           const ui = useUiStore.getState();
