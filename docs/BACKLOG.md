@@ -294,12 +294,29 @@ si el ctx se suspendía con `isPlaying=true` nada lo despertaba.
    en App) → al volver foco/visibilidad **o cambiar el set de output devices
    (`devicechange`)**, si `isPlaying`, reanuda el ctx solo.
 
-**Resultado (2026-06-23):** mejoró. La feature de los XM6 (pausa al quitarlos /
-reanuda al ponerlos) ahora **sí produce sonido** al reconectar — antes el "play"
-de los audífonos reanudaba el estado pero el ctx quedaba suspendido → mudo. El
-trigger que lo destrabó es el listener de `devicechange`. **Pendiente:** confirmar
-que no reaparece en idle largo / sleep profundo. Logs `[audio-debug]` temporales
-en consola (`console.warn`) para captar el estado si recurre.
+**Resultado (2026-06-23):** mejoró el caso `suspended` simple. **Reapareció
+(2026-06-26)** con dos matices nuevos en los logs → **Fix v2**:
+
+3. **Reconexión de fuentes.** Apareció el estado **`interrupted`** (WebKit, por
+   interrupción de la audio session al cambiar de output device BT). Tras él,
+   WebKit deja el `MediaElementSource` **desconectado del output aunque el ctx
+   vuelva a `running`** → resume solo no alcanza. Ahora `reconnectChannelSources()`
+   (`source.disconnect()` + `source.connect(gain)`) corre al volver a `running`
+   tras suspended/interrupted (listener `statechange`) **y** dentro de
+   `recoverAudioRouting()`.
+4. **`recoverAudioRouting()` (resume + reconnect)** reemplaza al resume-solo en
+   los triggers del hook → reconecta **aunque el ctx nunca haya dejado
+   `running`** (otro caso visto: running pero mudo, sin state change).
+5. **Priming de `devicechange`.** WKWebView no emite `devicechange` hasta llamar
+   `enumerateDevices()` una vez → el hook lo primea al montar. Sin esto el evento
+   nunca disparaba (no había línea `devicechange` en los logs). Bonus: `focus`/
+   `visibility` ahora reconectan → **escape hatch manual** (click afuera y volver
+   a la ventana recupera el audio).
+
+**Pendiente:** confirmar en hardware (BT reconnect) que Fix v2 recupera el audio.
+**Plan B si reconectar no alcanza:** recrear el AudioContext entero al cambio de
+device (rearmar grafo + tap del visualizer). Logs `[audio-debug]` temporales
+siguen en consola para captar el estado si recurre.
 
 **Nota:** la pausa de los XM6 al quitarlos solapa con [B1](#-b1--desconexión-de-audífonos-el-player-va-a-altavoces-en-vez-de-pausar)
 para ese modelo, pero B1 sigue abierto para audífonos sin sensor de uso /

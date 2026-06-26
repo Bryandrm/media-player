@@ -24,6 +24,9 @@ pub fn resolve_binary(name: &str) -> Option<PathBuf> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .ok()?;
+    // `mut` sólo se usa bajo #[cfg(windows)] (los push de abajo); en macOS/Linux
+    // queda inmutable → silenciamos el unused_mut ahí en vez de duplicar el vec.
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut candidates = vec![
         format!("{}/.local/bin/{}", home, name),
         "/usr/local/bin".to_string() + "/" + name,

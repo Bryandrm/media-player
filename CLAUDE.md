@@ -1002,15 +1002,38 @@ Como todo el audio se rutea por `createMediaElementSource` (Gotcha #2), el
 dormido no produce sonido. No había `resume()` salvo en el path paused→play del
 toggle, así que un ctx suspendido con `isPlaying=true` no se despertaba.
 
-**Fix ([audio/context.ts](src/audio/context.ts) + [useAudioContextResume.ts](src/hooks/useAudioContextResume.ts)):**
+**Fix v1 — resume ([audio/context.ts](src/audio/context.ts) + [useAudioContextResume.ts](src/hooks/useAudioContextResume.ts)):**
 `ensureAudioContextRunning()` (resume si `state !== "running"`) llamado desde
 `fadeInPlayPause()` → **todo** play reanuda el ctx; + un hook montado en App que
 escucha `visibilitychange` / `focus` / `navigator.mediaDevices.devicechange` y,
-si `isPlaying`, reanuda. El listener de `devicechange` es el que destraba el caso
-"reconecté los audífonos" (no hay cambio de foco). **En observación** (2026-06-23,
-B2 en [docs/BACKLOG.md](docs/BACKLOG.md)) con logs temporales `[audio-debug]`.
-**No confundir con B1**: ahí el objetivo es *pausar* al desconectar (no *resumir*);
-mismo origen (no reaccionábamos al cambio de output device), reacción opuesta.
+si `isPlaying`, reanuda. Cubrió el caso `suspended` simple.
+
+**Fix v2 — reconexión de fuentes + priming de devicechange (2026-06-26).** El
+síntoma volvió con un detalle nuevo en los logs: (a) aparecía el estado
+**`interrupted`** (propio de WebKit, lo dispara la interrupción de la audio
+session por cambio de output device BT) y (b) a veces el ctx **se quedaba en
+`running`** y mudo, sin `suspended`/`interrupted`. Aprendizajes:
+- Tras un `interrupted`, WebKit deja el `MediaElementAudioSourceNode`
+  **desconectado del output aunque el ctx vuelva a `running`** → resume solo NO
+  alcanza. Hay que **reconectar la fuente** (`source.disconnect()` +
+  `source.connect(gain)`; la cadena gain→preMaster→… queda intacta). Se hace en
+  el listener de `statechange` al volver a `running` tras suspended/interrupted,
+  **y** en `recoverAudioRouting()` (resume + reconnect) que ahora llaman los
+  triggers del hook — así reconecta aunque el ctx nunca haya dejado `running`.
+- **`devicechange` NO dispara en WKWebView** hasta llamar `enumerateDevices()`
+  al menos una vez → el hook lo **primea** al montar. Sin esto el reconectar
+  automático ante cambio de BT nunca se enteraba (no había línea `devicechange`
+  en los logs).
+- Efecto secundario: como `focus`/`visibility` ahora reconectan, queda un
+  **escape hatch manual** — click afuera y de vuelta a la ventana recupera el
+  audio aunque `devicechange` falle.
+
+**Sigue en observación** (B2 en [docs/BACKLOG.md](docs/BACKLOG.md)) con logs
+`[audio-debug]`. **Plan B si reconectar no alcanza:** recrear el AudioContext
+entero al detectar el cambio de device (rearmar grafo + tap del visualizer).
+**No confundir con B1**: ahí el objetivo es *pausar* al desconectar (no
+*resumir*); mismo origen (no reaccionábamos al cambio de output device),
+reacción opuesta.
 
 ---
 

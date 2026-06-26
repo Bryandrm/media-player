@@ -88,13 +88,50 @@ function buildChannel(id: ChannelId, audio: HTMLAudioElement): Channel {
   return { id, audio, source, gain };
 }
 
+/** Flag: el ctx pasó por `suspended`/`interrupted` y todavía no reconectamos
+ *  las fuentes tras volver a `running`. Ver `reconnectChannelSources`. */
+let needsSourceReconnect = false;
+
+/** Re-conecta cada `MediaElementAudioSourceNode` a su gain.
+ *
+ *  Bug de WebKit/macOS: cuando la sesión de audio se **interrumpe** (estado
+ *  `interrupted` — lo dispara un cambio de output device Bluetooth, Siri, una
+ *  llamada, etc.), al volver el ctx a `running` el `<audio>` ruteado por
+ *  `createMediaElementSource` queda **desconectado del output** aunque el grafo
+ *  corra: el `<audio>` avanza su timeline pero no sale sonido. `resume()` solo
+ *  NO alcanza (Gotcha #32 cubría el `suspended` simple; esto es el `interrupted`
+ *  que vino después). Desconectar y volver a conectar la fuente fuerza a WebKit
+ *  a re-establecer el ruteo. `disconnect()` sin args saca solo las salidas de la
+ *  fuente (única: → gain); la cadena gain→preMaster→… queda intacta. */
+function reconnectChannelSources(): void {
+  for (const ch of [channelA, channelB]) {
+    if (!ch) continue;
+    try {
+      ch.source.disconnect();
+      ch.source.connect(ch.gain);
+    } catch (e) {
+      console.warn("[audio] reconnect de fuente falló:", e);
+    }
+  }
+}
+
 export function getAudioContext(): AudioContext {
   if (!ctx) {
     ctx = new AudioContext();
-    // [audio-debug] temporal: rastrear transiciones de estado del ctx para
-    // diagnosticar el "avanza pero no suena" tras desconectar/reconectar BT.
+    // Rastreo de transiciones de estado. Tras una interrupción de la sesión de
+    // audio (`interrupted` en WebKit) o un `suspended`, al volver a `running`
+    // reconectamos las fuentes — sin esto el `<audio>` avanza pero no suena
+    // (Gotcha #32). [audio-debug] temporal mientras B2 está en observación.
     ctx.addEventListener("statechange", () => {
-      console.warn(`[audio-debug] statechange -> ${ctx?.state}`);
+      const state = ctx?.state as string | undefined;
+      console.warn(`[audio-debug] statechange -> ${state}`);
+      if (state === "suspended" || state === "interrupted") {
+        needsSourceReconnect = true;
+      } else if (state === "running" && needsSourceReconnect) {
+        needsSourceReconnect = false;
+        console.warn("[audio-debug] reconectando fuentes tras recuperación");
+        reconnectChannelSources();
+      }
     });
     preMasterGain = ctx.createGain();
     masterGain = ctx.createGain();
@@ -225,6 +262,20 @@ export function ensureAudioContextRunning(): void {
 /** Estado actual del ctx sin crearlo (para logging/diagnóstico). */
 export function getAudioContextState(): string {
   return ctx ? ctx.state : "uncreated";
+}
+
+/** Recupera el ruteo de audio tras un cambio de output device (ej: reconectar
+ *  audífonos BT). Resume el ctx si quedó dormido Y reconecta las fuentes —
+ *  porque WebKit a veces deja el ctx en `running` pero con el
+ *  `MediaElementSource` apuntando al device viejo/muerto (avanza pero no suena),
+ *  SIN pasar por `suspended`/`interrupted`, así que el resume solo no alcanza.
+ *  Reconectar la fuente fuerza a re-establecer la ruta al device actual.
+ *  Idempotente; seguro de llamar aunque todo esté bien (reconexión casi sin
+ *  costo y sin gap audible perceptible). */
+export function recoverAudioRouting(): void {
+  if (!ctx) return;
+  ensureAudioContextRunning();
+  reconnectChannelSources();
 }
 
 export function fadeInPlayPause(): void {
