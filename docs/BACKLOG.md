@@ -276,7 +276,7 @@ listener para decidir *pausar* (disconnect) vs *resumir* (volver el foco).
 
 ---
 
-### [x] B2 — Reproducción muda: el AudioContext queda suspendido
+### [~] B2 — Reproducción muda: el AudioContext queda suspendido
 
 **Reportado/arreglado 2026-06-23.** Dejar el player abierto un rato y volver:
 la canción **avanza pero no sale sonido**. Causa: macOS/WKWebView suspende el
@@ -320,32 +320,25 @@ en el output viejo** (WebKit lo bindea al crear el ctx, no sigue cambios);
 reconectar nodos internos no re-apunta el destination. El usuario confirmó que
 **cerrar y reabrir la app sí lo arregla** (proceso nuevo).
 
-**Fix v3 (descartado) — restart de la app.** Un comando Rust `restart_app`
-(`AppHandle::restart()`) recuperaba seguro (proceso nuevo) pero el usuario lo
-encontró **demasiado agresivo** (cierra/reabre la ventana). Queda en código como
-fallback más profundo, no como acción principal.
+**Hallazgo v4 — el wedge es a NIVEL DE PROCESO (2026-06-29).** Probamos recrear
+el pipeline **in-place** (cerrar el ctx viejo + `<audio>` + grafo nuevos, sin
+reiniciar) — botón + auto en `devicechange`. **Siguió mudo** incluso con el botón
+manual, pero **reabrir la app sí lo arregla**. Conclusión: el binding al output
+muerto **no es por-`AudioContext`, es de la audio session del proceso WebContent
+de WKWebView**; un ctx nuevo en el MISMO proceso la hereda. No hay API web ni de
+Tauri para resetear esa session sin un proceso nuevo. → **El rebuild in-place se
+revirtió (commit `8c27762`); no reintentar.**
 
-**Fix v4 — rebuild del pipeline in-place (2026-06-29):**
-6. `rebuildAudioContext()` ([audio/context.ts](../src/audio/context.ts)) cierra
-   el ctx viejo y arma uno nuevo + grafo + **`<audio>` nuevos**
-   (`recreateAudioElements()` — `createMediaElementSource` es one-shot por
-   elemento). **Síncrono** (evita que un `getAudioContext()` concurrente
-   reconstruya sobre los elementos viejos a mitad del teardown).
-7. `playerStore.rebuildAudio()` orquesta: captura trackId + posición, rebuild,
-   fuerza canal A activo, reaplica volumen + EQ, recarga la pista + seek + play.
-   Bumpea **`audioEpoch`** → `useAudioPlayer` re-atacha listeners a los elementos
-   nuevos y `App` remonta el visualizer (`key={audioEpoch}` — está atado al ctx).
-8. Triggers: **botón RESET AUDIO** (PlayerBar) + **auto en `devicechange` si
-   `isPlaying`** (debounced 400ms). No se puede detectar el output mudo desde
-   Web Audio (el grafo ve señal; lo muerto es río abajo del destination) → se
-   reconstruye por las dudas al cambiar de device mientras suena.
-
-**Estado:** la auto-recuperación liviana (v1/v2) queda para `suspended`/
-`interrupted`; el **rebuild in-place** (botón + auto-en-devicechange-si-suena) es
-la recuperación del destination clavado. Costo: ~0.5-1s de corte + micro-hitch
-del visualizer cuando corre. **Pendiente confirmar en hardware.** Si el remount
-del visualizer molesta o el in-place no recupera en alguna Mac, el fallback es
-el `restart_app`. Logs `[audio-debug]` temporales siguen en consola.
+**Estado: limitación de plataforma + workaround manual.** El único recovery que
+funciona es un proceso nuevo: botón **RESET AUDIO** en el
+[PlayerBar](../src/components/player/PlayerBar.tsx) → comando Rust `restart_app`
+([commands/system.rs](../src-tauri/src/commands/system.rs),
+`AppHandle::restart()`); `persistResumeNow()` guarda la posición antes, el resume
+la restaura al bootear. **No es auto** (auto-reiniciar en cada `devicechange`
+sería peor que el bug). La auto-recuperación liviana (v1/v2) queda para los
+`suspended`/`interrupted` que SÍ resuelve. Logs `[audio-debug]` temporales siguen
+en consola. **Reabrir si aparece una API mejor** (`AudioContext.setSinkId`
+estable en WebKit, o reset de audio session vía Tauri/Rust).
 
 **Nota:** la pausa de los XM6 al quitarlos solapa con [B1](#-b1--desconexión-de-audífonos-el-player-va-a-altavoces-en-vez-de-pausar)
 para ese modelo, pero B1 sigue abierto para audífonos sin sensor de uso /

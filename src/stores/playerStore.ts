@@ -15,7 +15,6 @@ import {
   fadeInPlayPause,
   fadeOutPlayPause,
   setEqBandGain,
-  rebuildAudioContext,
   EQ_BAND_FREQS,
 } from "../audio/context";
 import { filterTracks } from "../lib/search";
@@ -60,13 +59,6 @@ type PlayerState = {
   /** True once this track's play has been recorded (threshold met). Resets on
    *  track change. Ephemeral — not persisted. */
   _playRecorded: boolean;
-  /** Contador que se incrementa en cada `rebuildAudio`. Los componentes React
-   *  (useAudioPlayer, VisualizerView) lo observan para re-atachar listeners /
-   *  recrear el visualizer contra el `AudioContext` nuevo. Ephemeral. */
-  audioEpoch: number;
-  /** Guard de reentrada de `rebuildAudio` (evita rebuilds concurrentes ante
-   *  ráfagas de `devicechange`). Ephemeral. */
-  _audioRebuilding: boolean;
 
   playTrack: (track: Track) => void;
   /** Carga un track + hace seek a `positionMs` PERO no reproduce. Pensado para
@@ -89,11 +81,6 @@ type PlayerState = {
   /** Resetea todas las bandas a 0dB. No toca `eqEnabled` — si está on,
    *  queda on pero flat. */
   resetEq: () => void;
-  /** Reconstruye el pipeline de audio in-place (ctx + `<audio>` + grafo nuevos)
-   *  y restaura la pista en su posición actual. Recovery de "audio mudo tras
-   *  cambiar de output device" (B2) sin reiniciar la app. Lo dispara el botón
-   *  RESET AUDIO y el auto-trigger en `devicechange` (sólo si está sonando). */
-  rebuildAudio: () => void;
 
   // Internal sync — wired by useAudioPlayer. Prefijo `_` para indicar
   // que no son acciones de UI: las llama el adaptador de eventos.
@@ -399,8 +386,6 @@ export const usePlayerStore = create<PlayerState>()(
         _isCrossfading: false,
         playHistory: [],
         _playRecorded: false,
-        audioEpoch: 0,
-        _audioRebuilding: false,
 
         playTrack: (track) => {
           // Antes de cambiar, archivamos el track actual al historial. Si
@@ -569,65 +554,6 @@ export const usePlayerStore = create<PlayerState>()(
           const enabled = get().eqEnabled;
           for (let i = 0; i < EQ_BAND_COUNT; i++) {
             setEqBandGain(i, 0, enabled);
-          }
-        },
-
-        rebuildAudio: () => {
-          if (get()._audioRebuilding) return;
-          set({ _audioRebuilding: true });
-          try {
-            const { currentTrackId, isPlaying, volume, muted, eqGains, eqEnabled } =
-              get();
-            const wasPlaying = isPlaying;
-            // Posición actual desde el elemento activo (más fresca que el store).
-            const positionSec =
-              getAudioElement().currentTime || get().currentTime || 0;
-            const track =
-              currentTrackId === null
-                ? null
-                : useLibraryStore
-                    .getState()
-                    .tracks.find((t) => t.id === currentTrackId) ?? null;
-
-            // Tear down + rebuild del ctx + elementos + grafo (sync).
-            cancelCrossfade();
-            cancelPendingSwap();
-            rebuildAudioContext();
-            // El canal A nace con gain 1 (buildChannel) → forzamos activo=A para
-            // que getAudioElement() apunte al canal audible.
-            setActiveChannelId("a");
-
-            // Reaplicar volumen + EQ al grafo nuevo (nace flat / a 1).
-            getMasterGain().gain.value = muted ? 0 : volume;
-            for (let i = 0; i < EQ_BAND_COUNT; i++) {
-              setEqBandGain(i, eqGains[i] ?? 0, eqEnabled);
-            }
-
-            // Restaurar la pista en el elemento activo (nuevo) + seek + play.
-            if (track) {
-              const audio = getAudioElement();
-              audio.src = convertFileSrc(track.filePath);
-              const onMeta = () => {
-                audio.removeEventListener("loadedmetadata", onMeta);
-                audio.currentTime = positionSec;
-                if (wasPlaying) {
-                  audio.play().catch(ignoreAbort);
-                  fadeInPlayPause();
-                }
-              };
-              audio.addEventListener("loadedmetadata", onMeta);
-              audio.load();
-            }
-
-            // Señal a React: re-atachar listeners + recrear el visualizer contra
-            // el ctx nuevo.
-            set({
-              currentTime: positionSec,
-              _isCrossfading: false,
-              audioEpoch: get().audioEpoch + 1,
-            });
-          } finally {
-            set({ _audioRebuilding: false });
           }
         },
 

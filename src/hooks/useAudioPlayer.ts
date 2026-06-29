@@ -13,11 +13,6 @@ import { usePlayerStore } from "../stores/playerStore";
 // `timeupdate`/`ended` corresponden al track viejo, no al que el usuario
 // está "escuchando" en su modelo mental).
 export function useAudioPlayer() {
-  // Re-corre cuando `rebuildAudio` recrea los `<audio>` (B2): el cleanup
-  // saca los listeners de los elementos viejos y este effect los re-atacha a
-  // los nuevos. Sin esto, tras un rebuild el store dejaría de recibir
-  // timeupdate/ended/etc.
-  const audioEpoch = usePlayerStore((s) => s.audioEpoch);
   useEffect(() => {
     const audioA = getAudioElementA();
     const audioB = getAudioElementB();
@@ -82,5 +77,5 @@ export function useAudioPlayer() {
       detachA();
       detachB();
     };
-  }, [audioEpoch]);
+  }, []);
 }

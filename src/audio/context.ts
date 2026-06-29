@@ -1,7 +1,6 @@
 import {
   getAudioElementA,
   getAudioElementB,
-  recreateAudioElements,
   type ChannelId,
 } from "./element";
 
@@ -263,42 +262,6 @@ export function ensureAudioContextRunning(): void {
 /** Estado actual del ctx sin crearlo (para logging/diagnóstico). */
 export function getAudioContextState(): string {
   return ctx ? ctx.state : "uncreated";
-}
-
-/** Reconstruye TODO el pipeline de audio: cierra el `AudioContext` viejo, recrea
- *  los `<audio>` y arma un ctx + grafo nuevos. Es el único fix confiable del bug
- *  "audio mudo tras cambiar de output device" (B2 / Gotcha #32): WebKit bindea el
- *  `AudioContext.destination` al device **al crearlo** y no sigue los cambios —
- *  reconectar nodos internos no re-apunta el destination, pero un ctx NUEVO sí
- *  bindea al device actual (igual que reabrir la app, pero sin reiniciar).
- *
- *  Síncrono a propósito: si quedara una ventana con `ctx === null` mientras
- *  awaiteamos `close()`, un `getAudioContext()` concurrente (ej: un timeupdate)
- *  reconstruiría el grafo sobre los elementos VIEJOS → `createMediaElementSource`
- *  tiraría (one-shot por elemento). Por eso: null refs → recrear elementos →
- *  rebuild, todo sync; el `close()` del viejo va fire-and-forget al final.
- *
- *  NO restaura la pista ni reaplica volumen/EQ — eso lo orquesta
- *  `playerStore.rebuildAudio` (tiene el estado). Tampoco re-atacha listeners ni
- *  recrea el visualizer: eso lo disparan los componentes vía `audioEpoch`. */
-export function rebuildAudioContext(): void {
-  const old = ctx;
-  ctx = null;
-  channelA = null;
-  channelB = null;
-  preMasterGain = null;
-  masterGain = null;
-  playPauseGain = null;
-  eqBands = [];
-  needsSourceReconnect = false;
-  clearPendingPauseTimer();
-  recreateAudioElements();
-  getAudioContext(); // reconstruye ctx + grafo + canales sobre elementos nuevos
-  if (old) {
-    // Fire-and-forget: el ctx viejo (con sus source nodes muertos) se cierra
-    // en background. Cerrarlo libera el binding al device viejo.
-    old.close().catch(() => {});
-  }
 }
 
 /** Recupera el ruteo de audio tras un cambio de output device (ej: reconectar

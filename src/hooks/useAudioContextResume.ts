@@ -37,26 +37,7 @@ export function useAudioContextResume() {
       if (document.visibilityState === "visible") recoverIfPlaying("visibility");
     };
     const onFocus = () => recoverIfPlaying("focus");
-
-    // En `devicechange` (cambio de output device, ej: reconectar audífonos),
-    // el resume/reconnect liviano NO alcanza cuando el destination quedó clavado
-    // → si está sonando, reconstruimos el pipeline (ctx nuevo = bindea al device
-    // actual). Debounced: los device changes vienen en ráfaga. Sólo si
-    // `isPlaying` (decisión del usuario: no molestar si está pausado).
-    let rebuildTimer: number | undefined;
-    const onDeviceChange = () => {
-      const playing = usePlayerStore.getState().isPlaying;
-      console.warn(
-        `[audio-debug] devicechange: isPlaying=${playing}, ctxState=${getAudioContextState()}`,
-      );
-      if (!playing) return;
-      if (rebuildTimer) window.clearTimeout(rebuildTimer);
-      rebuildTimer = window.setTimeout(() => {
-        if (usePlayerStore.getState().isPlaying) {
-          usePlayerStore.getState().rebuildAudio();
-        }
-      }, 400);
-    };
+    const onDeviceChange = () => recoverIfPlaying("devicechange");
 
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onFocus);
@@ -66,7 +47,6 @@ export function useAudioContextResume() {
     navigator.mediaDevices?.enumerateDevices?.().catch(() => {});
 
     return () => {
-      if (rebuildTimer) window.clearTimeout(rebuildTimer);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
       navigator.mediaDevices?.removeEventListener(

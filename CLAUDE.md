@@ -1032,33 +1032,28 @@ session por cambio de output device BT) y (b) a veces el ctx **se quedaba en
 alcanzó**: el test clave fue que **YouTube en el navegador sí sonaba** por los
 mismos audífonos mientras el reproductor quedaba mudo. YouTube usa el
 `<audio>`/`<video>` directo (el OS lo re-rutea); nosotros ruteamos TODO por Web
-Audio, y el **`AudioContext.destination` queda clavado en el output viejo** —
-WebKit lo bindea al device **al crear el ctx** y no sigue los cambios;
-reconectar nodos internos no re-apunta el destination. Confirmado por el usuario:
-**cerrar y reabrir la app sí lo arregla** (proceso nuevo = `AudioContext` nuevo
-que bindea al device actual). `setSinkId` de `AudioContext` no es confiable en
-WKWebView.
+Audio, y el **output queda clavado en el device viejo** — reconectar nodos
+internos no lo re-apunta.
 
-**Fix v4 — rebuild del pipeline in-place (2026-06-29).** Como un proceso nuevo
-era demasiado agresivo, recreamos el ctx **dentro de la app**: `rebuildAudioContext()`
-([audio/context.ts](src/audio/context.ts)) cierra el ctx viejo y arma uno nuevo
-+ grafo + **`<audio>` nuevos** (`recreateAudioElements()` — `createMediaElementSource`
-es one-shot por elemento, así que el elemento también tiene que ser nuevo). Es
-**síncrono** a propósito (si quedara una ventana con `ctx===null` mientras
-awaiteamos `close()`, un `getAudioContext()` concurrente reconstruiría sobre los
-elementos viejos → throw). `playerStore.rebuildAudio()` orquesta: captura
-trackId + posición, rebuild, fuerza canal A activo (nace gain=1), reaplica
-volumen + EQ, recarga la pista y hace seek + play. Bumpea **`audioEpoch`** →
-`useAudioPlayer` re-atacha listeners a los elementos nuevos y `App` remonta el
-visualizer (`key={audioEpoch}`, está atado al ctx → hay que recrearlo, ~freeze
-de shaders). Triggers: **botón RESET AUDIO** (PlayerBar) y **auto en
-`devicechange` si `isPlaying`** (debounced 400ms; no podemos detectar el output
-mudo desde Web Audio — el grafo "ve" señal, lo muerto es río abajo del
-destination — así que reconstruimos por las dudas al cambiar de device). Costo:
-~0.5-1s de corte + micro-hitch del visualizer cuando corre. La auto-recuperación
-(v1/v2) queda para los casos `suspended`/`interrupted` livianos. El comando Rust
-`restart_app` (`AppHandle::restart()`) queda como fallback más profundo si el
-in-place no alcanzara.
+**Hallazgo v4 — el wedge es a NIVEL DE PROCESO, no del AudioContext
+(2026-06-29).** Probamos recrear el pipeline **in-place** (cerrar el ctx viejo +
+`<audio>` + grafo nuevos, sin reiniciar) y **siguió mudo** — incluso con el botón
+manual. Pero **cerrar y reabrir la app sí lo arregla**. Conclusión: el binding al
+output muerto **no es por-`AudioContext`, es a nivel de la audio session del
+proceso WebContent de WKWebView**; un ctx nuevo dentro del MISMO proceso la
+hereda. **No hay API web ni de Tauri para resetear esa audio session sin un
+proceso nuevo** (`setSinkId` de `AudioContext` no es confiable en WKWebView; un
+`location.reload()` es el mismo proceso → tampoco serviría). → El rebuild in-place
+se **descartó** (revertido); **no reintentar**.
+
+**Estado: limitación de plataforma, workaround manual.** El único recovery que
+funciona es un proceso nuevo: comando Rust `restart_app` (`AppHandle::restart()`,
+core, sin plugin) detrás del botón **RESET AUDIO** en el PlayerBar (antes de
+reiniciar, `persistResumeNow()` guarda la posición → el resume la restaura al
+bootear). **No es auto** (auto-reiniciar la app en cada cambio de device sería
+peor que el bug). La auto-recuperación liviana (v1/v2: resume + reconnect en
+focus/visibility/devicechange) se mantiene para los casos `suspended`/`interrupted`
+que SÍ resuelve, pero NO recupera el destination clavado.
 **No confundir con B1**: ahí el objetivo es *pausar* al desconectar (no
 *resumir*); mismo origen (no reaccionábamos al cambio de output device),
 reacción opuesta. Logs `[audio-debug]` temporales siguen mientras B2 está en

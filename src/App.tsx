@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useLibraryStore } from "./stores/libraryStore";
 import { useDownloadStore } from "./stores/downloadStore";
 import { useUiStore } from "./stores/uiStore";
-import { usePlayerStore } from "./stores/playerStore";
 import { useIdentificationStore } from "./stores/identificationStore";
 import { usePlaylistStore } from "./stores/playlistStore";
 import { useAudioPlayer } from "./hooks/useAudioPlayer";
@@ -35,11 +34,6 @@ function App() {
   const loadApiKey = useIdentificationStore((s) => s.loadApiKey);
   const loadPlaylists = usePlaylistStore((s) => s.load);
   const view = useUiStore((s) => s.view);
-  // Al reconstruir el pipeline de audio (B2), el visualizer (que se crea atado
-  // al AudioContext) debe recrearse contra el ctx nuevo. `key={audioEpoch}`
-  // fuerza un remount limpio (canvas + visualizer nuevos). Sólo cambia en un
-  // rebuild → no afecta el mount persistente normal (Gotcha #8).
-  const audioEpoch = usePlayerStore((s) => s.audioEpoch);
 
   // VisualizerView se monta lazy en el primer visit a la tab y queda
   // persistente hasta cerrar la app. Esconderlo via CSS (invisible +
@@ -132,7 +126,7 @@ function App() {
             }
             aria-hidden={view !== "visualizer"}
           >
-            <VisualizerView key={audioEpoch} />
+            <VisualizerView />
           </div>
         )}
       </div>
