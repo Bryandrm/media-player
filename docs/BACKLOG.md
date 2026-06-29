@@ -320,20 +320,32 @@ en el output viejo** (WebKit lo bindea al crear el ctx, no sigue cambios);
 reconectar nodos internos no re-apunta el destination. El usuario confirmó que
 **cerrar y reabrir la app sí lo arregla** (proceso nuevo).
 
-**Fix v3 — botón RESET AUDIO (restart):**
-6. Comando Rust `restart_app` ([commands/system.rs](../src-tauri/src/commands/system.rs))
-   = `AppHandle::restart()` (core, sin plugin) → proceso nuevo = `AudioContext`
-   nuevo que bindea al device actual. Botón **RESET AUDIO** en el
-   [PlayerBar](../src/components/player/PlayerBar.tsx); antes de reiniciar,
-   `persistResumeNow()` guarda la posición → el resume la restaura al bootear.
-   In-place no sirve: el visualizer está atado al ctx (recrearlo = freeze,
-   Gotcha #8) y `setSinkId` de AudioContext no es confiable en WKWebView.
+**Fix v3 (descartado) — restart de la app.** Un comando Rust `restart_app`
+(`AppHandle::restart()`) recuperaba seguro (proceso nuevo) pero el usuario lo
+encontró **demasiado agresivo** (cierra/reabre la ventana). Queda en código como
+fallback más profundo, no como acción principal.
 
-**Estado:** la auto-recuperación (v1/v2) queda para los casos
-`suspended`/`interrupted` livianos; **RESET AUDIO es la recuperación confiable**
-del destination clavado. Logs `[audio-debug]` temporales siguen en consola.
-Pendiente confirmar el botón en hardware; si molesta el restart completo, evaluar
-recrear sólo el pipeline de audio (elements + ctx + re-tap del visualizer).
+**Fix v4 — rebuild del pipeline in-place (2026-06-29):**
+6. `rebuildAudioContext()` ([audio/context.ts](../src/audio/context.ts)) cierra
+   el ctx viejo y arma uno nuevo + grafo + **`<audio>` nuevos**
+   (`recreateAudioElements()` — `createMediaElementSource` es one-shot por
+   elemento). **Síncrono** (evita que un `getAudioContext()` concurrente
+   reconstruya sobre los elementos viejos a mitad del teardown).
+7. `playerStore.rebuildAudio()` orquesta: captura trackId + posición, rebuild,
+   fuerza canal A activo, reaplica volumen + EQ, recarga la pista + seek + play.
+   Bumpea **`audioEpoch`** → `useAudioPlayer` re-atacha listeners a los elementos
+   nuevos y `App` remonta el visualizer (`key={audioEpoch}` — está atado al ctx).
+8. Triggers: **botón RESET AUDIO** (PlayerBar) + **auto en `devicechange` si
+   `isPlaying`** (debounced 400ms). No se puede detectar el output mudo desde
+   Web Audio (el grafo ve señal; lo muerto es río abajo del destination) → se
+   reconstruye por las dudas al cambiar de device mientras suena.
+
+**Estado:** la auto-recuperación liviana (v1/v2) queda para `suspended`/
+`interrupted`; el **rebuild in-place** (botón + auto-en-devicechange-si-suena) es
+la recuperación del destination clavado. Costo: ~0.5-1s de corte + micro-hitch
+del visualizer cuando corre. **Pendiente confirmar en hardware.** Si el remount
+del visualizer molesta o el in-place no recupera en alguna Mac, el fallback es
+el `restart_app`. Logs `[audio-debug]` temporales siguen en consola.
 
 **Nota:** la pausa de los XM6 al quitarlos solapa con [B1](#-b1--desconexión-de-audífonos-el-player-va-a-altavoces-en-vez-de-pausar)
 para ese modelo, pero B1 sigue abierto para audífonos sin sensor de uso /

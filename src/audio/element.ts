@@ -21,6 +21,19 @@ function makeElement(): HTMLAudioElement {
   return el;
 }
 
+/** Descarta los dos `<audio>` y fuerza su recreación en el próximo getter.
+ *  Necesario al reconstruir el pipeline de audio (B2 / Gotcha #32): el
+ *  `AudioContext` nuevo necesita `MediaElementSource` nuevos, y
+ *  `createMediaElementSource` sólo se puede llamar UNA vez por elemento — así
+ *  que el elemento también tiene que ser nuevo. Pausamos los viejos antes de
+ *  soltarlos (sus source nodes mueren con el ctx viejo al cerrarse). */
+export function recreateAudioElements(): void {
+  elementA?.pause();
+  elementB?.pause();
+  elementA = null;
+  elementB = null;
+}
+
 export function getAudioElementA(): HTMLAudioElement {
   if (!elementA) elementA = makeElement();
   return elementA;
