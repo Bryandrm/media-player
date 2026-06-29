@@ -122,3 +122,16 @@ pub fn check_dependencies(app: AppHandle) -> DependencyStatus {
         espeak_ng: resolve_espeak_ng_library(),
     }
 }
+
+/// Reinicia la app en un proceso nuevo. Único recovery confiable del bug
+/// "audio mudo tras cambiar de output device Bluetooth" (B2 / Gotcha #32):
+/// WebKit bindea el `AudioContext` al output device **al crearlo** y no sigue
+/// los cambios; reconectar el grafo no re-apunta el `destination`. Un proceso
+/// nuevo crea un `AudioContext` nuevo que bindea al device actual. La posición
+/// de reproducción se restaura via `usePlaybackPersist` (localStorage sobrevive
+/// el restart). Lo dispara el botón RESET AUDIO del PlayerBar. `restart()`
+/// diverge (no retorna).
+#[tauri::command]
+pub fn restart_app(app: AppHandle) {
+    app.restart();
+}

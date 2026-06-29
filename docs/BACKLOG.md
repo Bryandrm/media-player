@@ -313,10 +313,27 @@ si el ctx se suspendía con `isPlaying=true` nada lo despertaba.
    `visibility` ahora reconectan → **escape hatch manual** (click afuera y volver
    a la ventana recupera el audio).
 
-**Pendiente:** confirmar en hardware (BT reconnect) que Fix v2 recupera el audio.
-**Plan B si reconectar no alcanza:** recrear el AudioContext entero al cambio de
-device (rearmar grafo + tap del visualizer). Logs `[audio-debug]` temporales
-siguen en consola para captar el estado si recurre.
+**Fix v2 NO alcanzó (2026-06-29).** Test clave: **YouTube sonaba** por los
+mismos audífonos mientras el reproductor quedaba mudo, con el ctx `running` y
+`recoverAudioRouting` corriendo. → El `AudioContext.destination` queda **clavado
+en el output viejo** (WebKit lo bindea al crear el ctx, no sigue cambios);
+reconectar nodos internos no re-apunta el destination. El usuario confirmó que
+**cerrar y reabrir la app sí lo arregla** (proceso nuevo).
+
+**Fix v3 — botón RESET AUDIO (restart):**
+6. Comando Rust `restart_app` ([commands/system.rs](../src-tauri/src/commands/system.rs))
+   = `AppHandle::restart()` (core, sin plugin) → proceso nuevo = `AudioContext`
+   nuevo que bindea al device actual. Botón **RESET AUDIO** en el
+   [PlayerBar](../src/components/player/PlayerBar.tsx); antes de reiniciar,
+   `persistResumeNow()` guarda la posición → el resume la restaura al bootear.
+   In-place no sirve: el visualizer está atado al ctx (recrearlo = freeze,
+   Gotcha #8) y `setSinkId` de AudioContext no es confiable en WKWebView.
+
+**Estado:** la auto-recuperación (v1/v2) queda para los casos
+`suspended`/`interrupted` livianos; **RESET AUDIO es la recuperación confiable**
+del destination clavado. Logs `[audio-debug]` temporales siguen en consola.
+Pendiente confirmar el botón en hardware; si molesta el restart completo, evaluar
+recrear sólo el pipeline de audio (elements + ctx + re-tap del visualizer).
 
 **Nota:** la pausa de los XM6 al quitarlos solapa con [B1](#-b1--desconexión-de-audífonos-el-player-va-a-altavoces-en-vez-de-pausar)
 para ese modelo, pero B1 sigue abierto para audífonos sin sensor de uso /

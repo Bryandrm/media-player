@@ -64,6 +64,7 @@ pub fn run() {
             commands::library::library_cancel_mb_backfill,
             commands::playlists::playlist_smart_distinct_values,
             commands::system::check_dependencies,
+            commands::system::restart_app,
             commands::downloader::download_track,
             commands::downloader::download_list_history,
             commands::downloader::download_clear_history,

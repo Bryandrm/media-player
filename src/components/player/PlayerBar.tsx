@@ -1,5 +1,8 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useLibraryStore } from "../../stores/libraryStore";
 import { usePlayerStore } from "../../stores/playerStore";
+import { persistResumeNow } from "../../hooks/usePlaybackPersist";
+import { Button } from "../ui/Button";
 import { Controls } from "./Controls";
 import { CoverArt } from "./CoverArt";
 import { SeekBar } from "./SeekBar";
@@ -12,6 +15,15 @@ export function PlayerBar() {
     currentTrackId === null
       ? null
       : tracks.find((t) => t.id === currentTrackId) ?? null;
+
+  // Recovery del bug "audio mudo tras cambiar de output device BT" (B2): el
+  // único fix confiable es un proceso nuevo (AudioContext nuevo que bindea al
+  // device actual). Guardamos la posición y reiniciamos la app — el resume la
+  // restaura al bootear. Ver Gotcha #32.
+  const onResetAudio = () => {
+    persistResumeNow();
+    void invoke("restart_app");
+  };
 
   return (
     <footer className="border-t-2 border-fg px-4 py-2 flex items-center gap-3">
@@ -35,6 +47,15 @@ export function PlayerBar() {
           <Controls />
           <SeekBar />
           <VolumeSlider />
+          {/* Recovery de audio mudo tras cambio de output device (B2). Reinicia
+              la app (proceso nuevo) — restaura el track + posición al bootear. */}
+          <Button
+            size="sm"
+            onClick={onResetAudio}
+            title="Reinicia la app para recuperar el audio si se quedó mudo tras cambiar de audífonos/altavoces"
+          >
+            RESET AUDIO
+          </Button>
         </div>
       </div>
     </footer>

@@ -44,6 +44,20 @@ function writeResume(r: Resume) {
   }
 }
 
+/** Persiste la posición de reproducción AHORA (síncrono). Lo usa el botón
+ *  RESET AUDIO antes de `restart_app`: el restart restaura el track + posición
+ *  via el resume de arriba, así que forzamos un save exacto (en vez de perder
+ *  hasta 5s del save periódico). */
+export function persistResumeNow(): void {
+  const s = usePlayerStore.getState();
+  if (s.currentTrackId !== null) {
+    writeResume({
+      trackId: s.currentTrackId,
+      positionMs: Math.floor(s.currentTime * 1000),
+    });
+  }
+}
+
 export function usePlaybackPersist() {
   const tracks = useLibraryStore((s) => s.tracks);
   const trackId = usePlayerStore((s) => s.currentTrackId);

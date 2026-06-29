@@ -1028,12 +1028,26 @@ session por cambio de output device BT) y (b) a veces el ctx **se quedaba en
   **escape hatch manual** — click afuera y de vuelta a la ventana recupera el
   audio aunque `devicechange` falle.
 
-**Sigue en observación** (B2 en [docs/BACKLOG.md](docs/BACKLOG.md)) con logs
-`[audio-debug]`. **Plan B si reconectar no alcanza:** recrear el AudioContext
-entero al detectar el cambio de device (rearmar grafo + tap del visualizer).
+**Fix v3 — botón RESET AUDIO (restart de la app) (2026-06-29).** Reconectar
+**tampoco alcanzó**: el test clave fue que **YouTube en el navegador sí sonaba**
+por los mismos audífonos mientras el reproductor quedaba mudo. YouTube usa el
+`<audio>`/`<video>` directo (el OS lo re-rutea); nosotros ruteamos TODO por Web
+Audio, y el **`AudioContext.destination` queda clavado en el output viejo** —
+WebKit lo bindea al device **al crear el ctx** y no sigue los cambios;
+reconectar nodos internos no re-apunta el destination. Confirmado por el usuario:
+**cerrar y reabrir la app sí lo arregla** (proceso nuevo = `AudioContext` nuevo
+que bindea al device actual). Como el `setSinkId` de `AudioContext` no es
+confiable en WKWebView y el visualizer está atado al ctx (recrear in-place
+obliga a recrear el visualizer → freeze), la recuperación confiable es **un
+proceso nuevo**: comando Rust `restart_app` (`AppHandle::restart()`, core, sin
+plugin) detrás del botón **RESET AUDIO** en el PlayerBar. Antes de reiniciar,
+`persistResumeNow()` guarda la posición → el resume la restaura al bootear. La
+auto-recuperación (v1/v2) se mantiene para los casos `suspended`/`interrupted`
+livianos; el botón es el martillo para el destination clavado.
 **No confundir con B1**: ahí el objetivo es *pausar* al desconectar (no
 *resumir*); mismo origen (no reaccionábamos al cambio de output device),
-reacción opuesta.
+reacción opuesta. Logs `[audio-debug]` temporales siguen mientras B2 está en
+observación ([docs/BACKLOG.md](docs/BACKLOG.md)).
 
 ---
 
