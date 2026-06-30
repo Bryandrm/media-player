@@ -24,6 +24,14 @@ export function useKeyboardShortcuts() {
       const s = usePlayerStore.getState();
       const hasTrack = s.currentTrackId !== null;
 
+      // Dígitos 0-9 = seek por porcentaje del track (1=10% … 9=90%, 0=inicio).
+      if (e.key >= "0" && e.key <= "9") {
+        if (!hasTrack || s.duration <= 0) return;
+        e.preventDefault();
+        s.seek((Number(e.key) / 10) * s.duration);
+        return;
+      }
+
       switch (e.key) {
         case " ":
           // Space dispara togglePlay siempre — si no hay track cargado, la

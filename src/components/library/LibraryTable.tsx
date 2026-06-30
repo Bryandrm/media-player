@@ -581,7 +581,7 @@ export function LibraryTable() {
             onClick={scrollToCurrent}
             title="Jump to current track"
             aria-label="Jump to current track"
-            className={`absolute right-4 z-10 w-9 h-9 flex items-center justify-center bg-bg border-2 border-accent text-accent text-lg font-bold animate-bob hover:bg-accent hover:text-bg ${
+            className={`absolute right-4 z-10 w-9 h-9 flex items-center justify-center text-accent text-2xl font-bold leading-none animate-bob hover:text-fg cursor-pointer ${
               jumpDir === "up" ? "top-4" : "bottom-4"
             }`}
           >
