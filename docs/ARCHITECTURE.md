@@ -335,7 +335,7 @@ Razón: Butterchurn (un subtree distinto, montado/desmontado al cambiar de vista
 
 ```
 useAudioPlayer       eventos del <audio> → playerStore
-useKeyboardShortcuts Space, ←/→, ↑/↓, M, N, P, S, V, F
+useKeyboardShortcuts Space, ←/→, ↑/↓, 0-9 (seek %), M, N, P, S, V, F, K, L
 useDownloadEvents    eventos download-* → downloadStore
 usePlaybackPersist   ¿qué track + posición? localStorage entre sesiones
 useMediaSession      MediaSession API (media keys, AirPods, Now Playing)

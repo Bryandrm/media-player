@@ -238,6 +238,14 @@ src-tauri/resources/
   arriba** (tras ALL TRACKS), con **★** en vez de ⚡ y **sin rename/delete/edit**
   (se gestiona desde la columna ★). `is_favorite` se sumó al whitelist de
   [db/smart.rs](src-tauri/src/db/smart.rs) (op `is`, valor por `push_bind`).
+- **Aids de navegación** ✓ (2026-06-29) — (a) **botón jump-to-current** en la
+  `LibraryTable`: flecha naranja oscilante (keyframe `bob` en tokens.css) que
+  aparece cuando la fila que suena queda fuera del viewport (↑ arriba-derecha si
+  quedó por encima, ↓ abajo-derecha si por debajo); click → `scrollIntoView`
+  centrado. Visibilidad/dirección por geometría (row rect vs scroll container)
+  con scroll/resize throttleado por rAF; no aparece si el track actual no está en
+  la lista visible. (b) **Teclas `0-9`** = seek por % del track (1=10%…9=90%,
+  0=inicio) en `useKeyboardShortcuts`.
 - **Descarga de listas** ✓ (2026-06-16) — toggle **FULL PLAYLIST** en el
   DownloadForm (default OFF = `--no-playlist`, un solo video; ON =
   `--yes-playlist`). `run_yt_dlp` devuelve `Vec<DownloadedEntry>` (multi-file)

@@ -120,7 +120,7 @@ Funcionando hoy:
 - **Toggle visualizer ↔ lyrics** dentro del split, persistido.
 - **Persistencia**: último track + posición entre sesiones (sin auto-play). Volume/mute/shuffle/crossfade/preset/split/autoCycle/paneMode via Zustand `persist`.
 - **Media keys**: F7/F8/F9 + AirPods + lock screen + Now Playing widget (MediaSession API). Probado en macOS, pendiente Windows.
-- **Keyboard shortcuts**: Space, ←/→, ↑/↓, M, N, P, S, V, F.
+- **Keyboard shortcuts**: Space (play/pause), ←/→ (seek 5s), ↑/↓ (volume), 0-9 (seek a % del track: 1=10%…9=90%, 0=inicio), M (mute), N/P (next/prev), S (shuffle), V (visualizer), F (fullscreen), K (karaoke), L (favorito).
 
 **Próximo (orden acordado 2026-06-18)**: quick wins **cerrados** (drag & drop ✓ + history persistente ✓ + export M3U ✓ + smart playlists ✓). (2) calidad/plataforma — testing Windows/Linux (MPRIS), validar `pnpm tauri build`, tests + CI; (3) features grandes al final — Lyrics 2.c.4 (auto-fallback por confidence + auto-detect de mismatch) → karaoke real, Karaoke Fase B-E, Identification Fase 3.
 
