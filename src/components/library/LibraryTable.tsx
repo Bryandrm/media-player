@@ -584,7 +584,6 @@ export function LibraryTable() {
             className={`absolute right-4 z-10 w-9 h-9 flex items-center justify-center bg-bg border-2 border-accent text-accent text-lg font-bold animate-bob hover:bg-accent hover:text-bg ${
               jumpDir === "up" ? "top-4" : "bottom-4"
             }`}
-            style={{ boxShadow: "var(--shadow-hard)" }}
           >
             {jumpDir === "up" ? "↑" : "↓"}
           </button>
