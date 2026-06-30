@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { usePlayerStore } from "../stores/playerStore";
 import { useUiStore } from "../stores/uiStore";
+import { useLibraryStore } from "../stores/libraryStore";
 
 const VOLUME_STEP = 0.05;
 const SEEK_STEP_S = 5;
@@ -70,6 +71,15 @@ export function useKeyboardShortcuts() {
           // muestra fallback si no hay synced lyrics. Escape lo cierra.
           if (hasTrack) useUiStore.getState().toggleKaraoke();
           break;
+        case "l":
+        case "L": {
+          // Toggle de favorito (like) del track actual.
+          if (!hasTrack) return;
+          const lib = useLibraryStore.getState();
+          const track = lib.tracks.find((t) => t.id === s.currentTrackId);
+          if (track) lib.setFavorite(track.id, !track.isFavorite);
+          break;
+        }
         case "v":
         case "V": {
           const ui = useUiStore.getState();

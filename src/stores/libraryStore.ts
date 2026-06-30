@@ -95,10 +95,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       });
       return;
     }
-    // Si hay una playlist seleccionada (ej: FAVORITES), refrescar su cache —
-    // un track desmarcado debe salir de la lista de favoritos.
-    const { selectedId, reloadSelectedTracks } = usePlaylistStore.getState();
-    if (selectedId !== null) await reloadSelectedTracks();
+    // `load()` refresca la lista de playlists (el `trackCount` de FAVORITES,
+    // re-evaluando la regla) Y los tracks de la playlist seleccionada — así el
+    // badge del sidebar sube/baja y la vista FAVORITES gana/pierde el track.
+    await usePlaylistStore.getState().load();
   },
 
   loadTracks: async () => {

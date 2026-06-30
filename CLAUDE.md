@@ -229,8 +229,9 @@ src-tauri/resources/
   + [ADR-036](./docs/DECISIONS.md#adr-036--smart-playlists-picker-cascadante--operador-innot_in).
 - **Favoritos** ✓ (2026-06-29) — columna `tracks.is_favorite` + **columna ★**
   en la `LibraryTable` (en TODA lista: ALL TRACKS, playlists, smart) que togglea
-  el flag (`library_set_favorite`, optimistic en el store + refresh de la
-  playlist seleccionada). La lista **FAVORITES** es una **smart playlist
+  el flag (`library_set_favorite`, optimistic en el store + `playlistStore.load()`
+  para refrescar el `trackCount` de FAVORITES y los tracks seleccionados). Tecla
+  **`L`** (like) togglea el favorito del track actual. La lista **FAVORITES** es una **smart playlist
   built-in** (`is_favorite is 1`) creada al boot por `db::playlists::ensure_favorites`
   (idempotente) — reusa todo el infra de smart (getQueue, export, read-only).
   Columna `playlists.is_favorites` la marca: el `PlaylistSidebar` la **fija
