@@ -210,17 +210,30 @@ Gotcha #17), mismo patrón que el reorder de playlists.
 ### [ ] T7 — Acceso web: reproducir la library desde el teléfono  ⭐ GRANDE
 
 **Origen:** charla 2026-06-29. Bryan quiere **escuchar su música desde el
-teléfono** apuntando a la app que corre en la Mac. Decisión tomada: **camino A
-(servidor propio reusando el backend Rust)** sobre la alternativa de un media
-server existente (Navidrome / Subsonic-compatible). Razón: encaja con la
-separación Rust/red del proyecto y es una pieza de portfolio; Navidrome resolvía
-"ya" pero es una herramienta aparte, no *este* reproductor.
+teléfono**. Decisión tomada: **camino A (servidor propio reusando el backend
+Rust)** sobre la alternativa de un media server existente (Navidrome /
+Subsonic-compatible). Razón: encaja con la separación Rust/red del proyecto y es
+una pieza de portfolio; Navidrome resolvía "ya" pero es una herramienta aparte,
+no *este* reproductor.
+
+**Posicionamiento (importante):** esto es un **extra del proyecto**, NO el flujo
+principal. El producto es el **reproductor de escritorio** (Tauri en la Mac); el
+servidor web es un complemento opcional para acceso remoto. El escritorio nunca
+depende de que el server exista.
+
+**Target de deploy: Raspberry Pi 4 (8GB), always-on.** El server vive en la Pi
+(no en la Mac prendida 24/7). Esto **define una restricción de diseño**: el
+servidor debe ser un **componente standalone que compile y corra para ARM Linux
+(aarch64)**, separable del shell Tauri de escritorio — el Tauri lo puede montar
+*opcionalmente*, pero el caso primario es el binario solo en la Pi. Hardware/red
+sobran para uso personal (ver "Deploy en la Pi" abajo).
 
 **Por qué no es trivial hoy:** la app es **Tauri** — el frontend React corre en
 el WebView *de la misma Mac* y habla con Rust por **IPC, no HTTP**; todo el audio
 se reproduce con **Web Audio local** (los dos `<audio>` A/B + grafo de
-gain/EQ + Butterchurn). No existe un servidor al que un teléfono se conecte.
-Hace falta agregar una **pieza nueva**: servidor HTTP + UI mobile.
+gain/EQ + Butterchurn). No existe un servidor al que un teléfono se conecte, y un
+Pi headless **no ejecuta el Tauri** (sin WebView/display). Hace falta una **pieza
+nueva**: servidor HTTP (corre en la Pi) + UI mobile.
 
 **Expectativa honesta (qué se traslada y qué NO):**
 - **Sí viaja:** browse de la library, metadata, cover art, letras, **reproducir
@@ -231,34 +244,89 @@ Hace falta agregar una **pieza nueva**: servidor HTTP + UI mobile.
   experiencia completa".
 
 **Scope (incrementos sugeridos):**
-- **inc.1 — Servidor HTTP en Rust** (`axum` o similar, montado dentro de Tauri o
-  como sub-binario): endpoints `/tracks` (JSON desde la DB existente — reusa
-  `db/`), `/cover/:id`, `/lyrics/:id`, y **`/stream/:id` con soporte de HTTP
-  **range requests** (seek desde el teléfono). Respetar el principio: el
-  filesystem/red lo toca Rust. Toggle para encender/apagar el server (no siempre
-  on) + puerto configurable en `settings`.
+- **inc.1 — Servidor HTTP en Rust standalone** (`axum` o similar, **crate/binario
+  separable** que compile para aarch64-linux; el Tauri lo monta opcional):
+  endpoints `/tracks` (JSON desde la DB — reusa `db/`), `/cover/:id`,
+  `/lyrics/:id`, y **`/stream/:id` con HTTP **range requests** (seek desde el
+  teléfono). Respetar el principio: el filesystem/red lo toca Rust. Puerto
+  configurable.
 - **inc.2 — Web UI mobile-friendly:** app web liviana (reusar componentes React
   donde tenga sentido, pero es una UI distinta — táctil, sin las features de
-  WebAudio local). Brutalist igual (principio #1).
-- **inc.3 — Acceso:** LAN por IP local en la misma WiFi (mínimo viable). Para
+  WebAudio local). Brutalist igual (principio #1). La sirve el mismo server.
+  **Diseñarla multi-form-factor desde el arranque** (layouts adaptables teléfono
+  / TV; navegación táctil **y** por foco/D-pad) → habilita inc.6 casi sin
+  trabajo extra.
+- **inc.3 — Library + DB en la Pi:** la Pi escanea **su propio disco** (música en
+  SSD/USB, no en la microSD). Las rutas absolutas de `file_path` de la Mac **no
+  resuelven** en la Pi → cada nodo tiene su propia DB y su propio scan; no se
+  comparte la DB entre Mac y Pi. (Sincronizar lyrics/karaoke entre nodos sería el
+  "sync por fingerprint/MBID" de Ideas futuras, fuera de scope acá.)
+- **inc.4 — Acceso:** LAN por IP local en la misma WiFi (mínimo viable). Para
   fuera de casa, **Tailscale** (sin abrir puertos ni exponer a internet) — NO
   port-forwarding público (el proyecto es personal, ver disclaimer legal +
   [SECURITY.md](./SECURITY.md)).
-- **inc.4 — Auth mínima:** aunque sea LAN, un token/PIN simple para que no
+- **inc.5 — Auth mínima:** aunque sea LAN, un token/PIN simple para que no
   cualquiera en la red sirva/streamee la library. Revisar superficie de ataque
   en [SECURITY.md](./SECURITY.md) antes de exponer cualquier endpoint.
+- **inc.6 — Cliente TV (Samsung Tizen):** el tele es **otro cliente** del mismo
+  server, igual que el teléfono — **NO** se porta la app a Tizen (Tizen sólo corre
+  web apps, sin Rust/Tauri/backend, y el backend no tiene sentido en un tele).
+  Reusa la UI web de inc.2 con un **layout "10-foot"** (texto grande, navegación
+  por foco con el control remoto). Dos niveles de entrega: (a) **MVP** = el
+  navegador del tele apuntando a la UI web (cero empaquetado); (b) **polish
+  opcional** = app Tizen `.wgt` (la misma UI repackaged — lanza desde el home,
+  mejor integración con el remoto; suma cuenta dev Samsung + certificados +
+  packaging, y queda atada a Samsung). El brutalist (alto contraste, tipografía
+  grande) encaja bien en TV. **Bonus experimental:** si el tele reproduce el
+  audio, el visualizer Butterchurn (WebGL) podría correr en su browser — mejor
+  pantalla que el teléfono, pero el WebGL de runtimes de TV es flojo → opcional,
+  no requisito.
+- **inc.7 — Control remoto / "cast" propio:** replicar el modelo de YouTube-cast,
+  donde el **teléfono es el mando y el tele el reproductor**. Clave: en YouTube el
+  teléfono NO streamea al tele — le dice *"reproducí X, pausá, siguiente"* y el
+  **tele hace pull del contenido por su cuenta**. Acá igual: el tele (cliente
+  inc.6) streamea de la Pi y reproduce; el teléfono (cliente inc.2) manda comandos.
+  Requiere sumar al server un **canal de control en tiempo real** (WebSocket o
+  SSE) + **estado de "now playing" compartido** para sincronizar mando ↔ tele. Es
+  un feature acotado **encima de inc.6**, no una reescritura.
+  - **NO usar Google Cast de verdad:** los TVs **Samsung/Tizen no son receptores
+    de Google Cast** (Chromecast es de Google; Samsung va por Smart View / AirPlay
+    2 / DLNA), y **Safari iOS no puede ser sender** de Cast (el SDK anda en Chrome
+    desktop/Android). Para Samsung + iPhone, el "cast" propio es la **única vía
+    realista** por web — y de paso es más limpio (sin dependencia de Google, anda
+    igual sobre Tailscale).
+  - **Alternativa abierta (parqueada):** **DLNA/UPnP** (Pi = media server, teléfono
+    = controlador, tele = renderer; Samsung lo soporta) permitiría castear a teles
+    sin instalar nuestro cliente. Es el "cast abierto" pero viejo y quisquilloso →
+    nota, no plan.
+
+**Deploy en la Pi 4 (8GB) — viabilidad:**
+- **Ancho de banda:** servir música es mandar archivos por HTTP (barato). MP3 320k
+  ≈ 0.31 Mbps/stream, FLAC ≈ 1 Mbps/stream. Con 25 Mbps de subida → ~80 streams
+  MP3 / ~25 FLAC simultáneos. Para uso personal (1-2 oyentes) sobra de lejos; el
+  cuello de botella **no** es la red.
+- **CPU/RAM:** el quad-core A72 + 8GB es **holgado** para file serving + queries
+  SQLite. **Salvedad:** transcoding al vuelo (FLAC→MP3 para datos móviles) sí
+  exige — el Pi 4 aguanta ~1-2 transcodes concurrentes. Si el teléfono reproduce
+  el formato nativo **no hace falta transcodear** → trivial. Empezar **sin
+  transcoding**.
+- **Operativo:** disipador/case ventilado para 24/7; música en **SSD/USB**, no en
+  microSD (se desgasta y es lenta); la app del teléfono reproduce nativo.
 
 **Gotchas / consideraciones a no olvidar:**
 - **Range requests obligatorios** para seek; sin eso el teléfono baja el archivo
   entero antes de reproducir.
-- **Rutas absolutas en la DB** (`file_path`) son válidas sólo en la Mac — el
-  server resuelve el archivo local y streamea bytes; el teléfono nunca ve paths.
+- **Rutas absolutas en la DB** (`file_path`) son por-máquina — el server resuelve
+  el archivo en SU disco y streamea bytes; el teléfono nunca ve paths.
 - **CORS / mixed content** si la UI mobile se sirve aparte del stream.
 - Nuevo **vector de seguridad** (primer endpoint HTTP entrante del proyecto) →
   documentar en SECURITY.md cuando se encare.
+- **Cross-compile / CI:** sumar target aarch64-linux para buildear el server de
+  la Pi (hoy el CI es Windows + macOS para el escritorio).
 
 **Decisión a formalizar:** cuando arranque, abrir un **ADR** (camino A vs media
-server existente; server embebido en Tauri vs proceso aparte; auth).
+server existente; **server standalone ARM vs embebido en Tauri**; auth; sin
+transcoding al inicio).
 
 **Estado:** definida, **no iniciada** (sin compromiso de fecha — "cuando haya
 tiempo"). Fuera del orden de priorización actual.
