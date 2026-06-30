@@ -205,6 +205,66 @@ Gotcha #17), mismo patrón que el reorder de playlists.
 
 ---
 
+## Remoto / acceso desde otros dispositivos
+
+### [ ] T7 — Acceso web: reproducir la library desde el teléfono  ⭐ GRANDE
+
+**Origen:** charla 2026-06-29. Bryan quiere **escuchar su música desde el
+teléfono** apuntando a la app que corre en la Mac. Decisión tomada: **camino A
+(servidor propio reusando el backend Rust)** sobre la alternativa de un media
+server existente (Navidrome / Subsonic-compatible). Razón: encaja con la
+separación Rust/red del proyecto y es una pieza de portfolio; Navidrome resolvía
+"ya" pero es una herramienta aparte, no *este* reproductor.
+
+**Por qué no es trivial hoy:** la app es **Tauri** — el frontend React corre en
+el WebView *de la misma Mac* y habla con Rust por **IPC, no HTTP**; todo el audio
+se reproduce con **Web Audio local** (los dos `<audio>` A/B + grafo de
+gain/EQ + Butterchurn). No existe un servidor al que un teléfono se conecte.
+Hace falta agregar una **pieza nueva**: servidor HTTP + UI mobile.
+
+**Expectativa honesta (qué se traslada y qué NO):**
+- **Sí viaja:** browse de la library, metadata, cover art, letras, **reproducir
+  el archivo** en el teléfono.
+- **NO viaja (vive en el WebAudio del escritorio):** visualizer (Butterchurn),
+  karaoke fullscreen, EQ de 10 bandas, crossfade. El teléfono reproduce el
+  archivo nativo y muestra metadata/letras — "escuchar mi música", no "la misma
+  experiencia completa".
+
+**Scope (incrementos sugeridos):**
+- **inc.1 — Servidor HTTP en Rust** (`axum` o similar, montado dentro de Tauri o
+  como sub-binario): endpoints `/tracks` (JSON desde la DB existente — reusa
+  `db/`), `/cover/:id`, `/lyrics/:id`, y **`/stream/:id` con soporte de HTTP
+  **range requests** (seek desde el teléfono). Respetar el principio: el
+  filesystem/red lo toca Rust. Toggle para encender/apagar el server (no siempre
+  on) + puerto configurable en `settings`.
+- **inc.2 — Web UI mobile-friendly:** app web liviana (reusar componentes React
+  donde tenga sentido, pero es una UI distinta — táctil, sin las features de
+  WebAudio local). Brutalist igual (principio #1).
+- **inc.3 — Acceso:** LAN por IP local en la misma WiFi (mínimo viable). Para
+  fuera de casa, **Tailscale** (sin abrir puertos ni exponer a internet) — NO
+  port-forwarding público (el proyecto es personal, ver disclaimer legal +
+  [SECURITY.md](./SECURITY.md)).
+- **inc.4 — Auth mínima:** aunque sea LAN, un token/PIN simple para que no
+  cualquiera en la red sirva/streamee la library. Revisar superficie de ataque
+  en [SECURITY.md](./SECURITY.md) antes de exponer cualquier endpoint.
+
+**Gotchas / consideraciones a no olvidar:**
+- **Range requests obligatorios** para seek; sin eso el teléfono baja el archivo
+  entero antes de reproducir.
+- **Rutas absolutas en la DB** (`file_path`) son válidas sólo en la Mac — el
+  server resuelve el archivo local y streamea bytes; el teléfono nunca ve paths.
+- **CORS / mixed content** si la UI mobile se sirve aparte del stream.
+- Nuevo **vector de seguridad** (primer endpoint HTTP entrante del proyecto) →
+  documentar en SECURITY.md cuando se encare.
+
+**Decisión a formalizar:** cuando arranque, abrir un **ADR** (camino A vs media
+server existente; server embebido en Tauri vs proceso aparte; auth).
+
+**Estado:** definida, **no iniciada** (sin compromiso de fecha — "cuando haya
+tiempo"). Fuera del orden de priorización actual.
+
+---
+
 ## Polish
 
 ### [ ] T4 — Auto-scroll en reorder por drag  (bandera #4)
