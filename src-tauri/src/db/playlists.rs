@@ -21,6 +21,7 @@ pub async fn create(pool: &SqlitePool, name: &str) -> AppResult<Playlist> {
         track_count: 0,
         is_smart: false,
         rules: None,
+        is_favorites: false,
     })
 }
 
@@ -46,6 +47,7 @@ pub async fn create_smart(
         track_count,
         is_smart: true,
         rules: Some(rules_json.to_string()),
+        is_favorites: false,
     })
 }
 
@@ -83,7 +85,7 @@ pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Playlist>> {
     let mut rows = sqlx::query_as::<_, Playlist>(
         "SELECT p.id, p.name, p.description, \
                 COUNT(pt.track_id) AS track_count, \
-                p.is_smart, p.rules \
+                p.is_smart, p.rules, p.is_favorites \
          FROM playlists p \
          LEFT JOIN playlist_tracks pt ON pt.playlist_id = p.id \
          GROUP BY p.id \
@@ -102,6 +104,27 @@ pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Playlist>> {
         }
     }
     Ok(rows)
+}
+
+/// Garantiza que exista la playlist built-in de favoritos. Idempotente: si ya
+/// hay una con `is_favorites=1`, no hace nada. Es una smart playlist cuya regla
+/// (`is_favorite is 1`) deriva la membresía del flag `tracks.is_favorite`. Se
+/// llama una vez al boot (lib.rs setup).
+pub async fn ensure_favorites(pool: &SqlitePool) -> AppResult<()> {
+    let exists: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM playlists WHERE is_favorites = 1 LIMIT 1")
+            .fetch_optional(pool)
+            .await?;
+    if exists.is_some() {
+        return Ok(());
+    }
+    let rules = r#"{"match":"all","conditions":[{"field":"is_favorite","op":"is","value":"1"}]}"#;
+    sqlx::query("INSERT INTO playlists (name, is_smart, is_favorites, rules) VALUES (?, 1, 1, ?)")
+        .bind("FAVORITES")
+        .bind(rules)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// Borra una playlist. `ON DELETE CASCADE` del schema se encarga de
@@ -253,7 +276,7 @@ pub async fn list_tracks(
                     ELSE 'instrumental' \
                 END AS lyrics_status, \
                 t.acoustid_id, t.mbid_recording, t.identification_status, \
-                t.acoustid_score, l.mismatch_score \
+                t.acoustid_score, l.mismatch_score, t.is_favorite \
          FROM playlist_tracks pt \
          JOIN tracks t ON t.id = pt.track_id \
          LEFT JOIN lyrics l ON l.track_id = t.id \

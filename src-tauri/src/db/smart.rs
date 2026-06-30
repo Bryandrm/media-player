@@ -47,7 +47,7 @@ const TRACKS_SELECT: &str = "SELECT t.id, t.file_path, t.title, t.artist, t.albu
             ELSE 'instrumental' \
         END AS lyrics_status, \
         t.acoustid_id, t.mbid_recording, t.identification_status, t.acoustid_score, \
-        l.mismatch_score \
+        l.mismatch_score, t.is_favorite \
      FROM tracks t \
      LEFT JOIN lyrics l ON l.track_id = t.id";
 
@@ -175,6 +175,8 @@ fn is_supported(field: &str, op: &str, value: &str) -> bool {
             _ => false,
         },
         "added_within_days" | "played_within_days" => value.trim().parse::<i64>().is_ok(),
+        // Booleano (favoritos): sólo `is` con un valor truthy/falsy reconocible.
+        "is_favorite" => op == "is" && matches!(value.trim(), "0" | "1" | "true" | "false"),
         _ => false,
     }
 }
@@ -318,6 +320,11 @@ fn append_condition(qb: &mut QueryBuilder<Sqlite>, c: &Condition) {
                 .push_bind(format!("-{n} days"))
                 .push(")");
         }
+        "is_favorite" => {
+            // Sólo op `is` (validado en is_supported). El valor va por bind.
+            let truthy = matches!(c.value.trim(), "1" | "true");
+            qb.push("t.is_favorite = ").push_bind(if truthy { 1_i64 } else { 0_i64 });
+        }
         _ => {
             qb.push("1=0");
         }
@@ -386,6 +393,14 @@ mod tests {
     fn days_uses_datetime_modifier_bind() {
         let s = sql(&rules("all", &[("added_within_days", "is", "30")]));
         assert!(s.contains("t.added_at >= datetime('now', ?)"), "{s}");
+    }
+
+    #[test]
+    fn is_favorite_uses_bind() {
+        let s = sql(&rules("all", &[("is_favorite", "is", "1")]));
+        assert!(s.contains("t.is_favorite = ?"), "{s}");
+        // El literal "1" va por bind, no interpolado.
+        assert!(!s.contains("= 1"), "{s}");
     }
 
     #[test]

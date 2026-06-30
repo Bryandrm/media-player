@@ -179,6 +179,7 @@ export function LibraryTable() {
   const tracks = useLibraryStore((s) => s.tracks);
   const searchQuery = useLibraryStore((s) => s.searchQuery);
   const loadTracks = useLibraryStore((s) => s.loadTracks);
+  const setFavorite = useLibraryStore((s) => s.setFavorite);
   const currentTrackId = usePlayerStore((s) => s.currentTrackId);
   const playTrack = usePlayerStore((s) => s.playTrack);
   const identify = useIdentificationStore((s) => s.identify);
@@ -359,6 +360,8 @@ export function LibraryTable() {
             <colgroup>
               {/* Handle de drag para reordenar — sólo en vista de playlist. */}
               {canReorder && <col className="w-8" />}
+              {/* Columna ★ (favorito) — en TODA lista. */}
+              <col className="w-8" />
               <col className="w-12" />
               {/* Columna L: indicador de letras. Width pequeño porque sólo
                   contiene 1-3 chars. */}
@@ -376,6 +379,9 @@ export function LibraryTable() {
             <thead className="sticky top-0 bg-bg">
               <tr className="border-b-2 border-fg text-muted">
                 {canReorder && <th className="px-2 py-2" aria-label="Reorder" />}
+                <th className="text-center px-1 py-2" title="Favorite">
+                  ★
+                </th>
                 <th className="text-left px-3 py-2">#</th>
                 <th className="text-left px-3 py-2" title="Lyrics status">
                   L
@@ -433,6 +439,25 @@ export function LibraryTable() {
                         ≡
                       </td>
                     )}
+                    {/* ★ Favorito — toggle. stopPropagation para no disparar
+                        playTrack. Glyph lleno/vacío + color accent cuando está
+                        marcado (inherit en la fila actual para contraste). */}
+                    <td
+                      className={`px-1 py-2 text-center cursor-pointer ${
+                        isCurrent
+                          ? ""
+                          : t.isFavorite
+                            ? "text-accent"
+                            : "text-muted hover:text-accent"
+                      }`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFavorite(t.id, !t.isFavorite);
+                      }}
+                      title={t.isFavorite ? "Remove from favorites" : "Add to favorites"}
+                    >
+                      {t.isFavorite ? "★" : "☆"}
+                    </td>
                     <td className="px-3 py-2 tabular-nums font-bold">
                       {isCurrent ? "►" : String(i + 1).padStart(2, "0")}
                     </td>

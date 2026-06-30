@@ -42,6 +42,9 @@ type LibraryState = {
 
   setError: (e: string | null) => void;
   setSearchQuery: (q: string) => void;
+  /** Marca/desmarca un track como favorito. Optimistic en `tracks`; refresca la
+   *  playlist seleccionada (la membresía de FAVORITES depende del flag). */
+  setFavorite: (trackId: number, isFavorite: boolean) => Promise<void>;
   loadTracks: () => Promise<void>;
   backfillCovers: () => Promise<void>;
   backfillMetadata: () => Promise<void>;
@@ -72,6 +75,31 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   setError: (e) => set({ error: e }),
   setSearchQuery: (q) => set({ searchQuery: q }),
+
+  setFavorite: async (trackId, isFavorite) => {
+    // Optimistic: la ★ se llena/vacía al instante en la vista ALL TRACKS.
+    set({
+      tracks: get().tracks.map((t) =>
+        t.id === trackId ? { ...t, isFavorite } : t,
+      ),
+    });
+    try {
+      await invoke("library_set_favorite", { trackId, isFavorite });
+    } catch (e) {
+      // Revertir el optimistic si el backend falló.
+      set({
+        tracks: get().tracks.map((t) =>
+          t.id === trackId ? { ...t, isFavorite: !isFavorite } : t,
+        ),
+        error: String(e),
+      });
+      return;
+    }
+    // Si hay una playlist seleccionada (ej: FAVORITES), refrescar su cache —
+    // un track desmarcado debe salir de la lista de favoritos.
+    const { selectedId, reloadSelectedTracks } = usePlaylistStore.getState();
+    if (selectedId !== null) await reloadSelectedTracks();
+  },
 
   loadTracks: async () => {
     try {

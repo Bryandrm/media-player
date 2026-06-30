@@ -217,6 +217,17 @@ pub async fn library_record_play(
     db::tracks::record_play(&pool, track_id).await
 }
 
+/// Marca/desmarca un track como favorito (columna ★). La smart playlist
+/// FAVORITES deriva su membresía del flag, así que togglearlo la actualiza sola.
+#[tauri::command]
+pub async fn library_set_favorite(
+    track_id: i64,
+    is_favorite: bool,
+    pool: State<'_, SqlitePool>,
+) -> AppResult<()> {
+    db::tracks::set_favorite(&pool, track_id, is_favorite).await
+}
+
 /// Para tracks ya en DB que no tienen `cover_art_path` (típicamente tracks
 /// agregados antes de que existiera el feature de cover art), intenta extraer
 /// cover ahora. Devuelve la cantidad de tracks que se actualizaron.

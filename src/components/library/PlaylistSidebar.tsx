@@ -24,6 +24,11 @@ export function PlaylistSidebar() {
   const rename = usePlaylistStore((s) => s.rename);
   const exportM3u = usePlaylistStore((s) => s.exportM3u);
 
+  // FAVORITES se fija arriba y se renderea aparte; el resto va en la lista
+  // normal (con rename/delete/edit).
+  const favorites = playlists.find((p) => p.isFavorites);
+  const userPlaylists = playlists.filter((p) => !p.isFavorites);
+
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
 
@@ -116,13 +121,31 @@ export function PlaylistSidebar() {
           onClick={() => select(null)}
         />
 
-        {playlists.length === 0 && (
+        {/* FAVORITES — playlist built-in (smart bajo el capó). Fijada arriba,
+            marcada con ★, sin rename/delete/edit (se gestiona con la columna ★
+            de la tabla). Export sí (útil). */}
+        {favorites && (
+          <SidebarRow
+            label={favorites.name}
+            count={favorites.trackCount}
+            active={selectedId === favorites.id}
+            isFavorites
+            onClick={() => select(favorites.id)}
+            onExport={
+              favorites.trackCount > 0
+                ? () => exportM3u(favorites.id, favorites.name)
+                : undefined
+            }
+          />
+        )}
+
+        {userPlaylists.length === 0 && (
           <div className="px-4 py-3 text-[10px] text-muted uppercase tracking-wider">
             NO PLAYLISTS YET
           </div>
         )}
 
-        {playlists.map((p) =>
+        {userPlaylists.map((p) =>
           editingId === p.id ? (
             <div key={p.id} className="px-3 py-1.5 border-b border-muted/30">
               <input
@@ -270,6 +293,7 @@ function SidebarRow({
   count,
   active,
   isSmart = false,
+  isFavorites = false,
   onClick,
   onRename,
   onDelete,
@@ -280,6 +304,7 @@ function SidebarRow({
   count: number | null;
   active: boolean;
   isSmart?: boolean;
+  isFavorites?: boolean;
   onClick: () => void;
   onRename?: () => void;
   onDelete?: () => void;
@@ -300,9 +325,13 @@ function SidebarRow({
         active ? "bg-fg text-bg font-bold" : "hover:bg-fg hover:text-bg"
       }`}
     >
-      {/* Marcador ⚡ para smart playlists — read-only, tracks derivados de
-          reglas. Se distingue de las normales sin recurrir a iconos pesados. */}
-      {isSmart ? <span className="text-accent" title="Smart playlist">⚡</span> : null}
+      {/* Marcador: ★ favoritos (built-in), ⚡ smart playlist (read-only). Sin
+          iconos pesados — un solo char en accent. */}
+      {isFavorites ? (
+        <span className="text-accent" title="Favorites">★</span>
+      ) : isSmart ? (
+        <span className="text-accent" title="Smart playlist">⚡</span>
+      ) : null}
       <span className="truncate flex-1">{label}</span>
       {showActions ? (
         // Los spans actúan como botones secundarios sin anidar <button> (HTML

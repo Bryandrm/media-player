@@ -154,7 +154,7 @@ pub async fn list_all(pool: &SqlitePool) -> AppResult<Vec<Track>> {
                     ELSE 'instrumental'
                 END AS lyrics_status,
                 t.acoustid_id, t.mbid_recording, t.identification_status,
-                t.acoustid_score, l.mismatch_score
+                t.acoustid_score, l.mismatch_score, t.is_favorite
          FROM tracks t
          LEFT JOIN lyrics l ON l.track_id = t.id
          ORDER BY
@@ -388,6 +388,21 @@ pub async fn update_identification_status(
     .bind(track_id)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Marca/desmarca un track como favorito (columna ★ de la LibraryTable). La
+/// smart playlist FAVORITES deriva su membresía de este flag.
+pub async fn set_favorite(
+    pool: &SqlitePool,
+    track_id: i64,
+    is_favorite: bool,
+) -> AppResult<()> {
+    sqlx::query("UPDATE tracks SET is_favorite = ? WHERE id = ?")
+        .bind(is_favorite)
+        .bind(track_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

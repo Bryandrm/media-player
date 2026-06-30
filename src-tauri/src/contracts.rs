@@ -57,6 +57,10 @@ pub struct Track {
     /// detection). NULL = nunca chequeado. El frontend muestra un marcador `Q`
     /// en la library (acento si <0.5) y el % en tooltip.
     pub mismatch_score: Option<f64>,
+    /// True si el usuario lo marcó como favorito (columna ★ de la LibraryTable).
+    /// Alimenta la smart playlist "FAVORITES". Mapea la columna `tracks.is_favorite`
+    /// (INTEGER 0/1 → bool, igual que `Playlist.is_smart`).
+    pub is_favorite: bool,
 }
 
 /// Detalle completo de un track para el panel "DETAILS" del sidebar. Trae
@@ -127,6 +131,10 @@ pub struct Playlist {
     /// `{"match":"all"|"any","conditions":[{"field","op","value"}]}`.
     /// El frontend lo parsea para poblar el editor; el backend para evaluar.
     pub rules: Option<String>,
+    /// True para la playlist built-in de favoritos. Es smart (regla
+    /// `is_favorite is 1`) pero el frontend la trata especial: pin arriba, ★
+    /// en vez de ⚡, sin rename/delete/edit.
+    pub is_favorites: bool,
 }
 
 /// Estado de las dependencias externas. Detectadas al boot. Cada una

@@ -88,7 +88,8 @@ src/
 │                           + masterGain + playPauseGain + fade helpers
 ├── components/
 │   ├── ui/                 Button, Tabs (con tab EQ), MarqueeText (genéricos)
-│   ├── library/            LibraryTable (con indicador L / K-aligned + columna +/−),
+│   ├── library/            LibraryTable (con columna ★ favorito + indicador L /
+│   │                       K-aligned + columna +/−),
 │   │                       LibrarySearchBar, LibraryToolbar (SCAN + CLEAN +
 │   │                       MB BACKFILL), PlaylistSidebar (tabs PLAYLISTS /
 │   │                       DETAILS), AddToPlaylistPopover, MultiSelectPicker,
@@ -226,6 +227,16 @@ src-tauri/resources/
   pero fuera del prefilter actual) renderizados arriba con marker `?`. Ver
   [ADR-034](./docs/DECISIONS.md#adr-034--smart-playlists-motor-multi-regla-con-query-builder-dinámico)
   + [ADR-036](./docs/DECISIONS.md#adr-036--smart-playlists-picker-cascadante--operador-innot_in).
+- **Favoritos** ✓ (2026-06-29) — columna `tracks.is_favorite` + **columna ★**
+  en la `LibraryTable` (en TODA lista: ALL TRACKS, playlists, smart) que togglea
+  el flag (`library_set_favorite`, optimistic en el store + refresh de la
+  playlist seleccionada). La lista **FAVORITES** es una **smart playlist
+  built-in** (`is_favorite is 1`) creada al boot por `db::playlists::ensure_favorites`
+  (idempotente) — reusa todo el infra de smart (getQueue, export, read-only).
+  Columna `playlists.is_favorites` la marca: el `PlaylistSidebar` la **fija
+  arriba** (tras ALL TRACKS), con **★** en vez de ⚡ y **sin rename/delete/edit**
+  (se gestiona desde la columna ★). `is_favorite` se sumó al whitelist de
+  [db/smart.rs](src-tauri/src/db/smart.rs) (op `is`, valor por `push_bind`).
 - **Descarga de listas** ✓ (2026-06-16) — toggle **FULL PLAYLIST** en el
   DownloadForm (default OFF = `--no-playlist`, un solo video; ON =
   `--yes-playlist`). `run_yt_dlp` devuelve `Vec<DownloadedEntry>` (multi-file)

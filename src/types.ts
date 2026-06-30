@@ -53,6 +53,9 @@ export type Track = {
   /** overall_score (0..1) de la última corrida de CHECK QUALITY. null = nunca
    *  chequeado. La library muestra un marcador `Q` (acento si <0.5). */
   mismatchScore: number | null;
+  /** True si el usuario lo marcó como favorito (columna ★). Alimenta la smart
+   *  playlist FAVORITES. */
+  isFavorite: boolean;
 };
 
 /** Resultado del comando identification_identify_track. Los campos
@@ -86,6 +89,9 @@ export type Playlist = {
   /** JSON crudo de las reglas (sólo si isSmart). El editor lo parsea a
    *  SmartRules; null en playlists normales. */
   rules: string | null;
+  /** True para la playlist built-in de favoritos: smart bajo el capó pero el
+   *  sidebar la fija arriba, la marca con ★ y le saca rename/delete/edit. */
+  isFavorites: boolean;
 };
 
 /** Detalle completo de un track para el panel DETAILS del sidebar. Trae todo

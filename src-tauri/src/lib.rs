@@ -22,6 +22,8 @@ pub fn run() {
                 .expect("failed to resolve app_data_dir");
 
             let pool = tauri::async_runtime::block_on(db::init(&data_dir))?;
+            // Garantiza la smart playlist built-in de favoritos (idempotente).
+            tauri::async_runtime::block_on(db::playlists::ensure_favorites(&pool))?;
             app.manage(pool);
 
             // HTTP client para LRCLIB (y cualquier futuro provider de letras o
@@ -58,6 +60,7 @@ pub fn run() {
             commands::library::library_import_paths,
             commands::library::library_list_tracks,
             commands::library::library_record_play,
+            commands::library::library_set_favorite,
             commands::library::library_backfill_covers,
             commands::library::library_backfill_metadata,
             commands::library::library_backfill_mb_metadata,
