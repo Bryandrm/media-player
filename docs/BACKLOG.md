@@ -307,11 +307,12 @@ si el ctx se suspendía con `isPlaying=true` nada lo despertaba.
 4. **`recoverAudioRouting()` (resume + reconnect)** reemplaza al resume-solo en
    los triggers del hook → reconecta **aunque el ctx nunca haya dejado
    `running`** (otro caso visto: running pero mudo, sin state change).
-5. **Priming de `devicechange`.** WKWebView no emite `devicechange` hasta llamar
-   `enumerateDevices()` una vez → el hook lo primea al montar. Sin esto el evento
-   nunca disparaba (no había línea `devicechange` en los logs). Bonus: `focus`/
-   `visibility` ahora reconectan → **escape hatch manual** (click afuera y volver
-   a la ventana recupera el audio).
+5. **Priming de `devicechange` (revertido).** WKWebView no emite `devicechange`
+   hasta llamar `enumerateDevices()` una vez, pero eso **enumera cámaras** →
+   warning de Continuity Camera + acceso innecesario en un reproductor. Como el
+   caso pesado no se arregla en proceso igual, se quitó el priming + el listener
+   de `devicechange` (2026-06-29). El recovery liviano queda en `focus`/
+   `visibility` (al volver a la app).
 
 **Fix v2 NO alcanzó (2026-06-29).** Test clave: **YouTube sonaba** por los
 mismos audífonos mientras el reproductor quedaba mudo, con el ctx `running` y

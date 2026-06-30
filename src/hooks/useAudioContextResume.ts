@@ -5,21 +5,21 @@ import {
   recoverAudioRouting,
 } from "../audio/context";
 
-/** Auto-sana el bug "dejo el player abierto, vuelvo, la canción avanza pero no
- *  suena". macOS/WKWebView, ante sleep / idle largo / cambio de output device
- *  (ej: desconectar/reconectar Bluetooth), deja el audio mudo de dos formas:
- *   - el AudioContext queda `suspended`/`interrupted` (lo cubre el resume), o
- *   - el ctx sigue `running` pero el `MediaElementSource` apunta al device
- *     viejo → avanza pero no suena. Para este caso hay que **reconectar las
- *     fuentes**, no solo resumir → por eso usamos `recoverAudioRouting`.
+/** Auto-sana los casos LIVIANOS de "la canción avanza pero no suena": el
+ *  AudioContext quedó `suspended`/`interrupted` tras sleep / idle largo (lo
+ *  resuelve `recoverAudioRouting` = resume + reconnect de fuentes). El caso
+ *  PESADO (destination clavado en el output viejo tras cambiar de device) NO se
+ *  arregla acá — es una limitación de proceso de WKWebView, ver Gotcha #32 / B2;
+ *  el recovery es el botón RESET AUDIO (restart).
  *
- *  Triggers: foco/visibilidad de la ventana + `devicechange` (cambio del set de
- *  output devices — cubre reconectar audífonos sin tocar el foco). Si el player
- *  se cree sonando (`isPlaying`), recupera el ruteo.
+ *  Triggers: foco/visibilidad de la ventana (cuando volvés a la app). Si el
+ *  player se cree sonando (`isPlaying`), recupera el ruteo.
  *
- *  **Priming de `devicechange`:** WKWebView NO emite `devicechange` hasta que se
- *  llamó al menos una vez a `enumerateDevices()`. Sin esto el evento nunca
- *  dispara y el reconectar automático ante cambio de BT no se entera.
+ *  **No** escuchamos `devicechange` ni primeamos con `enumerateDevices()`:
+ *  enumerar devices toca las APIs de cámara en macOS (warning de Continuity
+ *  Camera + acceso innecesario para un reproductor de música), y de todos modos
+ *  el caso pesado no se resuelve en proceso. Foco/visibilidad cubren el regreso
+ *  a la app.
  *
  *  Lee `isPlaying` con `getState()` (no suscripción) — corre on-event. Se monta
  *  una vez en App. */
@@ -37,22 +37,13 @@ export function useAudioContextResume() {
       if (document.visibilityState === "visible") recoverIfPlaying("visibility");
     };
     const onFocus = () => recoverIfPlaying("focus");
-    const onDeviceChange = () => recoverIfPlaying("devicechange");
 
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("focus", onFocus);
-    navigator.mediaDevices?.addEventListener("devicechange", onDeviceChange);
-    // Prime: sin una llamada previa a enumerateDevices, WKWebView no dispara
-    // `devicechange` para cambios de output device (BT). Fire-and-forget.
-    navigator.mediaDevices?.enumerateDevices?.().catch(() => {});
 
     return () => {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("focus", onFocus);
-      navigator.mediaDevices?.removeEventListener(
-        "devicechange",
-        onDeviceChange,
-      );
     };
   }, []);
 }

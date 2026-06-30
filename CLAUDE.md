@@ -1033,9 +1033,12 @@ session por cambio de output device BT) y (b) a veces el ctx **se quedaba en
   **y** en `recoverAudioRouting()` (resume + reconnect) que ahora llaman los
   triggers del hook — así reconecta aunque el ctx nunca haya dejado `running`.
 - **`devicechange` NO dispara en WKWebView** hasta llamar `enumerateDevices()`
-  al menos una vez → el hook lo **primea** al montar. Sin esto el reconectar
-  automático ante cambio de BT nunca se enteraba (no había línea `devicechange`
-  en los logs).
+  al menos una vez. Probamos primearlo, pero **`enumerateDevices()` enumera
+  también cámaras** → macOS tira un warning de Continuity Camera
+  (`AVCaptureDeviceTypeExternal is deprecated`) y toca APIs de cámara, innecesario
+  para un reproductor. Como el caso pesado no se arregla en proceso igual, se
+  **quitó el priming y el listener de `devicechange`** (2026-06-29). El recovery
+  liviano queda en **foco/visibilidad** (cuando volvés a la app).
 - Efecto secundario: como `focus`/`visibility` ahora reconectan, queda un
   **escape hatch manual** — click afuera y de vuelta a la ventana recupera el
   audio aunque `devicechange` falle.
