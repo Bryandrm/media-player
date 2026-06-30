@@ -201,6 +201,19 @@
 }
 
 /*
+ * Botón "ir a la canción actual" (LibraryTable): oscila vertical para llamar la
+ * atención cuando la fila que suena queda fuera del viewport. Animación
+ * deliberada (cue de atención), no una transición de UI.
+ */
+@keyframes bob {
+  0%, 100% { transform: translateY(-18%); }
+  50% { transform: translateY(18%); }
+}
+.animate-bob {
+  animation: bob 0.85s ease-in-out infinite;
+}
+
+/*
  * Karaoke fill: la línea activa se pinta de izquierda a derecha conforme
  * avanza el audio. Estructura:
  *

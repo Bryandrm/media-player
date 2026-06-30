@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLibraryStore } from "../../stores/libraryStore";
 import { usePlayerStore } from "../../stores/playerStore";
 import { useIdentificationStore } from "../../stores/identificationStore";
@@ -212,6 +212,58 @@ export function LibraryTable() {
     [sourceTracks, searchQuery],
   );
 
+  // "Jump to current": cuando la fila que suena queda fuera del viewport del
+  // scroll, mostramos un botón ↑/↓ (según dónde quedó) que la trae al centro.
+  // Sólo aplica si el track actual está EN la lista mostrada (puede estar
+  // sonando una playlist distinta de la que ves → no hay a dónde saltar).
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const currentRowRef = useRef<HTMLTableRowElement>(null);
+  const [jumpDir, setJumpDir] = useState<"up" | "down" | null>(null);
+  const currentIndex = useMemo(
+    () =>
+      currentTrackId === null
+        ? -1
+        : filtered.findIndex((t) => t.id === currentTrackId),
+    [filtered, currentTrackId],
+  );
+
+  useEffect(() => {
+    const cont = scrollRef.current;
+    if (!cont) return;
+    let raf = 0;
+    const compute = () => {
+      raf = 0;
+      const row = currentRowRef.current;
+      if (!row || currentIndex < 0) {
+        setJumpDir(null);
+        return;
+      }
+      const c = cont.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      // Margen de 4px para no titilar en el borde.
+      const visible = r.bottom > c.top + 4 && r.top < c.bottom - 4;
+      setJumpDir(visible ? null : r.top < c.top ? "up" : "down");
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(compute);
+    };
+    compute();
+    cont.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      cont.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [currentIndex, filtered]);
+
+  const scrollToCurrent = () => {
+    currentRowRef.current?.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
+  };
+
   // Reorder por drag & drop: sólo dentro de una playlist y sin search activo
   // (reordenar una vista filtrada es ambiguo — qué position le tocaría a lo
   // que está oculto por el filtro). `dragIndex` = fila agarrada; `dragOverIndex`
@@ -342,7 +394,8 @@ export function LibraryTable() {
   return (
     <div className="h-full flex flex-col min-h-0">
       <LibrarySearchBar />
-      <div className="flex-1 overflow-auto min-h-0">
+      <div className="flex-1 min-h-0 relative">
+      <div ref={scrollRef} className="absolute inset-0 overflow-auto">
         {filtered.length === 0 ? (
           <div className="p-12 text-center text-muted text-sm">
             {emptyMessage}
@@ -415,6 +468,7 @@ export function LibraryTable() {
                 return (
                   <tr
                     key={t.id}
+                    ref={isCurrent ? currentRowRef : null}
                     data-row-index={i}
                     onClick={() => playTrack(t)}
                     className={`cursor-pointer border-b border-muted/40 ${
@@ -517,6 +571,23 @@ export function LibraryTable() {
               })}
             </tbody>
           </table>
+        )}
+      </div>
+        {/* Botón "ir a la canción actual": aparece cuando la fila que suena
+            queda fuera del viewport. ↑ si quedó arriba (botón arriba-derecha),
+            ↓ si quedó abajo (abajo-derecha). Oscila para llamar la atención. */}
+        {jumpDir && (
+          <button
+            onClick={scrollToCurrent}
+            title="Jump to current track"
+            aria-label="Jump to current track"
+            className={`absolute right-4 z-10 w-9 h-9 flex items-center justify-center bg-bg border-2 border-accent text-accent text-lg font-bold animate-bob hover:bg-accent hover:text-bg ${
+              jumpDir === "up" ? "top-4" : "bottom-4"
+            }`}
+            style={{ boxShadow: "var(--shadow-hard)" }}
+          >
+            {jumpDir === "up" ? "↑" : "↓"}
+          </button>
         )}
       </div>
 

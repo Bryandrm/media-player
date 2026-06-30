@@ -89,7 +89,7 @@ src/
 ├── components/
 │   ├── ui/                 Button, Tabs (con tab EQ), MarqueeText (genéricos)
 │   ├── library/            LibraryTable (con columna ★ favorito + indicador L /
-│   │                       K-aligned + columna +/−),
+│   │                       K-aligned + columna +/− + botón jump-to-current),
 │   │                       LibrarySearchBar, LibraryToolbar (SCAN + CLEAN +
 │   │                       MB BACKFILL), PlaylistSidebar (tabs PLAYLISTS /
 │   │                       DETAILS), AddToPlaylistPopover, MultiSelectPicker,
